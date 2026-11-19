@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Caderno de Estudos</title>
+  <meta name="description" content="Caderno digital para estudos com caneta, lápis, correção de escrita e de contas, pastas, tarefas e compartilhamento.">
+  <meta name="theme-color" content="#1f6feb">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- ============ BIBLIOTECA ============ -->
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand"><span class="logo"></span><b>Caderno de Estudos</b></div>
+      <nav class="nav" id="nav-main"></nav>
+      <div class="nav-title"><span>Pastas</span><button class="icon-btn small" id="btn-new-folder" title="Nova pasta" aria-label="Nova pasta"></button></div>
+      <nav class="nav" id="nav-folders"></nav>
+      <div class="sidebar-foot">
+        <button class="nav-item" id="btn-settings"></button>
+      </div>
+    </aside>
+    <div id="scrim"></div>
+
+    <main id="main">
+      <header class="topbar">
+        <button class="icon-btn" id="btn-menu" aria-label="Menu"></button>
+        <h1 id="view-title">Todas as anotações</h1>
+        <div class="search"><span class="search-ic"></span><input id="search" type="search" placeholder="Buscar…"></div>
+        <select id="sort" class="select" aria-label="Ordenar">
+          <option value="updated">Recentes</option>
+          <option value="created">Criação</option>
+          <option value="title">Nome (A–Z)</option>
+        </select>
+        <button class="btn primary" id="btn-new"></button>
+      </header>
+
+      <section id="view-notes" class="view">
+        <div id="notes-grid" class="grid"></div>
+        <div id="notes-empty" class="empty" hidden></div>
+      </section>
+
+      <section id="view-tasks" class="view" hidden>
+        <form id="task-form" class="task-form" autocomplete="off">
+          <input id="task-title" class="input grow" placeholder="Nova tarefa… (ex.: Exercícios de matemática pág. 42)" required>
+          <input id="task-due" class="input" type="date" aria-label="Prazo">
+          <select id="task-prio" class="select" aria-label="Prioridade">
+            <option value="1">Baixa</option><option value="2" selected>Média</option><option value="3">Alta</option>
+          </select>
+          <select id="task-folder" class="select" aria-label="Pasta"></select>
+          <button class="btn primary" type="submit">Adicionar</button>
+        </form>
+        <div class="task-filters">
+          <div class="seg" id="task-filter">
+            <button data-f="pending" class="active">Pendentes</button>
+            <button data-f="today">Hoje</button>
+            <button data-f="late">Atrasadas</button>
+            <button data-f="done">Concluídas</button>
+            <button data-f="all">Todas</button>
+          </div>
+          <button class="btn" id="btn-share-tasks"></button>
+        </div>
+        <div id="task-list" class="task-list"></div>
+        <div id="tasks-empty" class="empty" hidden></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============ EDITOR ============ -->
+  <section id="editor" hidden>
+    <header class="ed-top">
+      <button class="icon-btn" id="ed-back" aria-label="Voltar"></button>
+      <input id="ed-title" class="ed-title" aria-label="Título">
+      <span id="ed-save" class="save-state"></span>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="ed-undo" aria-label="Desfazer" title="Desfazer"></button>
+      <button class="icon-btn" id="ed-redo" aria-label="Refazer" title="Refazer"></button>
+      <button class="icon-btn" id="ed-task" aria-label="Criar tarefa" title="Criar tarefa desta anotação"></button>
+      <button class="icon-btn" id="ed-paper" aria-label="Papel" title="Tipo de papel"></button>
+      <button class="icon-btn" id="ed-settings" aria-label="Ajustes" title="Ajustes"></button>
+      <button class="btn primary" id="ed-share"></button>
+    </header>
+    <div class="ed-tools">
+      <div class="seg tools" id="tools"></div>
+      <div class="vsep"></div>
+      <div id="tool-opts" class="tool-opts"></div>
+      <div class="vsep"></div>
+      <div class="ed-actions">
+        <button class="chip" id="ed-convert"></button>
+        <button class="chip" id="ed-check"></button>
+        <button class="chip toggle" id="ed-shapes"></button>
+        <label class="chip select-chip" title="Correção automática">
+          <span>Auto:</span>
+          <select id="ed-auto">
+            <option value="off">Desligado</option>
+            <option value="text">Escrita → texto</option>
+            <option value="math">Conferir contas</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div id="stage">
+      <canvas id="cv-base"></canvas>
+      <canvas id="cv-live"></canvas>
+      <div id="overlay"></div>
+    </div>
+    <div class="pagebar">
+      <button class="icon-btn" id="pg-prev" aria-label="Página anterior"></button>
+      <span id="pg-label">1 / 1</span>
+      <button class="icon-btn" id="pg-next" aria-label="Próxima página"></button>
+      <button class="icon-btn" id="pg-add" aria-label="Nova página" title="Nova página"></button>
+      <button class="icon-btn" id="pg-del" aria-label="Excluir página" title="Excluir página"></button>
+      <button class="zoom" id="pg-zoom" title="Ajustar à tela">100%</button>
+    </div>
+    <input type="file" id="img-input" accept="image/*" hidden>
+  </section>
+
+  <input type="file" id="backup-input" accept=".json,application/json" hidden>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

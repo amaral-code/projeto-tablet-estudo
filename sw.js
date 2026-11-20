@@ -1,9 +1,9 @@
 // Service worker: deixa o app funcionando offline.
-const CACHE = 'caderno-v3';
+const CACHE = 'caderno-v4';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/editor.js', 'js/ink.js', 'js/shapes.js', 'js/recognize.js', 'js/store.js', 'js/export.js', 'js/ui.js',
-  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/vendor/anthropic-sdk.mjs', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
+  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/vendor/anthropic-sdk.mjs', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 self.addEventListener('install', e => {
@@ -22,4 +22,9 @@ self.addEventListener('fetch', e => {
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || caches.match('index.html')))
   );
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window' }).then(cs => cs.length ? cs[0].focus() : self.clients.openWindow('./?v=focus')));
 });

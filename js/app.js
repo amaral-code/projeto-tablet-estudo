@@ -5,7 +5,14 @@ import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertI
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
 import { AI_MODELS, DEFAULT_MODEL, streamChat } from './ai.js';
 import { filesToPages } from './importer.js';
-import { initHub, renderHub, leaveHub, hubNewAction, HUB_VIEWS, HUB_NEW_LABEL, hubCounts, reloadHub, saveFlashcards, addDays, dayStr } from './hub.js';
+import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
+import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette } from './perf.js';
+
+// Todas as telas da central de produtividade
+const HUB_VIEWS = { ...HUB_ONLY, ...PERF_VIEWS };
+const HUB_NEW_LABEL = { ...HUB_LABELS, ...PERF_NEW_LABEL };
+const renderHub = (kind, el) => (PERF_VIEWS[kind] ? (leaveHub(), renderPerf(kind, el)) : renderHubView(kind, el));
+const hubNewAction = kind => (PERF_VIEWS[kind] ? perfNewAction(kind) : hubNew(kind));
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
 import { LANGS } from './recognize.js';
 import { ic, esc, h, toast, modal, promptText, confirmBox, menu } from './ui.js';
@@ -43,13 +50,25 @@ async function init() {
   bindLibrary();
   await loadAll();
   if (!localStorage.getItem('caderno-seeded') && !state.notes.length && !state.folders.length) await seed();
-  await initHub({
-    db, uid, state, loadContent, openNote, taskDialog, toggleTask, folderName, folderColor, folderOptions,
+  const api = {
+    db, uid, state, loadContent, openNote, taskDialog, toggleTask, folderName, folderColor, folderOptions, saveFlashcards,
     newNote: () => newNoteDialog(),
+    addTask,
     goTo: v => { if (editorIsOpen()) history.back(); setView(v); },
     onChange: light => { if (editorIsOpen()) return; light ? renderSidebar() : render(); },
-  });
+    views: () => HUB_VIEWS,
+    importPdf: () => pickImport('library'),
+    settings: settingsDialog,
+    extraToday, levelBadge, examsOn,
+  };
+  await initHub(api);
+  await initPerf(api);
+  routeFromURL();
   render();
+  $('btn-palette').onclick = openPalette;
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  });
   window.addEventListener('popstate', () => { if (editorIsOpen()) closeNote(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   document.addEventListener('pointerdown', () => navigator.storage?.persist?.().catch(() => {}), { once: true });
@@ -59,6 +78,7 @@ function fillIcons() {
   $('btn-new-folder').innerHTML = ic('plus');
   $('btn-settings').innerHTML = `${ic('settings')}<span>Ajustes e backup</span>`;
   $('btn-menu').innerHTML = ic('menu');
+  $('btn-palette').innerHTML = ic('search');
   $('btn-new').innerHTML = `${ic('plus')}<span>Nova anotação</span>`;
   $('btn-import').innerHTML = `${ic('upload')}<span>Importar PDF</span>`;
   $('ed-ai').innerHTML = `${ic('magic')}<span>IA</span>`;
@@ -261,7 +281,7 @@ function renderSidebar() {
   const count = f => state.notes.filter(f).length;
   const item = (key, icon, label, n, active) =>
     `<button class="nav-item ${active ? 'active' : ''}" data-k="${key}">${ic(icon)}<span>${esc(label)}</span>${n ? `<em>${n}</em>` : ''}</button>`;
-  const hc = hubCounts();
+  const hc = hubCounts(), pc = perfCounts();
   $('nav-main').innerHTML =
     item('today', 'home', 'Hoje', 0, v.kind === 'today') +
     item('calendar', 'calendar', 'Agenda', 0, v.kind === 'calendar') +
@@ -269,6 +289,9 @@ function renderSidebar() {
     item('focus', 'timer', hc.running ? 'Foco (rodando)' : 'Foco', 0, v.kind === 'focus') +
     item('cards', 'cards', 'Flashcards', hc.cards, v.kind === 'cards') +
     item('habits', 'flame', 'Hábitos', hc.habits, v.kind === 'habits') +
+    item('reading', 'bookOpen', 'Leitura', 0, v.kind === 'reading') +
+    item('grades', 'award', 'Notas e provas', pc.exams, v.kind === 'grades') +
+    item('report', 'chart', 'Relatório', 0, v.kind === 'report') +
     '<div class="nav-title"><span>Caderno</span></div>' +
     item('all', 'book', 'Todas as anotações', state.notes.length, v.kind === 'notes' && v.filter === 'all') +
     item('fav', 'star', 'Favoritas', count(n => n.fav), v.kind === 'notes' && v.filter === 'fav') +
@@ -861,9 +884,11 @@ $('backup-input').addEventListener('change', async e => {
     if (data.app !== 'caderno-estudos') throw new Error('Arquivo não é um backup do Caderno');
     const n = (data.notes || []).length, t = (data.tasks || []).length;
     if (!(await confirmBox('Restaurar backup', `Restaurar ${n} anotação(ões), ${(data.folders || []).length} pasta(s) e ${t} tarefa(s)? Itens iguais serão substituídos; o resto é mantido.`, 'Restaurar', false))) return;
-    for (const s of db.STORES) for (const it of data[s] || []) await db.put(s, it);
+    toast('Restaurando…', 30000);
+    for (const s of db.STORES) if (Array.isArray(data[s]) && data[s].length) await db.bulkPut(s, data[s].filter(it => it && it.id));
     await loadAll();
     await reloadHub();
+    await reloadPerf();
     document.querySelector('.modal-back')?._close?.(true);
     render();
     toast('Backup restaurado ✓');
@@ -872,4 +897,40 @@ $('backup-input').addEventListener('change', async e => {
   }
 });
 
-init();
+async function addTask({ title, due = '', prio = 2, folderId = '', noteId = '', notes = '' }) {
+  const t = { id: uid(), title, done: false, due, prio, folderId, noteId, notes, createdAt: Date.now() };
+  await db.put('tasks', t);
+  state.tasks.push(t);
+  return t;
+}
+
+// Atalhos do ícone do app (pressionar e segurar): ?v=focus, ?a=nova-anotacao…
+function routeFromURL() {
+  const q = new URLSearchParams(location.search);
+  const v = q.get('v'), a = q.get('a');
+  if (v && (HUB_VIEWS[v] || v === 'tasks')) state.view = { kind: v };
+  if (v === 'focus' && q.get('start') === '1') startFocus();
+  if (a === 'nova-anotacao') setTimeout(() => newNoteDialog(), 300);
+  if (a === 'nova-tarefa') setTimeout(() => taskDialog({}), 300);
+  if (a === 'busca') setTimeout(openPalette, 300);
+  if (v || a) history.replaceState(null, '', location.pathname);
+}
+
+// Nenhum erro passa em silêncio: mostra um aviso e mantém o app funcionando
+let lastErr = 0;
+function reportError(err) {
+  const msg = String(err && (err.message || err.reason || err) || 'erro desconhecido');
+  if (/ResizeObserver loop|AbortError|Cancelado/i.test(msg)) return;
+  console.error(err);
+  if (Date.now() - lastErr < 3000) return;
+  lastErr = Date.now();
+  toast('Ops, algo deu errado: ' + msg.slice(0, 120) + '. Seus dados estão salvos.', 5000);
+}
+window.addEventListener('error', e => reportError(e.error || e.message));
+window.addEventListener('unhandledrejection', e => reportError(e.reason));
+document.addEventListener('caderno-db-blocked', () => toast('Feche as outras abas do Caderno para concluir a atualização.', 6000));
+
+init().catch(err => {
+  reportError(err);
+  document.body.insertAdjacentHTML('beforeend', '<div class="fatal"><h2>Não foi possível abrir o Caderno</h2><p>Recarregue a página. Se continuar, verifique se o navegador não está em modo anônimo e se há espaço livre no tablet.</p><button class="btn primary" onclick="location.reload()">Recarregar</button></div>');
+});

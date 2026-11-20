@@ -1,7 +1,7 @@
 // Armazenamento local (IndexedDB) — tudo fica salvo no próprio tablet.
 const DB_NAME = 'caderno-estudos';
-const VERSION = 2;
-const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards'];
+const VERSION = 3;
+const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades'];
 let dbp;
 
 function open() {
@@ -12,7 +12,15 @@ function open() {
         const d = r.result;
         for (const s of STORES) if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' });
       };
-      r.onsuccess = () => res(r.result);
+      r.onsuccess = () => {
+        const d = r.result;
+        // outra aba com versão nova: fecha esta conexão para não travar
+        d.onversionchange = () => { d.close(); location.reload(); };
+        res(d);
+      };
+      r.onblocked = () => {
+        document.dispatchEvent(new CustomEvent('caderno-db-blocked'));
+      };
       r.onerror = () => rej(r.error);
     });
   }
@@ -39,6 +47,8 @@ export const db = {
   put: (s, v) => run(s, 'readwrite', st => st.put(v)),
   del: (s, id) => run(s, 'readwrite', st => st.delete(id)),
   clear: s => run(s, 'readwrite', st => st.clear()),
+  // grava muitos itens numa única transação (restauração de backup)
+  bulkPut: (s, items) => run(s, 'readwrite', st => { for (const it of items) st.put(it); return null; }),
   STORES,
 };
 

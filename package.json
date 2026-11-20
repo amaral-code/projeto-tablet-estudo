@@ -1,0 +1,12 @@
+{
+  "name": "caderno-de-estudos",
+  "private": true,
+  "description": "Caderno de estudos para tablet: anotações à mão, IA, foco, flashcards, leitura e notas.",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node tests/teste-completo.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

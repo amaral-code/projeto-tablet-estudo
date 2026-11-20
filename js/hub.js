@@ -93,7 +93,14 @@ function beep() {
 function notify(msg) {
   toast(msg, 4000);
   beep();
-  try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('Caderno de Estudos', { body: msg, icon: 'icons/icon-192.png' }); } catch { /* */ }
+  // No Android, notificações só funcionam pelo service worker
+  try {
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      const opts = { body: msg, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'caderno-foco', renotify: true };
+      if (navigator.serviceWorker) navigator.serviceWorker.ready.then(r => r.showNotification('Caderno de Estudos', opts)).catch(() => {});
+      else new Notification('Caderno de Estudos', opts);
+    }
+  } catch { /* sem notificação */ }
 }
 
 function startT() {
@@ -555,6 +562,7 @@ function renderReview(el) {
     const n = schedule(c, g);
     Object.assign(c, n);
     await A.db.put('cards', c);
+    logReview();
     r.queue.shift();
     r.shown = false;
     if (g === 0) { r.queue.push(c.id); c.missed = true; }
@@ -582,6 +590,7 @@ function renderCalendar(el) {
     const fm = focusBy.get(ds);
     cells.push(`<button class="cal-cell ${d.getMonth() !== cal.m ? 'out' : ''} ${ds === today ? 'today' : ''} ${ds === cal.sel ? 'sel' : ''}" data-d="${ds}">
       <span class="cal-n">${d.getDate()}</span>
+      ${(A.examsOn ? A.examsOn(ds) : []).map(g => `<span class="cal-t exam">📝 ${esc(g.title)}</span>`).join('')}
       ${ts.slice(0, 3).map(t => `<span class="cal-t p${t.prio} ${t.done ? 'done' : ''} ${!t.done && ds < today ? 'late' : ''}">${esc(t.title)}</span>`).join('')}
       ${ts.length > 3 ? `<span class="cal-more">+${ts.length - 3}</span>` : ''}
       ${fm ? `<span class="cal-f">${ic('timer')}${fmtMin(fm)}</span>` : ''}</button>`);
@@ -600,6 +609,7 @@ function renderCalendar(el) {
     </div>
     <div class="panel cal-day">
       <h3>${esc(longDate(sel))}</h3>
+      ${(A.examsOn ? A.examsOn(sel) : []).map(g => `<div class="exam-mini soon"><b>📝</b><span class="grow">${esc(g.title)} <span class="muted small">· ${esc(A.folderName(g.folderId) || 'Geral')}${g.score != null ? ` · nota ${g.score}` : ''}</span></span></div>`).join('')}
       <div class="mini-tasks">${dayTasks.map(t => miniTask(t)).join('') || '<p class="muted small">Nenhuma tarefa neste dia.</p>'}</div>
       <button class="btn" id="cal-add">${ic('plus')}<span>Tarefa neste dia</span></button>
       ${daySessions.length ? `<h4>Foco</h4>${daySessions.map(s => `<div class="subj-row"><span class="dot" style="background:${s.folderId ? A.folderColor(s.folderId) : '#9aa0a6'}"></span><span class="grow">${esc(s.folderId ? A.folderName(s.folderId) : 'Geral')}</span><b>${fmtMin(s.minutes)}</b></div>`).join('')}` : ''}
@@ -640,6 +650,7 @@ function renderToday(el) {
   const streak = studyStreak();
   el.innerHTML = `<div class="today-head">
       <div><h2>${hello}! 👋</h2><p class="muted">${esc(longDate(today))}</p></div>
+      ${A.levelBadge ? A.levelBadge() : ''}
       <div class="streak ${streak ? 'on' : ''}">🔥 <b>${streak}</b> <span>${streak === 1 ? 'dia seguido' : 'dias seguidos'} estudando</span></div>
     </div>
     <div class="today-grid">
@@ -657,6 +668,7 @@ function renderToday(el) {
         <button class="btn ${due ? 'primary' : ''}" id="td-cards">${due ? 'Revisar agora' : 'Ver baralhos'}</button></div>
       <div class="panel t-habits"><div class="p-head"><h3>${ic('flame')}Hábitos de hoje</h3><button class="icon-btn small" id="td-habits" aria-label="Ver hábitos">${ic('right')}</button></div>
         <div class="habit-chips">${H.habits.map(hb => `<button class="hchip ${hb.days[today] ? 'on' : ''}" style="--c:${hb.color}" data-h="${hb.id}">${hb.days[today] ? ic('check') : '<span class="ring0"></span>'}<span>${esc(hb.name)}</span>${habitStreak(hb) ? `<em>🔥${habitStreak(hb)}</em>` : ''}</button>`).join('') || '<p class="muted small">Crie hábitos na aba Hábitos.</p>'}</div></div>
+      ${A.extraToday ? A.extraToday.html() : ''}
       <div class="panel t-recent"><div class="p-head"><h3>${ic('book')}Continuar estudando</h3></div>
         <div class="recent">${recent.map(n => `<button class="recent-note" data-open="${n.id}">${n.thumb ? `<img src="${n.thumb}" alt="">` : `<span class="thumb-empty">${ic('page')}</span>`}<span>${esc(n.title)}</span></button>`).join('') || '<p class="muted small">Nenhuma anotação ainda.</p>'}</div></div>
     </div>`;
@@ -667,6 +679,7 @@ function renderToday(el) {
   el.querySelectorAll('.hchip').forEach(b => b.onclick = async () => { await toggleHabit(b.dataset.h); renderToday(el); A.onChange(true); });
   el.querySelectorAll('[data-open]').forEach(b => b.onclick = () => A.openNote(b.dataset.open));
   bindMiniTasks(el);
+  if (A.extraToday) A.extraToday.bind(el);
 }
 
 // ======================= roteamento =======================
@@ -689,6 +702,23 @@ export function hubNewAction(kind) {
 }
 export const HUB_NEW_LABEL = { today: 'Nova anotação', calendar: 'Nova tarefa', focus: 'Iniciar/pausar', cards: 'Novo baralho', habits: 'Novo hábito' };
 export function hubCounts() { return { cards: dueCards().length, habits: H.habits.filter(hb => !hb.days[dayStr()]).length, running: T.running }; }
+// ----- dados para outros módulos (relatório, leitura) -----
+const RKEY = 'caderno-revisoes';
+function logReview() {
+  try { const m = JSON.parse(localStorage.getItem(RKEY) || '{}'); const d = dayStr(); m[d] = (m[d] || 0) + 1; localStorage.setItem(RKEY, JSON.stringify(m)); } catch { /* */ }
+}
+export function reviewsByDay() { try { return JSON.parse(localStorage.getItem(RKEY) || '{}'); } catch { return {}; } }
+export function hubData() { return H; }
+export function focusCfg() { return T.cfg; }
+export function startFocus() { if (!T.running) startT(); }
+// Marca hoje o hábito cujo nome combina (ex.: leitura → "Ler 20 páginas")
+export async function markHabitToday(regex) {
+  const hb = H.habits.find(x => regex.test(x.name));
+  if (!hb || hb.days[dayStr()]) return null;
+  await toggleHabit(hb.id);
+  return hb;
+}
+
 export async function reloadHub() {
   [H.sessions, H.habits, H.decks, H.cards] = await Promise.all(['sessions', 'habits', 'decks', 'cards'].map(s => A.db.all(s)));
 }

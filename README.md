@@ -17,6 +17,18 @@ O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos 
 | 🔥 **Hábitos** | Marque o que fez em cada dia da semana e acompanhe a sequência de cada hábito |
 | ✅ **Tarefas** | Agora com **repetição** (todo dia, toda semana ou todo mês): ao concluir uma, a próxima é criada sozinha |
 
+## 📈 Desempenho (novo)
+
+| Seção | O que faz |
+|---|---|
+| 📚 **Leitura + Kindle** | Botão **Abrir app Kindle** (e Kindle na web). Cadastre os livros, registre até onde leu e veja a % lida, a previsão de quando termina no seu ritmo, a meta diária de páginas e a sequência de dias lendo. Guarde **citações** e transforme qualquer uma em flashcard. Registrar leitura marca sozinho o seu hábito de leitura |
+| 🎓 **Notas e provas** | Lance notas com peso por matéria e veja a **média**, a meta e **quanto precisa tirar na próxima prova**. Cadastre provas futuras com **contagem regressiva** (aparecem em Hoje e na Agenda) e gere um **plano de revisão** que cria as tarefas até o dia da prova |
+| 📊 **Relatório semanal** | Foco, tarefas, flashcards, páginas, hábitos e atrasos comparados com a semana anterior. Mostra seu melhor dia e as matérias esquecidas. Com **Analisar minha semana com IA**, você recebe conselhos e tarefas para a semana seguinte |
+| 🏆 **Nível e conquistas** | Você ganha XP estudando (foco, tarefas, cartas, páginas, livros, hábitos) e libera 12 conquistas |
+| 🔗 **Atalhos de apps** | Kindle, Classroom, Drive, YouTube, Tradutor e Khan Academy, todos editáveis. No tablet abrem o app instalado; se não conseguirem, abrem o site |
+| 🔍 **Busca rápida** | A lupa no topo (ou Ctrl+K num teclado) encontra anotações, tarefas, livros, pastas e baralhos, e executa ações como "Começar foco" e "Abrir Kindle" |
+| 📲 **Atalhos no ícone** | Segure o ícone do app na tela inicial para abrir direto em Hoje, Começar foco, Nova anotação ou Leitura |
+
 ## ✦ Assistente de IA
 
 Toque no botão roxo **IA** dentro de uma anotação. A IA (Claude, da Anthropic) **lê a sua letra direto da folha**, sem precisar converter antes. Escolha **Seleção**, **Esta página** ou **Todas** e peça:
@@ -83,6 +95,16 @@ Pronto: o ícone **Caderno** aparece na tela inicial e abre em tela cheia, como 
 - As anotações ficam **só no tablet**, no armazenamento do navegador. Não limpe os dados do Chrome. Faça **backup** de vez em quando em *Ajustes → Exportar backup* e salve o arquivo no Drive.
 - As contas aceitam `+ − × ÷ : x / ^ √ %`, parênteses e vírgula decimal (`2,5`).
 
+## 🧪 Testes
+
+`tests/teste-completo.cjs` abre o app num navegador de verdade e passa por **47 cenários**: editor, ferramentas, correção, IA, PDF, tarefas, foco, flashcards, hábitos, leitura, notas, relatório, busca, backup, modo offline e o layout com o tablet em pé. Os serviços externos (reconhecimento de escrita e IA) são simulados.
+
+```
+npm install
+npx playwright install chromium
+npm test
+```
+
 ## 🛠️ Para desenvolvedores
 
 É HTML, CSS e JavaScript puro, sem etapa de build. As duas bibliotecas usadas ficam embutidas em `js/vendor/`.
@@ -100,6 +122,8 @@ js/ai.js              assistente de IA (Claude): pedidos, ações e tratamento d
 js/aipanel.js         painel da IA no editor e janela de IA para pastas/anotações
 js/importer.js        importação de PDF (pdf.js) e fotos como páginas
 js/hub.js             Hoje, Foco (Pomodoro), Agenda, Flashcards (repetição espaçada) e Hábitos
+js/perf.js            Leitura/Kindle, Notas e provas, Relatório, Conquistas, Atalhos e Busca rápida
+tests/                teste completo automatizado
 js/vendor/            SDK oficial da Anthropic (@anthropic-ai/sdk 1.11.0) e pdf.js 6.5.438, embutidos
 js/store.js           banco local (IndexedDB) e configurações
 sw.js                 funcionamento offline

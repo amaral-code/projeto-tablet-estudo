@@ -134,6 +134,27 @@ async function groqMock(c) {
   });
 }
 
+let gemReqs = [], gemMode = 'ok';
+async function geminiMock(c) {
+  await c.route('https://generativelanguage.googleapis.com/**', async r => {
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+    const h = await r.request().allHeaders();
+    const body = JSON.parse(r.request().postData());
+    gemReqs.push({ url: r.request().url(), h, body });
+    const cors = { 'access-control-allow-origin': '*' };
+    if (h['x-goog-api-key'] === 'chave-invalida') return r.fulfill({ status: 400, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }) });
+    if (gemMode === '503once') { gemMode = 'ok'; return r.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 503, message: 'This model is currently experiencing high demand.', status: 'UNAVAILABLE' } }) }); }
+    if (/models\/gemini-modelo-desligado:/.test(r.request().url())) return r.fulfill({ status: 404, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 404, message: 'This model is no longer available to new users.', status: 'NOT_FOUND' } }) });
+    if (gemMode === '429') return r.fulfill({ status: 429, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED' } }) });
+    const first = body.contents[0].parts.filter(p => p.text).map(p => p.text).join(' ');
+    const reply = /Responda apenas/.test(first) ? 'Tudo certo!' : '# Resumo pelo Gemini\n- Frações são partes de um inteiro.';
+    let sse = `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'pensando…', thought: true }] } }] })}\r\n\r\n`;
+    for (const ch of reply.match(/[\s\S]{1,10}/g)) sse += `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: ch }] } }], modelVersion: 'gemini-x' })}\r\n\r\n`;
+    sse += `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: '' }] }, finishReason: 'STOP' }] })}\r\n\r\n`;
+    await r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'text/event-stream' }, body: sse });
+  });
+}
+
 function watch(p) {
   p.on('pageerror', e => errors.push('ERRO DE PÁGINA: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/favicon|net::ERR_INTERNET_DISCONNECTED|Failed to load resource/.test(m.text())) errors.push('CONSOLE: ' + m.text()); });
@@ -146,6 +167,7 @@ function watch(p) {
   ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write'] });
   await mocks(ctx);
   await groqMock(ctx);
+  await geminiMock(ctx);
   page = await ctx.newPage();
   watch(page);
   console.log(`\nCaderno de Estudos — teste completo (${base})\n`);
@@ -302,7 +324,7 @@ function watch(p) {
   // ================= IA =================
   console.log('Assistente de IA (respostas simuladas)');
   await step('chave inválida mostra erro claro', async () => {
-    await page.click('#ed-settings'); await page.fill('#s-aikey', 'sk-ant-invalida'); await page.click('#s-aitest'); await wait(1500);
+    await page.click('#ed-settings'); await page.click('#s-provider [data-p=anthropic]'); await page.fill('#s-aikey', 'sk-ant-invalida'); await page.click('#s-aitest'); await wait(1500);
     assert((await page.textContent('#s-aistatus')).includes('Chave da API inválida'), 'erro não amigável');
     await page.fill('#s-aikey', 'sk-ant-teste'); await page.click('#s-aitest'); await wait(1200);
     assert((await page.textContent('#s-aistatus')).includes('Tudo certo'), 'teste da chave falhou');
@@ -681,6 +703,61 @@ function watch(p) {
     await page.click('.ai-act[data-a=quiz]'); await page.waitForSelector('.ai-turn.error', { timeout: 8000 });
     assert((await page.textContent('.ai-turn.error')).includes('Limite da Groq'), 'mensagem do 429');
     groqMode = 'ok';
+    await page.click('#ai-close'); await page.click('#ed-back'); await wait(900);
+  });
+
+  // ================= GEMINI =================
+  console.log('IA pelo Gemini (respostas simuladas)');
+  await step('Gemini: chave inválida e chave válida no "Testar"', async () => {
+    await page.goto(base); await wait(1200);
+    await page.click('#btn-settings'); await page.click('#s-provider [data-p=gemini]');
+    assert(await page.locator('#s-geminikey').isVisible(), 'campos do Gemini não apareceram');
+    await page.fill('#s-geminikey', 'chave-invalida'); await page.click('#s-aitest'); await wait(1000);
+    assert((await page.textContent('#s-aistatus')).includes('Chave do Gemini inválida'), 'erro de chave não amigável: ' + await page.textContent('#s-aistatus'));
+    await page.fill('#s-geminikey', 'chave-teste'); await page.click('#s-aitest'); await wait(1000);
+    assert((await page.textContent('#s-aistatus')).includes('Gemini funcionando: Tudo certo'), 'teste falhou: ' + await page.textContent('#s-aistatus'));
+    await page.click('.modal-actions .btn.primary'); await wait(300);
+    const last = gemReqs[gemReqs.length - 1];
+    const model = await page.evaluate(async () => (await import('./js/ai.js')).GEMINI_DEFAULT_MODEL);
+    assert(last.h['x-goog-api-key'] === 'chave-teste' && last.url.includes(`/models/${model}:streamGenerateContent?alt=sse`), 'pedido errado: ' + last.url);
+    assert(last.body.systemInstruction && last.body.systemInstruction.parts[0].text.includes('assistente de estudos'), 'instruções ausentes');
+  });
+  await step('Gemini: resumo de todas as páginas envia as imagens e ignora o "pensamento"', async () => {
+    await nav('all');
+    await page.click('.card:has-text("Frações e decimais")'); await wait(900);
+    await page.click('#ed-ai'); await page.click('#ai-scope [data-s=all]');
+    await page.click('.ai-act[data-a=summary]'); await page.waitForSelector('.ai-turn.assistant:not(.streaming) .ai-result', { timeout: 10000 });
+    const b = gemReqs[gemReqs.length - 1].body;
+    const imgs = b.contents[0].parts.filter(p => p.inline_data);
+    const nPages = (await contentOf('Frações e decimais')).pages.length;
+    assert(imgs.length === Math.min(nPages, 20) && imgs.every(p => p.inline_data.mime_type === 'image/jpeg' && p.inline_data.data.length > 1000), `imagens: ${imgs.length} de ${nPages}`);
+    const txt = await page.textContent('.ai-turn.assistant');
+    assert(txt.includes('Resumo pelo Gemini') && !txt.includes('pensando'), 'resposta errada: ' + txt.slice(0, 80));
+  });
+  await step('Gemini: pergunta de acompanhamento mantém a conversa', async () => {
+    await page.fill('#ai-q', 'Explique o denominador'); await page.click('#ai-send');
+    await page.waitForFunction(() => document.querySelectorAll('.ai-turn.assistant:not(.streaming)').length >= 2, null, { timeout: 8000 });
+    const c = gemReqs[gemReqs.length - 1].body.contents;
+    assert(c.length === 3 && c[1].role === 'model' && c[2].role === 'user' && c[2].parts[0].text === 'Explique o denominador', 'histórico errado');
+  });
+  await step('Gemini: tenta de novo sozinho quando está sobrecarregado e troca modelo desligado', async () => {
+    gemMode = '503once'; const n0 = gemReqs.length;
+    await page.click('.ai-act[data-a=summary]');
+    await page.waitForFunction(n => document.querySelectorAll('.ai-turn.assistant:not(.streaming) .ai-result').length >= 1 && !document.querySelector('.ai-turn.streaming'), n0, { timeout: 15000 });
+    assert(gemReqs.length === n0 + 2 && !(await page.locator('.ai-turn.error').count()), `tentativas: ${gemReqs.length - n0}`);
+    await page.evaluate(async () => { (await import('./js/store.js')).settings.geminiModel = 'gemini-modelo-desligado'; });
+    const n1 = gemReqs.length;
+    await page.click('.ai-act[data-a=explain]');
+    await page.waitForFunction(() => !document.querySelector('.ai-turn.streaming'), null, { timeout: 15000 });
+    const urls = gemReqs.slice(n1).map(x => x.url.split('/models/')[1].split(':')[0]);
+    assert(urls.join(',') === 'gemini-modelo-desligado,gemini-flash-lite-latest' && !(await page.locator('.ai-turn.error').count()), 'reserva não usado: ' + urls.join(','));
+    await page.evaluate(async () => { (await import('./js/store.js')).settings.geminiModel = ''; });
+  });
+  await step('Gemini: cota esgotada mostra aviso claro', async () => {
+    gemMode = '429';
+    await page.click('.ai-act[data-a=quiz]'); await page.waitForSelector('.ai-turn.error', { timeout: 8000 });
+    assert((await page.textContent('.ai-turn.error')).includes('Limite do Gemini'), 'mensagem do 429');
+    gemMode = 'ok';
     await page.click('#ai-close'); await page.click('#ed-back'); await wait(900);
   });
 

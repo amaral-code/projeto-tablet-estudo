@@ -59,6 +59,24 @@ O resultado pode ser **escrito na folha**, alinhado às pautas (numa página nov
 
 **Como ativar:** crie uma chave em **platform.claude.com → API Keys**, depois cole em **Ajustes → Inteligência artificial** e toque em **Testar**. Você pode escolher o modelo: Opus 5.5 (melhor qualidade, padrão), Sonnet 5.5 ou Haiku 5.5 (o mais barato).
 
+### Usar o Gemini, do Google (recomendado, tem plano gratuito)
+
+1. Entre em **aistudio.google.com/apikey** com a sua conta Google.
+2. Toque em **Create API key** (Criar chave de API) e copie a chave.
+3. No app, abra **Ajustes → Inteligência artificial**, deixe **Gemini (Google)** selecionado, cole a chave e toque em **Testar**.
+
+O modelo padrão é o `gemini-flash-lite-latest`, que sempre aponta para a versão mais nova do Flash-Lite. Ele foi **testado de verdade em 20/11/2026**: respondeu em cerca de 1 s com texto e 2 s com a página do caderno, leu a página, achou uma conta errada e corrigiu um erro de conteúdo. Proteções incluídas:
+- Se o Google estiver sobrecarregado, o app **tenta de novo sozinho**.
+- Se o modelo escolhido estiver lento demais (mais de 45 s), desligado ou indisponível, o app **troca para o modelo reserva** automaticamente.
+
+No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele. O `gemini-pro-latest` exige plano pago.
+
+Teste real (a chave não fica salva em arquivo nenhum):
+
+```
+GEMINI_API_KEY=sua_chave node tests/teste-gemini-real.cjs
+```
+
 ### Usar a Groq (tem plano gratuito)
 
 1. Entre em **console.groq.com** e crie uma conta grátis (dá para entrar com o Google).

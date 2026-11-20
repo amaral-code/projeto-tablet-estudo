@@ -88,7 +88,7 @@ function renderSetup() {
   if (ok) return;
   box.innerHTML = `<div class="ai-setup-card">
     <p><b>A IA resume suas anotações, corrige e melhora sua escrita, explica a matéria, cria perguntas e escreve mais conteúdo.</b></p>
-    <p class="muted small">Funciona com o <b>Claude</b> (Anthropic) ou com a <b>Groq</b>, que tem plano gratuito. Crie uma chave no site escolhido e cole em Ajustes → Inteligência artificial.</p>
+    <p class="muted small">Funciona com o <b>Gemini</b> (Google), o <b>Claude</b> (Anthropic) ou a <b>Groq</b>. Gemini e Groq têm plano gratuito. Crie uma chave no site escolhido e cole em Ajustes → Inteligência artificial.</p>
     <button class="btn primary" id="ai-config">${ic('settings')}<span>Configurar a IA</span></button></div>`;
   box.querySelector('#ai-config').onclick = async () => { await cb.onSettings(); renderSetup(); };
 }

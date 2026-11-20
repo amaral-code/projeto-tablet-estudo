@@ -13,7 +13,36 @@ export const DEFAULT_MODEL = 'claude-opus-5-5';
 export const MAX_PAGES = 20;
 
 // ----- Groq (alternativa gratuita) -----
-export const PROVIDERS = { anthropic: 'Claude (Anthropic)', groq: 'Groq (tem plano gratuito)' };
+export const PROVIDERS = { gemini: 'Gemini (Google)', anthropic: 'Claude', groq: 'Groq' };
+// Testado de verdade em 20/11/2026: o Flash-Lite mais recente respondeu em ~1 s (texto) e ~3 s
+// (página com imagem); o 2.5 Flash não está mais disponível para contas novas; o Pro não tem cota grátis.
+// Os nomes "-latest" sempre apontam para a versão mais nova, então não ficam desatualizados.
+export const GEMINI_DEFAULT_MODEL = 'gemini-flash-lite-latest';
+const GEMINI_FALLBACK = 'gemini-flash-lite-latest';
+export const GEMINI_MODELS = [
+  ['gemini-flash-lite-latest', 'Gemini Flash-Lite (mais recente) — rápido, lê imagens (recomendado)'],
+  ['gemini-flash-latest', 'Gemini Flash (mais recente) — mais caprichado, pode demorar'],
+  ['gemini-pro-latest', 'Gemini Pro (mais recente) — exige plano pago'],
+];
+const GEMINI_DEAD = /^gemini-(1\.|2\.0|2\.5-flash$|2\.5-flash-lite$)/; // desligados para contas novas
+const GEMINI_URL = m => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:streamGenerateContent?alt=sse`;
+export const geminiModel = () => {
+  const m = (settings.geminiModel || '').trim();
+  return !m || GEMINI_DEAD.test(m) ? GEMINI_DEFAULT_MODEL : m;
+};
+// espera interrompível (para novas tentativas)
+const sleepAbort = (ms, signal) => new Promise((res, rej) => {
+  const t = setTimeout(res, ms);
+  signal.addEventListener('abort', () => { clearTimeout(t); const e = new Error('abort'); e.name = 'AbortError'; rej(e); }, { once: true });
+});
+// faz o pedido tentando de novo quando o serviço está sobrecarregado (500/502/503/504)
+async function fetchRetry(url, opts, signal, tries = 3) {
+  for (let a = 0; ; a++) {
+    const res = await fetch(url, opts);
+    if (![500, 502, 503, 504].includes(res.status) || a >= tries - 1) return res;
+    await sleepAbort(1200 * (a + 1), signal);
+  }
+}
 // Conferido na documentação da Groq (docs/vision e docs/deprecations) em 20/11/2026:
 // os modelos Llama 4 foram desligados; o modelo de visão atual é o Qwen 3.8 27B (até 3 imagens).
 export const GROQ_DEFAULT_MODEL = 'qwen/qwen3.8-27b';
@@ -24,7 +53,7 @@ export const GROQ_MODELS = [
 ];
 const GROQ_DEAD = /llama-4-(scout|maverick)|^qwen\/qwen3-32b$|llama-3\.[13]-/; // descontinuados
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-export const provider = () => (settings.aiProvider === 'groq' ? 'groq' : 'anthropic');
+export const provider = () => (['groq', 'gemini'].includes(settings.aiProvider) ? settings.aiProvider : 'anthropic');
 export const groqModel = () => {
   const m = (settings.groqModel || '').trim();
   return !m || GROQ_DEAD.test(m) ? GROQ_DEFAULT_MODEL : m;
@@ -76,7 +105,7 @@ export const ACTIONS = {
 };
 
 export function aiConfigured() {
-  const k = provider() === 'groq' ? settings.groqKey : settings.aiKey;
+  const k = { groq: settings.groqKey, gemini: settings.geminiKey, anthropic: settings.aiKey }[provider()];
   return !!(k && k.trim());
 }
 
@@ -150,6 +179,7 @@ export function streamChat(messages, onText) {
   if (!aiConfigured()) throw new AIError('Configure sua chave da API em Ajustes → Inteligência artificial.');
   if (!navigator.onLine) throw new AIError('Sem internet: o assistente de IA precisa de conexão.');
   if (provider() === 'groq') return streamGroq(messages, onText);
+  if (provider() === 'gemini') return streamGemini(messages, onText);
   const model = AI_MODELS[settings.aiModel] ? settings.aiModel : DEFAULT_MODEL;
   const params = {
     model,
@@ -254,12 +284,12 @@ function streamGroq(messages, onText) {
   const done = (async () => {
     let res;
     try {
-      res = await fetch(GROQ_URL, {
+      res = await fetchRetry(GROQ_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.groqKey.trim()}` },
         body: JSON.stringify(groqBody(model, messages)),
         signal: ctrl.signal,
-      });
+      }, ctrl.signal);
     } catch (e) {
       if (e.name === 'AbortError') throw e;
       throw new AIError('Sem conexão com a Groq. Verifique a internet.');
@@ -295,6 +325,128 @@ function streamGroq(messages, onText) {
     text = text.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim(); // por segurança, caso venha o raciocínio
     if (!text) throw new AIError('A Groq não devolveu resposta. Tente de novo.');
     return { text, truncated: finish === 'length', message: { content: [{ type: 'text', text }] } };
+  })().catch(e => {
+    if (e.name === 'AbortError') { const a = new AIError('Cancelado'); a.aborted = true; throw a; }
+    throw e instanceof AIError ? e : new AIError(String(e && e.message || e));
+  });
+  return { done, abort: () => ctrl.abort() };
+}
+
+// ======================= Gemini (Google) =======================
+// Converte a conversa (formato do Claude) para o formato do Gemini (contents/parts).
+export function geminiBody(messages, model = geminiModel()) {
+  const contents = messages.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: typeof m.content === 'string'
+      ? [{ text: m.content }]
+      : m.content.filter(b => b.type === 'text' || b.type === 'image').map(b => (b.type === 'image'
+        ? { inline_data: { mime_type: b.source.media_type, data: b.source.data } }
+        : { text: b.text })),
+  })).filter(c => c.parts.length);
+  return {
+    systemInstruction: { parts: [{ text: SYSTEM }] },
+    contents,
+    generationConfig: {
+      maxOutputTokens: 8192, temperature: 0.4,
+      // Flash 3.x "pensa" muito por padrão (no teste real ficou >100 s sem responder); raciocínio baixo responde
+      ...(/^gemini-(flash-latest|[3-9][\d.]*-flash)$/.test(model) ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
+    },
+  };
+}
+
+function geminiError(status, msg, reason) {
+  const m = String(msg || '');
+  if (/API_KEY_INVALID|API key not valid|API key expired/i.test(m + reason) || status === 401) return new AIError('Chave do Gemini inválida. Confira a chave em Ajustes → Inteligência artificial.');
+  if (status === 403) return new AIError('A chave do Gemini não tem permissão para usar a API. Gere uma chave em aistudio.google.com/apikey.');
+  if (status === 429) return new AIError('Limite do Gemini atingido (o plano gratuito tem limite por minuto e por dia). Espere um pouco e tente de novo.');
+  if (status === 404) return new AIError('Modelo do Gemini não encontrado. Confira o nome do modelo em Ajustes → Inteligência artificial.');
+  if (status === 413 || /too large|exceeds/i.test(m)) return new AIError('Pedido grande demais para o Gemini. Use “Esta página” ou selecione um trecho.');
+  if (status >= 500) return new AIError('O Gemini está com muita procura agora. Tente de novo em alguns segundos.');
+  return new AIError('Erro do Gemini: ' + (m || 'código ' + status).slice(0, 200));
+}
+
+const GEMINI_FIRST_BYTE_MS = 45000; // sem nenhuma resposta nesse tempo, tenta o modelo reserva
+
+function streamGemini(messages, onText) {
+  const ctrl = new AbortController();
+  const key = settings.geminiKey.trim();
+
+  // Uma tentativa num modelo: devolve o texto ou lança erro. 'retryable' = vale tentar o reserva.
+  async function attempt(model) {
+    const ac = new AbortController();
+    const onAbort = () => ac.abort();
+    ctrl.signal.addEventListener('abort', onAbort, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ac.abort(); }, GEMINI_FIRST_BYTE_MS);
+    const fail = (err, retryable) => { err.retryable = retryable; return err; };
+    try {
+      let res;
+      try {
+        res = await fetchRetry(GEMINI_URL(model), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify(geminiBody(messages, model)),
+          signal: ac.signal,
+        }, ac.signal);
+      } catch (e) {
+        if (timedOut) throw fail(new AIError('O Gemini demorou demais para responder. Tente de novo.'), true);
+        if (e.name === 'AbortError') throw e;
+        throw new AIError('Sem conexão com o Gemini. Verifique a internet.');
+      }
+      if (!res.ok) {
+        let msg = '', reason = '';
+        try { const j = await res.json(); const er = Array.isArray(j) ? j[0].error : j.error; msg = er && er.message; reason = JSON.stringify(er && er.details || ''); } catch { /* sem corpo */ }
+        throw fail(geminiError(res.status, msg, reason), [404, 500, 502, 503, 504].includes(res.status));
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', text = '', finish = null, blocked = null;
+      for (;;) {
+        let chunk;
+        try { chunk = await reader.read(); }
+        catch (e) {
+          if (timedOut && !text) throw fail(new AIError('O Gemini demorou demais para responder. Tente de novo.'), true);
+          throw e;
+        }
+        clearTimeout(timer); // já começou a responder
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line.startsWith('data:')) continue;
+          let j;
+          try { j = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (j.error) throw fail(geminiError(j.error.code, j.error.message, j.error.status), !text && j.error.code >= 500);
+          if (j.promptFeedback && j.promptFeedback.blockReason) blocked = j.promptFeedback.blockReason;
+          const c = j.candidates && j.candidates[0];
+          if (!c) continue;
+          for (const part of (c.content && c.content.parts) || []) {
+            if (part.text && !part.thought) { text += part.text; onText(part.text); }
+          }
+          if (c.finishReason) finish = c.finishReason;
+        }
+      }
+      if (!text) {
+        if (blocked || finish === 'SAFETY' || finish === 'PROHIBITED_CONTENT') throw new AIError('O Gemini não respondeu a este pedido por segurança. Tente reformular.');
+        throw fail(new AIError('O Gemini não devolveu resposta. Tente de novo.'), true);
+      }
+      return { text, truncated: finish === 'MAX_TOKENS', message: { content: [{ type: 'text', text }] } };
+    } finally {
+      clearTimeout(timer);
+      ctrl.signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  const done = (async () => {
+    const model = geminiModel();
+    try { return await attempt(model); }
+    catch (e) {
+      // modelo sobrecarregado, lento demais, desligado ou inexistente: usa o modelo reserva
+      if (e.retryable && model !== GEMINI_FALLBACK && !ctrl.signal.aborted) return attempt(GEMINI_FALLBACK);
+      throw e;
+    }
   })().catch(e => {
     if (e.name === 'AbortError') { const a = new AIError('Cancelado'); a.aborted = true; throw a; }
     throw e instanceof AIError ? e : new AIError(String(e && e.message || e));

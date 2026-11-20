@@ -64,14 +64,19 @@ const DEFAULTS = {
   sort: 'updated',
   aiKey: '',
   aiModel: 'claude-opus-5-5',
-  aiProvider: 'anthropic', // anthropic | groq
+  aiProvider: 'gemini', // gemini | anthropic | groq
   groqKey: '',
   groqModel: 'qwen/qwen3.8-27b',
+  geminiKey: '',
+  geminiModel: 'gemini-flash-lite-latest',
 };
 export const settings = (() => {
   let v = {};
   try { v = JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { v = {}; }
-  return { ...DEFAULTS, ...v };
+  const out = { ...DEFAULTS, ...v };
+  // sem nenhuma chave configurada ainda: começa pelo Gemini
+  if (!out.aiKey && !out.groqKey && !out.geminiKey) out.aiProvider = 'gemini';
+  return out;
 })();
 export function saveSettings() {
   try { localStorage.setItem(SKEY, JSON.stringify(settings)); } catch { /* ignora */ }

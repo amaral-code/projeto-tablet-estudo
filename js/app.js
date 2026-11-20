@@ -3,7 +3,7 @@ import { db, settings, saveSettings } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
 import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
-import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFAULT_MODEL, groqModel } from './ai.js';
+import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFAULT_MODEL, groqModel, GEMINI_MODELS, GEMINI_DEFAULT_MODEL, geminiModel } from './ai.js';
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
 import { initPlus, reloadPlus, PLUS_VIEWS, PLUS_NEW_LABEL, renderPlus, plusNewAction, plusToday, plusCounts, newReview, toggleReview, renderBoard, renderMatrix } from './plus.js';
@@ -878,11 +878,23 @@ async function settingsDialog() {
     <hr>
     <label class="lbl">Inteligência artificial</label>
     <p class="muted small">Resumos, melhoria da escrita, explicações, perguntas, flashcards, plano de estudo e análise da semana. As chaves ficam salvas só neste tablet.</p>
-    <div class="seg full-seg" id="s-provider">${Object.entries(PROVIDERS).map(([k, v]) => `<button type="button" data-p="${k}" class="${(settings.aiProvider || 'anthropic') === k ? 'active' : ''}">${esc(v)}</button>`).join('')}</div>
+    <div class="seg full-seg" id="s-provider">${Object.entries(PROVIDERS).map(([k, v]) => `<button type="button" data-p="${k}" class="${(settings.aiProvider || 'gemini') === k ? 'active' : ''}">${esc(v)}</button>`).join('')}</div>
     <div class="prov-box" data-box="anthropic">
       <p class="muted small">Crie a chave em <b>platform.claude.com</b> → API Keys. O uso é cobrado na sua conta da Anthropic.</p>
       <input class="input" id="s-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(settings.aiKey || '')}">
       <select class="select full" id="s-aimodel" style="margin-top:8px">${Object.entries(AI_MODELS).map(([k, v]) => `<option value="${k}" ${(settings.aiModel || DEFAULT_MODEL) === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+    </div>
+    <div class="prov-box" data-box="gemini">
+      <ol class="help small">
+        <li>Entre em <b>aistudio.google.com/apikey</b> com a sua conta Google.</li>
+        <li>Toque em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
+        <li>Cole a chave abaixo e toque em <b>Testar</b>.</li>
+      </ol>
+      <input class="input" id="s-geminikey" type="password" autocomplete="off" spellcheck="false" placeholder="Chave do Gemini" value="${esc(settings.geminiKey || '')}">
+      <label class="lbl">Modelo do Gemini</label>
+      <input class="input" id="s-geminimodel" list="gemini-models" autocomplete="off" spellcheck="false" value="${esc(geminiModel())}">
+      <datalist id="gemini-models">${GEMINI_MODELS.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</datalist>
+      <p class="muted small">O Gemini lê imagens, então entende a sua letra, e tem plano gratuito com limite de pedidos por minuto e por dia. No plano gratuito, o Google pode usar os dados enviados para melhorar os produtos dele.</p>
     </div>
     <div class="prov-box" data-box="groq">
       <ol class="help small">
@@ -931,6 +943,8 @@ async function settingsDialog() {
     settings.aiModel = body.querySelector('#s-aimodel').value;
     settings.groqKey = body.querySelector('#s-groqkey').value.trim();
     settings.groqModel = body.querySelector('#s-groqmodel').value.trim() || GROQ_DEFAULT_MODEL;
+    settings.geminiKey = body.querySelector('#s-geminikey').value.trim();
+    settings.geminiModel = body.querySelector('#s-geminimodel').value.trim() || GEMINI_DEFAULT_MODEL;
     settings.aiProvider = body.querySelector('#s-provider .active')?.dataset.p || 'anthropic';
   };
   const showProv = () => {
@@ -953,7 +967,7 @@ async function settingsDialog() {
       let txt = '';
       const r = streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; });
       await r.done;
-      st.textContent = `✓ ${settings.aiProvider === 'groq' ? 'Groq' : 'Claude'} funcionando: ` + txt.trim().slice(0, 60);
+      st.textContent = `✓ ${{ groq: 'Groq', gemini: 'Gemini', anthropic: 'Claude' }[settings.aiProvider] || 'IA'} funcionando: ` + txt.trim().slice(0, 60);
     } catch (e) { st.textContent = '✗ ' + e.message; }
   };
   body.querySelector('#s-import').onclick = () => $('backup-input').click();

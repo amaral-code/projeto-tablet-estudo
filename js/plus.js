@@ -1,6 +1,6 @@
 // Mais produtividade: Horário de aulas, Diário de estudos, Revisão espaçada de anotações,
 // e as visões Quadro (Kanban) e Matriz de prioridades das tarefas.
-import { ic, esc, h, toast, modal, confirmBox, menu } from './ui.js';
+import { ic, esc, h, toast, modal, confirmBox, menu, richText } from './ui.js';
 import { dayStr, addDays } from './hub.js';
 import { aiConfigured, streamChat, cleanText } from './ai.js';
 
@@ -149,7 +149,7 @@ function renderJournal(el) {
         ${e.hard ? `<button class="btn" type="button" id="jr-task">${ic('tasks')}<span>Virar tarefa de revisão</span></button>` : ''}</div>
     </form>
     <div class="panel"><div class="row"><h3 class="grow">Últimos dias</h3><button class="btn ai-btn" id="jr-ai">${ic('magic')}<span>Resumo do mês com IA</span></button></div>
-      <div class="ai-out" id="jr-out" ${journalAI ? '' : 'hidden'}>${journalAI ? esc(cleanText(journalAI)) : ''}</div>
+      <div class="ai-out" id="jr-out" ${journalAI ? '' : 'hidden'}>${journalAI ? richText(cleanText(journalAI)) : ''}</div>
       <div class="journal-list">${past.slice(0, 30).map(j => `<div class="jr-item"><div class="row"><b>${fmtDate(j.id)}</b><span>${MOODS[(j.mood || 3) - 1]}</span></div>
         ${j.learned ? `<p>📚 ${esc(j.learned)}</p>` : ''}${j.hard ? `<p>⚠️ ${esc(j.hard)}</p>` : ''}${j.tomorrow ? `<p>➡️ ${esc(j.tomorrow)}</p>` : ''}</div>`).join('') || '<p class="muted small">Seus registros aparecem aqui.</p>'}</div>
     </div></div>`;
@@ -182,8 +182,8 @@ function renderJournal(el) {
     journalAI = '';
     try {
       const r = streamChat([{ role: 'user', content: `Meu diário de estudos dos últimos 30 dias:\n${txt}\n\nFaça um resumo curto do que aprendi, liste as dificuldades que se repetem (para eu revisar), comente como meu humor se relaciona com os estudos e dê 3 conselhos práticos.` }],
-        t => { journalAI += t; out.textContent = cleanText(journalAI); });
-      journalAI = (await r.done).text; out.textContent = cleanText(journalAI);
+        t => { journalAI += t; out.innerHTML = richText(cleanText(journalAI)); });
+      journalAI = (await r.done).text; out.innerHTML = richText(cleanText(journalAI));
     } catch (err) { journalAI = null; out.textContent = err.message; }
   };
 }

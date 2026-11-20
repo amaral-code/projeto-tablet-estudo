@@ -77,6 +77,14 @@ export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Texto da IA para a tela: tudo escapado, e os títulos ("# ...") viram destaque em vez de aparecer o "#"
+export function richText(text) {
+  return esc(text).split('\n').map(l => {
+    const m = l.match(/^\s*#{1,6}\s+(.*)$/);
+    return m ? `<span class="ai-h">${m[1]}</span>` : l;
+  }).join('\n');
+}
+
 export function h(html) {
   const t = document.createElement('template');
   t.innerHTML = html.trim();

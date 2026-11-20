@@ -1,6 +1,6 @@
 // Gravador de aula: grava o áudio ligado a uma anotação, salva no banco aos poucos e
 // o Gemini resume ou transcreve a gravação.
-import { ic, esc, h, toast, modal, confirmBox, promptText } from './ui.js';
+import { ic, esc, h, toast, modal, confirmBox, promptText, richText } from './ui.js';
 import { aiConfigured, streamChat, cleanText } from './ai.js';
 import { speak } from './voice.js';
 
@@ -10,7 +10,7 @@ let rec = null;    // gravação em andamento
 let pill = null;
 const MAX_AI_BYTES = 14 * 1024 * 1024; // limite para mandar à IA de uma vez (~1 h de aula)
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const mb = n => (n / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB';
+const mb = n => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : (n / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB');
 
 export async function initRecorder(api) {
   A = api;
@@ -110,10 +110,10 @@ async function aiOnRecording(r, kind) {
   try {
     const data = await blobToB64(r.blob);
     stream = streamChat([{ role: 'user', content: [{ type: 'audio', source: { media_type: r.mime || 'audio/webm', data } }, { type: 'text', text: P.prompt }] }],
-      t => { text += t; out.textContent = cleanText(text); out.scrollTop = out.scrollHeight; }, { maxTokens: kind === 'transcript' ? 16384 : 8192 });
+      t => { text += t; out.innerHTML = richText(cleanText(text)); out.scrollTop = out.scrollHeight; }, { maxTokens: kind === 'transcript' ? 16384 : 8192 });
     const res = await stream.done;
     text = res.text;
-    out.textContent = cleanText(text) + (res.truncated ? '\n\n(A resposta foi cortada por ser muito longa.)' : '');
+    out.innerHTML = richText(cleanText(text) + (res.truncated ? '\n\n(A resposta foi cortada por ser muito longa.)' : ''));
     r[kind] = text;
     await A.db.put('recordings', r);
     const acts = body.querySelector('#rc-acts');

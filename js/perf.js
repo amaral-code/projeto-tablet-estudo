@@ -1,6 +1,7 @@
 // Desempenho: Leitura (com Kindle), Notas e provas, Relatório semanal, Conquistas,
 // Atalhos para outros apps e Busca global.
-import { ic, esc, h, toast, modal, confirmBox, menu } from './ui.js';
+import { ic, esc, h, toast, modal, confirmBox, menu, richText } from './ui.js';
+import { speak } from './voice.js';
 import { dayStr, addDays, hubData, reviewsByDay, studyStreak, markHabitToday, startFocus } from './hub.js';
 import { aiConfigured, streamChat, cleanText, extractTasks } from './ai.js';
 import { quickData } from './quicknotes.js';
@@ -594,7 +595,7 @@ function showAIReport(el) {
   if (!out) return;
   box.hidden = false;
   out.classList.toggle('error', !!aiReport.error);
-  out.textContent = cleanText(aiReport.text || (aiReport.busy ? 'Analisando…' : ''));
+  if (aiReport.error) out.textContent = aiReport.text; else out.innerHTML = richText(cleanText(aiReport.text || (aiReport.busy ? 'Analisando…' : '')));
   const acts = el.querySelector('#rp-actions');
   acts.innerHTML = '';
   if (!aiReport.busy && !aiReport.error && aiReport.text) {
@@ -604,6 +605,9 @@ function showAIReport(el) {
       b.onclick = async () => { for (const t of tasks) await A.addTask({ title: t, due: '', prio: 2, folderId: '' }); toast(`${tasks.length} tarefas criadas ✓`); b.remove(); A.onChange(true); };
       acts.appendChild(b);
     }
+    const sp = h(`<button class="btn">${ic('speaker')}<span>Ouvir</span></button>`);
+    sp.onclick = () => speak(cleanText(aiReport.text), { button: sp });
+    acts.appendChild(sp);
     const c = h(`<button class="btn">${ic('copy')}<span>Copiar</span></button>`);
     c.onclick = async () => { try { await navigator.clipboard.writeText(cleanText(aiReport.text)); toast('Copiado'); } catch { toast('Não foi possível copiar'); } };
     acts.appendChild(c);
@@ -618,7 +622,7 @@ async function analyzeWeek(el, m, prev) {
     const s = streamChat([{ role: 'user', content: reportText(m, prev) }], t => {
       aiReport.text += t;
       const out = document.getElementById('rp-out');
-      if (out) out.textContent = cleanText(aiReport.text);
+      if (out) out.innerHTML = richText(cleanText(aiReport.text));
     });
     const r = await s.done;
     aiReport = { text: r.text, busy: false };

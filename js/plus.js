@@ -73,11 +73,11 @@ async function classDialog(c, preset = {}) {
 }
 
 // Cria (ou abre) a anotação da aula de hoje na pasta da matéria
-async function noteForClass(c) {
+export async function noteForClass(c) {
   const title = `${subjName(c)} — ${fmtDate(dayStr())}`;
   const existing = A.state.notes.find(n => n.title === title);
-  if (existing) return A.openNote(existing.id);
-  await A.createNote({ title, folderId: c.folderId || '', bg: { type: 'lines', color: 'white' } });
+  if (existing) { await A.openNote(existing.id); return existing; }
+  return A.createNote({ title, folderId: c.folderId || '', bg: { type: 'lines', color: 'white' } });
 }
 
 function renderSchedule(el) {
@@ -110,11 +110,13 @@ function renderSchedule(el) {
     const c = X.classes.find(x => x.id === b.dataset.c);
     const a = await menu(`${subjName(c)} · ${DAYS[c.day]} ${c.start}`, [
       { label: 'Anotar nesta aula', icon: 'edit', value: 'note' },
+      { label: 'Anotar e gravar o áudio da aula', icon: 'mic', value: 'rec' },
       { label: 'Tarefa para esta matéria', icon: 'tasks', value: 'task' },
       { label: 'Editar', icon: 'settings', value: 'edit' },
       { label: 'Excluir', icon: 'trash', value: 'del', danger: true },
     ]);
     if (a === 'note') noteForClass(c);
+    else if (a === 'rec') { const meta = await noteForClass(c); if (meta) A.startRecording(meta); }
     else if (a === 'task') A.taskDialog({ folderId: c.folderId || '' });
     else if (a === 'edit') classDialog(c);
     else if (a === 'del' && await confirmBox('Excluir aula', `Excluir ${subjName(c)} de ${DAYS[c.day]} às ${c.start}?`, 'Excluir')) {

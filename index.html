@@ -17,13 +17,14 @@
   <!-- ============ BIBLIOTECA ============ -->
   <div id="app">
     <aside id="sidebar">
-      <div class="brand"><span class="logo"></span><b>Caderno de Estudos</b></div>
+      <div class="brand"><span class="logo"></span><b>Caderno de Estudos</b><button class="icon-btn small" id="btn-collapse" aria-label="Recolher o menu" title="Recolher o menu"></button></div>
       <nav class="nav" id="nav-main"></nav>
       <div class="nav-title"><span>Pastas</span><button class="icon-btn small" id="btn-new-folder" title="Nova pasta" aria-label="Nova pasta"></button></div>
       <nav class="nav" id="nav-folders"></nav>
       <div class="sidebar-foot">
-        <button class="nav-item" id="btn-map"></button>
-        <button class="nav-item" id="btn-settings"></button>
+        <button class="nav-item" id="btn-map" title="Tudo e ajuda"></button>
+        <button class="nav-item" id="btn-data" title="Dados e backup"></button>
+        <button class="nav-item" id="btn-settings" title="Ajustes e IA"></button>
       </div>
     </aside>
     <div id="scrim"></div>
@@ -91,6 +92,8 @@
       <button class="icon-btn" id="ed-undo" aria-label="Desfazer" title="Desfazer"></button>
       <button class="icon-btn" id="ed-redo" aria-label="Refazer" title="Refazer"></button>
       <button class="btn ai-btn" id="ed-ai" title="Assistente IA"></button>
+      <button class="icon-btn rec-btn" id="ed-rec" aria-label="Gravar a aula" title="Gravar a aula"></button>
+      <button class="icon-btn" id="ed-recs" aria-label="Gravações desta anotação" title="Gravações desta anotação"></button>
       <button class="icon-btn" id="ed-import" aria-label="Importar PDF ou foto" title="Importar PDF ou foto como páginas"></button>
       <button class="icon-btn" id="ed-task" aria-label="Criar tarefa" title="Criar tarefa desta anotação"></button>
       <button class="icon-btn" id="ed-paper" aria-label="Papel" title="Tipo de papel"></button>

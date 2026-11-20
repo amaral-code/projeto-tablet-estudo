@@ -1,7 +1,7 @@
 // Teste completo do Caderno de Estudos: usa o app de verdade num navegador (Chromium),
 // passando por todas as funções e conferindo os dados salvos.
 // Como rodar:  npm i -D playwright && npx playwright install chromium && node tests/teste-completo.cjs
-// Os serviços externos (reconhecimento de escrita do Google e API da Anthropic) são simulados.
+// Os serviços externos (reconhecimento de escrita do Google e a IA Gemini) são simulados; o microfone é falso.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -90,77 +90,55 @@ async function mocks(c) {
     const ans = n >= 5 ? ['2+3=6', '2+3=b'] : ['casa', 'Casa', 'cara'];
     await r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(['SUCCESS', [['x', ans, [], {}]]]) });
   });
-  await c.route('https://api.anthropic.com/**', async r => {
-    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
-    const body = JSON.parse(r.request().postData());
-    const h = await r.request().allHeaders();
-    if (JSON.stringify(h).includes('sk-ant-invalida')) return r.fulfill({ status: 401, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }) });
-    const last = body.messages[body.messages.length - 1];
-    const txt = typeof last.content === 'string' ? last.content : last.content.filter(b => b.type === 'text').map(b => b.text).join(' ');
-    let reply;
-    if (/Responda apenas/.test(txt)) reply = 'Tudo certo!';
-    else if (/simulado com/i.test(txt)) reply = '```json\n' + JSON.stringify([
-      { pergunta: 'Quanto é 1/2 + 1/2?', alternativas: ['1/4', '1', '2', '1/2'], correta: 1, explicacao: 'Meio mais meio dá um inteiro.' },
-      { pergunta: 'O que o denominador indica?', alternativas: ['Partes pegas', 'Partes do inteiro', 'O resultado', 'Nada'], correta: 1, explicacao: 'Em quantas partes o inteiro foi dividido.' },
-      { pergunta: '3/4 é maior que 1/2?', alternativas: ['Sim', 'Não', 'São iguais', 'Depende'], correta: 0, explicacao: '3/4 = 0,75 e 1/2 = 0,5.' },
-    ]) + '\n```';
-    else if (/plano de estudo|Analise minha semana/i.test(txt)) reply = '# Análise\n- Você estudou bem.\n\n# Tarefas\n- Revisar frações\n- Fazer simulado de matemática\n';
-    else if (/flashcards/i.test(txt)) reply = 'P: Quanto é 3/4 + 1/4?\nR: 1\n\nP: O que é o denominador?\nR: O número de baixo da fração.\n\nP: 1/2 equivale a quantos quartos?\nR: 2/4';
-    else if (/plano de estudo|Analise minha semana/i.test(txt)) reply = '# Análise\n- Você estudou bem.\n\n# Tarefas\n- Revisar frações\n- Fazer simulado de matemática\n';
-    else reply = '# Resumo\n- Fração representa partes de um inteiro.\n- Numerador em cima, denominador embaixo.\n\n# Para lembrar\n1. Some numeradores quando o denominador é igual.';
-    const ev = (t, d) => `event: ${t}\ndata: ${JSON.stringify(d)}\n\n`;
-    let sse = ev('message_start', { type: 'message_start', message: { id: 'msg', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } });
-    sse += ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
-    for (const ch of reply.match(/[\s\S]{1,30}/g)) sse += ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ch } });
-    sse += ev('content_block_stop', { type: 'content_block_stop', index: 0 });
-    sse += ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 9 } });
-    sse += ev('message_stop', { type: 'message_stop' });
-    await r.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'access-control-allow-origin': '*' }, body: sse });
-  });
 }
 
-let groqReqs = [], groqMode = 'ok';
-async function groqMock(c) {
-  await c.route('https://api.groq.com/**', async r => {
-    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
-    const h = await r.request().allHeaders();
-    const body = JSON.parse(r.request().postData());
-    groqReqs.push({ h, body });
-    const cors = { 'access-control-allow-origin': '*' };
-    if (/gsk_invalida/.test(h.authorization || '')) return r.fulfill({ status: 401, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Invalid API Key', type: 'invalid_request_error' } }) });
-    if (groqMode === '429') return r.fulfill({ status: 429, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Rate limit reached' } }) });
-    const first = body.messages[0].content;
-    const txt = typeof first === 'string' ? first : first.filter(p => p.type === 'text').map(p => p.text).join(' ');
-    const reply = /Responda apenas/.test(txt) ? 'Tudo certo!' : '# Resumo pela Groq\n- Frações são partes de um inteiro.';
-    let sse = '';
-    for (const ch of reply.match(/[\s\S]{1,12}/g)) sse += `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: ch }, finish_reason: null }] })}\n\n`;
-    sse += `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
-    await r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'text/event-stream' }, body: sse });
-  });
-}
-
+// Gemini simulado: responde de acordo com o pedido (resumo, flashcards, plano, simulado em JSON, tutor, áudio…)
+// gemMode: 'ok' | '503once' (1ª tentativa falha) | '503primary' (modelo principal sempre sobrecarregado) | '404primary' | '429'
+//          | 'slowprimary' (o principal só começa a responder depois de 8 s)
 let gemReqs = [], gemMode = 'ok';
+const QUIZ_JSON = JSON.stringify([
+  { pergunta: 'Quanto é 1/2 + 1/2?', alternativas: ['1/4', '1', '2', '1/2'], correta: 1, explicacao: 'Meio mais meio dá um inteiro.' },
+  { pergunta: 'O que o denominador indica?', alternativas: ['Partes pegas', 'Partes do inteiro', 'O resultado', 'Nada'], correta: 1, explicacao: 'Em quantas partes o inteiro foi dividido.' },
+  { pergunta: '3/4 é maior que 1/2?', alternativas: ['Sim', 'Não', 'São iguais', 'Depende'], correta: 0, explicacao: '3/4 = 0,75 e 1/2 = 0,5.' },
+]);
+function geminiReply(body) {
+  const sys = body.systemInstruction ? body.systemInstruction.parts.map(p => p.text).join(' ') : '';
+  const parts = body.contents[body.contents.length - 1].parts || [];
+  const txt = parts.filter(p => p.text).map(p => p.text).join(' ');
+  const has = re => parts.some(p => p.inline_data && re.test(p.inline_data.mime_type));
+  if (/Responda apenas/.test(txt)) return 'Tudo certo!';
+  if (has(/^audio\//)) {
+    if (/Transcreva/.test(txt)) return 'Hoje vamos estudar frações. [inaudível] A prova é na sexta.';
+    if (/só o que for tarefa/.test(txt)) return '# Tarefas da aula\n\n- Estudar frações para a prova de sexta\n- Fazer os exercícios 1 a 10 da página 42';
+    return '# Aula de frações\n- Frações representam partes de um inteiro.\n\n# Para lembrar\n- A prova é na sexta.';
+  }
+  if (/tutor particular/.test(sys)) return has(/^image\//) ? '# Resolução\n1. 2x + 3 = 11\n2. 2x = 8\n3. x = 4' : '# Explicação\n- O denominador mostra em quantas partes o inteiro foi dividido.';
+  if (/simulado com/i.test(txt)) return QUIZ_JSON;
+  if (/plano de estudo|Analise minha semana/i.test(txt)) return '# Análise\n- Você estudou bem.\n\n# Tarefas\n- Revisar frações\n- Fazer simulado de matemática\n';
+  if (/flashcards/i.test(txt)) return 'P: Quanto é 3/4 + 1/4?\nR: 1\n\nP: O que é o denominador?\nR: O número de baixo da fração.\n\nP: 1/2 equivale a quantos quartos?\nR: 2/4';
+  return '# Resumo pelo Gemini\n- Frações são partes de um inteiro.\n- Numerador em cima, denominador embaixo.';
+}
 async function geminiMock(c) {
   await c.route('https://generativelanguage.googleapis.com/**', async r => {
-    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
-    const h = await r.request().allHeaders();
-    const body = JSON.parse(r.request().postData());
-    gemReqs.push({ url: r.request().url(), h, body });
     const cors = { 'access-control-allow-origin': '*' };
-    if (h['x-goog-api-key'] === 'chave-invalida') return r.fulfill({ status: 400, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT', details: [{ reason: 'API_KEY_INVALID' }] } }) });
-    if (gemMode === '503once') { gemMode = 'ok'; return r.fulfill({ status: 503, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 503, message: 'This model is currently experiencing high demand.', status: 'UNAVAILABLE' } }) }); }
-    if (/models\/gemini-modelo-desligado:/.test(r.request().url())) return r.fulfill({ status: 404, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 404, message: 'This model is no longer available to new users.', status: 'NOT_FOUND' } }) });
-    if (gemMode === '429') return r.fulfill({ status: 429, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED' } }) });
-    const first = body.contents[0].parts.filter(p => p.text).map(p => p.text).join(' ');
-    const reply = /Responda apenas/.test(first) ? 'Tudo certo!' : /simulado com/i.test(first) ? JSON.stringify([
-      { pergunta: 'Quanto é 1/2 + 1/2?', alternativas: ['1/4', '1', '2', '1/2'], correta: 1, explicacao: 'Meio mais meio dá um inteiro.' },
-      { pergunta: 'O que o denominador indica?', alternativas: ['Partes pegas', 'Partes do inteiro', 'O resultado', 'Nada'], correta: 1, explicacao: 'Em quantas partes o inteiro foi dividido.' },
-      { pergunta: '3/4 é maior que 1/2?', alternativas: ['Sim', 'Não', 'São iguais', 'Depende'], correta: 0, explicacao: '3/4 = 0,75 e 1/2 = 0,5.' },
-    ]) : '# Resumo pelo Gemini\n- Frações são partes de um inteiro.';
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+    const h = await r.request().allHeaders();
+    const url = r.request().url();
+    const body = JSON.parse(r.request().postData());
+    gemReqs.push({ url, h, body });
+    const err = (status, code, message, extra = {}) => r.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: status, message, status: code, ...extra } }) });
+    if (h['x-goog-api-key'] === 'chave-invalida') return err(400, 'INVALID_ARGUMENT', 'API key not valid. Please pass a valid API key.', { details: [{ reason: 'API_KEY_INVALID' }] });
+    const primary = url.includes('/models/gemini-flash-lite-latest:');
+    if (gemMode === '503once') { gemMode = 'ok'; return err(503, 'UNAVAILABLE', 'This model is currently experiencing high demand.'); }
+    if (gemMode === '503primary' && primary) return err(503, 'UNAVAILABLE', 'This model is currently experiencing high demand.');
+    if (gemMode === '404primary' && primary) return err(404, 'NOT_FOUND', 'This model is no longer available to new users.');
+    if (gemMode === '429') return err(429, 'RESOURCE_EXHAUSTED', 'You exceeded your current quota');
+    if (gemMode === 'slowprimary' && primary) await new Promise(res => setTimeout(res, 8000));
+    const reply = geminiReply(body);
     let sse = `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'pensando…', thought: true }] } }] })}\r\n\r\n`;
     for (const ch of reply.match(/[\s\S]{1,10}/g)) sse += `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: ch }] } }], modelVersion: 'gemini-x' })}\r\n\r\n`;
     sse += `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: '' }] }, finishReason: 'STOP' }] })}\r\n\r\n`;
-    await r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'text/event-stream' }, body: sse });
+    try { await r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'text/event-stream' }, body: sse }); } catch { /* pedido já cancelado pelo app */ }
   });
 }
 
@@ -172,11 +150,10 @@ function watch(p) {
 (async () => {
   const srv = await serve();
   base = `http://127.0.0.1:${srv.address().port}/`;
-  browser = await chromium.launch();
-  ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write'] });
+  browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+  ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write', 'microphone'] });
   await mocks(ctx);
   await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
-  await groqMock(ctx);
   await geminiMock(ctx);
   page = await ctx.newPage();
   watch(page);
@@ -333,12 +310,14 @@ function watch(p) {
 
   // ================= IA =================
   console.log('Assistente de IA (respostas simuladas)');
-  await step('chave inválida mostra erro claro', async () => {
-    await page.click('#ed-settings'); await page.click('#s-provider [data-p=anthropic]'); await page.fill('#s-aikey', 'sk-ant-invalida'); await page.click('#s-aitest'); await wait(1500);
-    assert((await page.textContent('#s-aistatus')).includes('Chave da API inválida'), 'erro não amigável');
-    await page.fill('#s-aikey', 'sk-ant-teste'); await page.click('#s-aitest'); await wait(1200);
+  await step('chave inválida do Gemini mostra erro claro; chave válida responde', async () => {
+    await page.click('#ed-settings'); await page.fill('#s-geminikey', 'chave-invalida'); await page.click('#s-aitest');
+    await page.waitForFunction(() => /✗|✓/.test(document.getElementById('s-aistatus').textContent), null, { timeout: 8000 });
+    assert((await page.textContent('#s-aistatus')).includes('Chave do Gemini inválida'), 'erro não amigável: ' + await page.textContent('#s-aistatus'));
+    await page.fill('#s-geminikey', 'chave-teste'); await page.click('#s-aitest');
+    await page.waitForFunction(() => /✓/.test(document.getElementById('s-aistatus').textContent), null, { timeout: 8000 });
     assert((await page.textContent('#s-aistatus')).includes('Tudo certo'), 'teste da chave falhou');
-    await page.click('.modal .btn.primary'); await wait(300);
+    await page.click('.modal-actions .btn.primary'); await wait(300);
   });
   await step('as 7 ações da IA respondem', async () => {
     await page.click('#ed-ai'); await wait(300);
@@ -546,10 +525,9 @@ function watch(p) {
   console.log('Backup, offline e telas');
   let backupFile;
   await step('exporta backup com todos os dados', async () => {
-    await page.click('#btn-settings');
-    const dl = page.waitForEvent('download', { timeout: 10000 });
-    await page.click('#s-export'); const d = await dl; backupFile = path.join(OUT, 'backup.json'); await d.saveAs(backupFile);
-    await closeModals();
+    await page.click('#btn-data'); await page.waitForSelector('#dt-export');
+    const dl = page.waitForEvent('download', { timeout: 15000 });
+    await page.click('#dt-export'); const d = await dl; backupFile = path.join(OUT, 'backup.json'); await d.saveAs(backupFile);
     const data = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
     for (const s of ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes']) assert(Array.isArray(data[s]), 'faltou ' + s);
     assert(data.books.length === 1 && data.grades.length === 2, 'dados incompletos');
@@ -559,7 +537,7 @@ function watch(p) {
     await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
     const p2 = await c2.newPage(); watch(p2);
     await p2.goto(base); await p2.waitForTimeout(1200);
-    await p2.click('#btn-settings'); await p2.waitForSelector('.modal h2:has-text("Ajustes")'); await p2.setInputFiles('#backup-input', backupFile); await p2.waitForSelector('.modal h2:has-text("Restaurar backup")');
+    await p2.click('#btn-data'); await p2.waitForSelector('#dt-import'); await p2.setInputFiles('#backup-input', backupFile); await p2.waitForSelector('.modal h2:has-text("Restaurar backup")');
     await p2.click('.modal .btn.primary >> nth=-1');
     try {
       await p2.waitForFunction(() => (document.getElementById('toast') || {}).textContent?.includes('Backup restaurado'), null, { timeout: 30000 });
@@ -580,9 +558,14 @@ function watch(p) {
   await step('nenhuma tela passa da largura no tablet em pé (800px)', async () => {
     await page.setViewportSize({ width: 800, height: 1280 });
     const bad = [];
-    for (const k of ['today', 'calendar', 'schedule', 'goals', 'tasks', 'focus', 'cards', 'quiz', 'habits', 'journal', 'reading', 'grades', 'report', 'all']) {
-      await page.evaluate(k => { document.body.classList.remove('side-open'); document.querySelector(`#nav-main [data-k=${k}]`).click(); }, k); await wait(250);
-      const over = await page.evaluate(() => Math.max(...[...document.querySelectorAll('#main *')].map(e => e.getBoundingClientRect().right)) - window.innerWidth);
+    for (const k of ['today', 'calendar', 'schedule', 'goals', 'tasks', 'quick', 'focus', 'cards', 'quiz', 'tutor', 'habits', 'journal', 'reading', 'grades', 'report', 'all', 'data']) {
+      await page.evaluate(k => { document.body.classList.remove('side-open'); (k === 'data' ? document.getElementById('btn-data') : document.querySelector(`#nav-main [data-k=${k}]`)).click(); }, k); await wait(300);
+      // conta só o que fica visível (o que está dentro de uma área com rolagem própria, como o mapa do ano, não estoura a tela)
+      const over = await page.evaluate(() => {
+        const main = document.querySelector('#main');
+        const inScroller = el => { for (let p = el.parentElement; p && p !== main; p = p.parentElement) if (['auto', 'scroll', 'hidden'].includes(getComputedStyle(p).overflowX)) return true; return false; };
+        return Math.max(...[...main.querySelectorAll('*')].filter(e => !inScroller(e)).map(e => e.getBoundingClientRect().right)) - window.innerWidth;
+      });
       if (over > 2) bad.push(`${k} (+${Math.round(over)}px)`);
       await page.screenshot({ path: path.join(OUT, `retrato-${k}.png`) });
     }
@@ -691,12 +674,12 @@ function watch(p) {
     await nav('today');
     const secs = await page.locator('#nav-main .nav-sec-h').allTextContents();
     assert(['Planejar', 'Estudar', 'Acompanhar', 'Caderno'].every(x => secs.includes(x)), 'áreas: ' + secs.join(','));
-    for (const k of ['today', 'tasks', 'calendar', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
+    for (const k of ['today', 'tasks', 'quick', 'calendar', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'tutor', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
     assert((await page.textContent('#view-section')).includes('Planejar'), 'nome da área no topo');
   });
   await step('Tela "Tudo" mostra cada recurso e abre ao tocar', async () => {
     await page.click('#btn-map'); await wait(300);
-    assert(await page.locator('.map-card').count() === 14, 'cartões: ' + await page.locator('.map-card').count());
+    assert(await page.locator('.map-card').count() === 16, 'cartões: ' + await page.locator('.map-card').count());
     await page.click('.map-card[data-go=goals]'); await wait(300);
     assert(await page.textContent('#view-title') === 'Metas', 'não abriu Metas');
   });
@@ -710,7 +693,7 @@ function watch(p) {
   await step('Botão + cria qualquer coisa e mostra a ação da tela atual', async () => {
     await nav('goals');
     await page.click('#fab'); await wait(300);
-    assert(await page.locator('.quick').count() === 12, 'ações rápidas');
+    assert(await page.locator('.quick').count() === 15, 'ações rápidas: ' + await page.locator('.quick').count());
     assert((await page.textContent('.quick-ctx')).includes('Nova meta'), 'ação da tela');
     await page.click('.quick[data-q=task]'); await wait(300);
     assert(await page.locator('#t-title').count() === 1, 'não abriu nova tarefa');
@@ -722,7 +705,7 @@ function watch(p) {
     await page.click('#bottom-bar [data-bk=tasks]'); await wait(300);
     assert(await page.textContent('#view-title') === 'Tarefas', 'barra não navegou');
     await page.click('#bottom-bar [data-bk=more]'); await wait(300);
-    assert(await page.locator('.more-sheet .map-card').count() === 14, 'Mais incompleto');
+    assert(await page.locator('.more-sheet .map-card').count() === 16, 'Mais incompleto');
     await page.click('.more-sheet .map-card[data-go=report]'); await wait(400);
     assert(await page.textContent('#view-title') === 'Relatório', 'Mais não navegou');
     assert(!(await page.locator('#btn-new').isVisible()), 'botão + duplicado no topo');
@@ -798,7 +781,7 @@ function watch(p) {
     const st = await page.evaluate(() => ({ t: document.documentElement.dataset.theme, z: getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom').trim(), bg: getComputedStyle(document.body).backgroundColor }));
     assert(st.t === 'dark' && st.z === '1.2' && st.bg === 'rgb(21, 23, 27)', JSON.stringify(st));
     await page.setViewportSize({ width: 800, height: 1280 });
-    for (const k of ['today', 'goals', 'quiz', 'report']) {
+    for (const k of ['today', 'goals', 'quiz', 'quick', 'tutor', 'report']) {
       await page.evaluate(k => { document.body.classList.remove('side-open'); document.querySelector(`#nav-main [data-k=${k}]`).click(); }, k); await wait(250);
       const over = await page.evaluate(() => document.querySelector('#main').scrollWidth - document.querySelector('#main').clientWidth);
       assert(over <= 2, `${k} estoura com texto maior (+${over}px)`);
@@ -808,65 +791,35 @@ function watch(p) {
     await page.click('#btn-settings'); await page.click('#s-theme [data-t=auto]'); await page.click('#s-scale [data-z="1"]'); await page.click('.modal-actions .btn.primary'); await wait(200);
   });
 
-  // ================= GROQ =================
-  console.log('IA pela Groq (respostas simuladas)');
-  await step('Groq: chave inválida e chave válida no "Testar"', async () => {
+  // ================= GEMINI RAPIDÃO =================
+  console.log('IA só com o Gemini rapidão (respostas simuladas)');
+  const modelOf = x => x.url.split('/models/')[1].split(':')[0];
+  await step('Ajustes: só o Gemini (sem escolher provedor) e configurações antigas são limpas', async () => {
+    await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('caderno-config') || '{}'); Object.assign(c, { aiProvider: 'groq', groqKey: 'gsk_velha', aiKey: 'sk-ant-velha', geminiModel: 'gemini-2.5-flash' }); localStorage.setItem('caderno-config', JSON.stringify(c)); });
     await page.goto(base); await wait(1200);
-    await page.click('#btn-settings'); await page.click('#s-provider [data-p=groq]');
-    assert(await page.locator('#s-groqkey').isVisible(), 'campos da Groq não apareceram');
-    await page.fill('#s-groqkey', 'gsk_invalida'); await page.click('#s-aitest'); await wait(1000);
-    assert((await page.textContent('#s-aistatus')).includes('Chave da Groq inválida'), 'erro 401 não amigável');
-    await page.fill('#s-groqkey', 'gsk_teste'); await page.click('#s-aitest'); await wait(1000);
-    assert((await page.textContent('#s-aistatus')).includes('Groq funcionando: Tudo certo'), 'teste falhou: ' + await page.textContent('#s-aistatus'));
+    const cfg = await page.evaluate(() => JSON.parse(localStorage.getItem('caderno-config')));
+    assert(!['aiProvider', 'groqKey', 'aiKey', 'geminiModel'].some(k => k in cfg) && cfg.geminiKey === 'chave-teste', 'configuração antiga ficou: ' + Object.keys(cfg).join(','));
+    await page.click('#btn-settings'); await wait(300);
+    assert(await page.locator('#s-provider, #s-aikey, #s-groqkey').count() === 0, 'ainda há opções de outros provedores');
+    assert(await page.locator('#s-geminikey').isVisible(), 'campo da chave do Gemini');
+    assert(!/Groq|Claude|Anthropic/.test(await page.textContent('.modal')), 'os Ajustes ainda falam de outros provedores');
     await page.click('.modal-actions .btn.primary'); await wait(300);
-    const last = groqReqs[groqReqs.length - 1];
-    // modelo antigo (desligado pela Groq) salvo de versões anteriores é trocado sozinho
-    const migr = await page.evaluate(async () => { const st = await import('./js/store.js'); const ai = await import('./js/ai.js'); const old = st.settings.groqModel; st.settings.groqModel = 'meta-llama/llama-4-scout-17b-16e-instruct'; const m = ai.groqModel(); st.settings.groqModel = old; return m; });
-    assert(migr === 'qwen/qwen3.8-27b', 'não trocou modelo descontinuado');
-    assert(last.h.authorization === 'Bearer gsk_teste' && last.body.stream === true && last.body.model === 'qwen/qwen3.8-27b' && last.body.reasoning_format === 'hidden', 'pedido errado: ' + JSON.stringify({ m: last.body.model, r: last.body.reasoning_format }));
   });
-  await step('Groq: resumo de todas as páginas envia no máximo 3 imagens (limite do Qwen 3.8)', async () => {
-    await nav('all');
-    await page.click('.card:has-text("Frações e decimais")'); await wait(900);
-    await page.click('#ed-ai'); await page.click('#ai-scope [data-s=all]');
-    await page.click('.ai-act[data-a=summary]'); await page.waitForSelector('.ai-turn.assistant:not(.streaming) .ai-result', { timeout: 10000 });
-    const b = groqReqs[groqReqs.length - 1].body;
-    const parts = b.messages[0].content;
-    const imgs = parts.filter(p => p.type === 'image_url');
-    assert(imgs.length === 3, 'imagens: ' + imgs.length);
-    assert(imgs.every(p => p.image_url.url.startsWith('data:image/jpeg;base64,')), 'formato da imagem');
-    assert(parts[0].type === 'text' && parts[0].text.includes('assistente de estudos'), 'instruções ausentes');
-    assert((await page.textContent('.ai-turn.assistant')).includes('Resumo pela Groq'), 'resposta não apareceu');
-  });
-  await step('Groq: pergunta de acompanhamento mantém a conversa', async () => {
-    await page.fill('#ai-q', 'Explique o denominador'); await page.click('#ai-send');
-    await page.waitForFunction(() => document.querySelectorAll('.ai-turn.assistant:not(.streaming)').length >= 2, null, { timeout: 8000 });
-    const m = groqReqs[groqReqs.length - 1].body.messages;
-    assert(m.length === 3 && m[1].role === 'assistant' && typeof m[1].content === 'string' && m[2].content === 'Explique o denominador', 'histórico errado');
-  });
-  await step('Groq: limite atingido mostra aviso claro', async () => {
-    groqMode = '429';
-    await page.click('.ai-act[data-a=quiz]'); await page.waitForSelector('.ai-turn.error', { timeout: 8000 });
-    assert((await page.textContent('.ai-turn.error')).includes('Limite da Groq'), 'mensagem do 429');
-    groqMode = 'ok';
-    await page.click('#ai-close'); await page.click('#ed-back'); await wait(900);
-  });
-
-  // ================= GEMINI =================
-  console.log('IA pelo Gemini (respostas simuladas)');
-  await step('Gemini: chave inválida e chave válida no "Testar"', async () => {
-    await page.goto(base); await wait(1200);
-    await page.click('#btn-settings'); await page.click('#s-provider [data-p=gemini]');
-    assert(await page.locator('#s-geminikey').isVisible(), 'campos do Gemini não apareceram');
-    await page.fill('#s-geminikey', 'chave-invalida'); await page.click('#s-aitest'); await wait(1000);
-    assert((await page.textContent('#s-aistatus')).includes('Chave do Gemini inválida'), 'erro de chave não amigável: ' + await page.textContent('#s-aistatus'));
-    await page.fill('#s-geminikey', 'chave-teste'); await page.click('#s-aitest'); await wait(1000);
-    assert((await page.textContent('#s-aistatus')).includes('Gemini funcionando: Tudo certo'), 'teste falhou: ' + await page.textContent('#s-aistatus'));
+  await step('Gemini: "Testar" usa o Flash-Lite com pensamento baixo e mostra o tempo', async () => {
+    const n0 = gemReqs.length;
+    await page.click('#btn-settings'); await page.click('#s-aitest');
+    await page.waitForFunction(() => /✓|✗/.test(document.getElementById('s-aistatus').textContent), null, { timeout: 8000 });
+    const st = await page.textContent('#s-aistatus');
+    assert(/Gemini funcionando em [\d,]+ s: Tudo certo/.test(st), 'status: ' + st);
     await page.click('.modal-actions .btn.primary'); await wait(300);
     const last = gemReqs[gemReqs.length - 1];
-    const model = await page.evaluate(async () => (await import('./js/ai.js')).GEMINI_DEFAULT_MODEL);
-    assert(last.h['x-goog-api-key'] === 'chave-teste' && last.url.includes(`/models/${model}:streamGenerateContent?alt=sse`), 'pedido errado: ' + last.url);
-    assert(last.body.systemInstruction && last.body.systemInstruction.parts[0].text.includes('assistente de estudos'), 'instruções ausentes');
+    assert(gemReqs.length === n0 + 1 && modelOf(last) === 'gemini-flash-lite-latest' && last.url.endsWith(':streamGenerateContent?alt=sse'), 'modelo: ' + last.url);
+    assert(last.h['x-goog-api-key'] === 'chave-teste', 'chave no cabeçalho');
+    const gc = last.body.generationConfig;
+    assert(gc.thinkingConfig && gc.thinkingConfig.thinkingLevel === 'low' && !('thinkingBudget' in gc.thinkingConfig), 'pensamento: ' + JSON.stringify(gc));
+    assert(last.body.systemInstruction.parts[0].text.includes('assistente de estudos'), 'instruções ausentes');
+    const quizReq = gemReqs.find(x => JSON.stringify(x.body.contents).includes('simulado com'));
+    assert(quizReq && quizReq.body.generationConfig.responseMimeType === 'application/json', 'simulado não pediu JSON');
   });
   await step('Gemini: resumo de todas as páginas envia as imagens e ignora o "pensamento"', async () => {
     await nav('all');
@@ -880,31 +833,400 @@ function watch(p) {
     const txt = await page.textContent('.ai-turn.assistant');
     assert(txt.includes('Resumo pelo Gemini') && !txt.includes('pensando'), 'resposta errada: ' + txt.slice(0, 80));
   });
+  await step('IA: botão Ouvir lê a resposta em voz alta', async () => {
+    await page.evaluate(() => { window.__falas = []; speechSynthesis.speak = u => window.__falas.push(u.text); });
+    await page.click('.ai-result [data-r=say]'); await wait(200);
+    const falas = await page.evaluate(() => window.__falas);
+    assert(falas.join(' ').includes('Frações são partes de um inteiro'), 'não leu: ' + falas.join('|'));
+    assert(!falas.join(' ').includes('#'), 'leu os símbolos de título');
+    assert((await page.textContent('.ai-result [data-r=say]')).includes('Parar'), 'botão não virou "Parar"');
+    await page.click('.ai-result [data-r=say]'); await wait(100);
+  });
   await step('Gemini: pergunta de acompanhamento mantém a conversa', async () => {
     await page.fill('#ai-q', 'Explique o denominador'); await page.click('#ai-send');
     await page.waitForFunction(() => document.querySelectorAll('.ai-turn.assistant:not(.streaming)').length >= 2, null, { timeout: 8000 });
     const c = gemReqs[gemReqs.length - 1].body.contents;
     assert(c.length === 3 && c[1].role === 'model' && c[2].role === 'user' && c[2].parts[0].text === 'Explique o denominador', 'histórico errado');
   });
-  await step('Gemini: tenta de novo sozinho quando está sobrecarregado e troca modelo desligado', async () => {
-    gemMode = '503once'; const n0 = gemReqs.length;
-    await page.click('.ai-act[data-a=summary]');
-    await page.waitForFunction(n => document.querySelectorAll('.ai-turn.assistant:not(.streaming) .ai-result').length >= 1 && !document.querySelector('.ai-turn.streaming'), n0, { timeout: 15000 });
-    assert(gemReqs.length === n0 + 2 && !(await page.locator('.ai-turn.error').count()), `tentativas: ${gemReqs.length - n0}`);
-    await page.evaluate(async () => { (await import('./js/store.js')).settings.geminiModel = 'gemini-modelo-desligado'; });
-    const n1 = gemReqs.length;
-    await page.click('.ai-act[data-a=explain]');
-    await page.waitForFunction(() => !document.querySelector('.ai-turn.streaming'), null, { timeout: 15000 });
-    const urls = gemReqs.slice(n1).map(x => x.url.split('/models/')[1].split(':')[0]);
-    assert(urls.join(',') === 'gemini-modelo-desligado,gemini-flash-lite-latest' && !(await page.locator('.ai-turn.error').count()), 'reserva não usado: ' + urls.join(','));
-    await page.evaluate(async () => { (await import('./js/store.js')).settings.geminiModel = ''; });
+  await step('Gemini: sobrecarregado tenta de novo e, se continuar, usa o reserva rápido', async () => {
+    const run = async (mode, act) => {
+      gemMode = mode; const n0 = gemReqs.length;
+      await page.click(`.ai-act[data-a=${act}]`);
+      await page.waitForFunction(() => document.querySelectorAll('.ai-turn.assistant:not(.streaming) .ai-result').length >= 1 && !document.querySelector('.ai-turn.streaming'), null, { timeout: 20000 });
+      gemMode = 'ok';
+      assert(!(await page.locator('.ai-turn.error').count()), 'mostrou erro no modo ' + mode);
+      return gemReqs.slice(n0);
+    };
+    let r = await run('503once', 'summary');
+    assert(r.map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-flash-lite-latest', '503 uma vez: ' + r.map(modelOf));
+    r = await run('503primary', 'explain');
+    assert(r.map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-flash-lite-latest,gemini-flash-lite-latest,gemini-3.1-flash-lite', '503 sempre: ' + r.map(modelOf));
+    assert(!r[3].body.generationConfig.thinkingConfig, 'o reserva não deve receber thinkingLevel');
+    r = await run('404primary', 'summary');
+    assert(r.map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite', '404: ' + r.map(modelOf));
   });
-  await step('Gemini: cota esgotada mostra aviso claro', async () => {
-    gemMode = '429';
+  await step('Gemini: cota esgotada nos dois modelos mostra aviso claro', async () => {
+    gemMode = '429'; const n0 = gemReqs.length;
     await page.click('.ai-act[data-a=quiz]'); await page.waitForSelector('.ai-turn.error', { timeout: 8000 });
     assert((await page.textContent('.ai-turn.error')).includes('Limite do Gemini'), 'mensagem do 429');
+    assert(gemReqs.slice(n0).map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite', 'a cota é por modelo: devia tentar o reserva');
     gemMode = 'ok';
     await page.click('#ai-close'); await page.click('#ed-back'); await wait(900);
+  });
+
+  await step('Gemini rapidão: se o principal demorar, o reserva entra junto e vale o que responder primeiro', async () => {
+    await page.click('#btn-settings');
+    gemMode = 'slowprimary'; const n0 = gemReqs.length; const t0 = Date.now();
+    await page.click('#s-aitest');
+    await page.waitForFunction(() => /✓|✗/.test(document.getElementById('s-aistatus').textContent), null, { timeout: 15000 });
+    const secs = (Date.now() - t0) / 1000;
+    gemMode = 'ok';
+    const st = await page.textContent('#s-aistatus');
+    await page.click('.modal-actions .btn.primary'); await wait(300);
+    assert(st.includes('Tudo certo'), 'status: ' + st);
+    assert(secs >= 5.5 && secs < 7.9, `demorou ${secs.toFixed(1)} s (o reserva devia entrar aos 6 s, antes dos 8 s do principal)`);
+    assert(gemReqs.slice(n0).map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite', 'pedidos: ' + gemReqs.slice(n0).map(modelOf));
+    assert(!errors.length, 'erro ao cancelar o mais lento: ' + errors.join(' | '));
+  });
+
+  // ================= MENU LATERAL RETRÁTIL =================
+  console.log('Menu lateral retrátil');
+  const bodyHas = c => page.evaluate(c => document.body.classList.contains(c), c);
+  await step('Menu recolhe para só ícones, lembra depois de reabrir e abre de novo', async () => {
+    await page.click('#btn-collapse'); await wait(350);
+    let w = await page.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().width);
+    assert(await bodyHas('side-collapsed') && w <= 90, 'não recolheu: ' + w);
+    assert(await page.locator('#nav-main [data-k=today] .lbl-short').isVisible() && !(await page.locator('#nav-main [data-k=today] .lbl-full').isVisible()), 'nomes curtos');
+    assert((await page.getAttribute('#nav-main [data-k=today]', 'title')) === 'Hoje', 'nome completo ao segurar o dedo');
+    await page.click('#nav-main [data-k=tasks]'); await wait(300);
+    assert(await page.textContent('#view-title') === 'Tarefas', 'menu recolhido não navega');
+    await page.screenshot({ path: path.join(OUT, 'menu-recolhido.png') });
+    await page.reload(); await wait(1300);
+    assert(await bodyHas('side-collapsed'), 'não lembrou o menu recolhido');
+    await page.click('#btn-menu'); await wait(350);
+    w = await page.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().width);
+    assert(!(await bodyHas('side-collapsed')) && w > 200, '☰ não abriu o menu: ' + w);
+  });
+  await step('Tablet em pé: arrastar da borda abre o menu e arrastar para a esquerda fecha', async () => {
+    await page.setViewportSize({ width: 800, height: 1280 }); await wait(300);
+    const swipe = (x0, x1) => page.evaluate(([a, b]) => {
+      const ev = (t, x) => document.dispatchEvent(new PointerEvent(t, { clientX: x, clientY: 600, pointerType: 'touch', bubbles: true }));
+      ev('pointerdown', a); ev('pointerup', b);
+    }, [x0, x1]);
+    assert(!(await bodyHas('side-open')), 'começou aberto');
+    await swipe(6, 220); await wait(300);
+    assert(await bodyHas('side-open'), 'arrastar da borda não abriu');
+    await swipe(400, 120); await wait(300);
+    assert(!(await bodyHas('side-open')), 'arrastar para a esquerda não fechou');
+    await page.click('#btn-menu'); await wait(300);
+    assert(await bodyHas('side-open'), '☰ não abriu a gaveta');
+    await page.click('#scrim', { position: { x: 700, y: 600 } }); await wait(300);
+    assert(!(await bodyHas('side-open')), 'tocar fora não fechou');
+    await page.setViewportSize({ width: 1280, height: 800 }); await wait(300);
+  });
+
+  // ================= NOTAS RÁPIDAS =================
+  console.log('Notas rápidas');
+  await step('Notas rápidas: lista de marcar, fixar no Hoje e virar tarefa', async () => {
+    await nav('quick');
+    await page.fill('#qn-new', 'Material da prova\n[ ] Comprar caderno\n[ ] Levar calculadora'); await page.click('#qn-form button[type=submit]'); await wait(400);
+    let q = await idb('quicknotes');
+    assert(q.length === 1 && q[0].text.includes('[ ] Levar calculadora'), 'nota não salva');
+    await page.click('.qn-card .qn-check:has-text("Comprar caderno") input'); await wait(300);
+    q = await idb('quicknotes');
+    assert(q[0].text.includes('[x] Comprar caderno'), 'item não marcado: ' + q[0].text);
+    assert((await page.textContent('.qn-card .qn-foot')).includes('1/2'), 'progresso da lista');
+    await page.click('.qn-card [data-pin]'); await wait(300);
+    assert((await idb('quicknotes'))[0].pinned, 'não fixou');
+    const t0 = (await idb('tasks')).length;
+    await page.click('.qn-card [data-task]'); await wait(400);
+    const ts = await idb('tasks');
+    assert(ts.length === t0 + 1 && ts.some(t => t.title === 'Levar calculadora'), 'só o item não marcado deve virar tarefa');
+    await nav('today');
+    assert((await page.textContent('.t-quick')).includes('Comprar caderno'), 'nota fixada não aparece no Hoje');
+  });
+  await step('Notas rápidas: nova com cor, buscar, apagar e desfazer', async () => {
+    await nav('quick');
+    await page.click('#btn-new'); await page.fill('#qn-text', 'Ideia: fazer mapa mental de Biologia'); await page.click('.qn-color[data-c=verde]'); await page.click('.modal-actions .btn.primary'); await wait(400);
+    const q = await idb('quicknotes');
+    assert(q.length === 2 && q.some(n => n.color === 'verde'), 'nova nota com cor');
+    const bg = await page.evaluate(() => getComputedStyle(document.querySelector('.qn-card[data-qc=verde]')).backgroundColor);
+    assert(bg === 'rgb(217, 245, 212)', 'cor da nota: ' + bg);
+    await page.fill('#qn-search', 'biologia'); await wait(300);
+    assert(await page.locator('.qn-card').count() === 1, 'busca');
+    await page.fill('#qn-search', ''); await wait(300);
+    await page.click('.qn-card:has-text("Biologia") [data-more]'); await page.click('.menu-item:has-text("Apagar")'); await wait(300);
+    assert((await idb('quicknotes')).length === 1, 'não apagou');
+    await page.click('#toast .toast-btn'); await wait(400);
+    assert((await idb('quicknotes')).length === 2 && await page.locator('.qn-card').count() === 2, 'desfazer não trouxe a nota de volta');
+  });
+
+  // ================= TUTOR IA =================
+  console.log('Tutor IA');
+  await step('Tutor: foto do exercício, resposta passo a passo e conversa salva', async () => {
+    await nav('tutor');
+    assert(!(await page.locator('#fab').isVisible()), 'botão + cobre a caixa de mensagem');
+    const n0 = gemReqs.length;
+    await page.setInputFiles('#tt-file', path.join(ROOT, 'icons', 'icon-512.png'));
+    await page.waitForSelector('#tt-attach img');
+    assert((await page.inputValue('#tt-q')).includes('passo a passo'), 'pergunta pronta para a foto');
+    await page.click('#tt-send');
+    await page.waitForSelector('.tt-msg.bot:not(.streaming) .tt-acts', { timeout: 10000 });
+    const req = gemReqs[n0].body;
+    const parts = req.contents[req.contents.length - 1].parts;
+    assert(parts.some(p => p.inline_data && p.inline_data.mime_type === 'image/jpeg' && p.inline_data.data.length > 500), 'foto não foi enviada');
+    assert(req.systemInstruction.parts[0].text.includes('tutor particular'), 'instruções do tutor');
+    assert((await page.textContent('.tt-msg.bot')).includes('x = 4'), 'resposta não apareceu');
+    assert(await page.locator('.tt-msg.user img').count() === 1, 'foto não aparece na conversa');
+    const c = await idb('chats');
+    assert(c.length === 1 && c[0].messages.length === 2 && c[0].messages[0].image.startsWith('data:image/jpeg'), 'conversa não salva');
+    const box = await page.locator('.tt-compose').boundingBox();
+    assert(box && box.y + box.height <= 800, 'caixa de mensagem fora da tela');
+  });
+  await step('Tutor: pergunta seguinte leva o histórico; ouvir, nota rápida e anotação', async () => {
+    const n0 = gemReqs.length;
+    await page.fill('#tt-q', 'E o que é denominador?'); await page.press('#tt-q', 'Enter');
+    await page.waitForFunction(() => document.querySelectorAll('.tt-msg.bot:not(.streaming) .tt-acts').length === 2, null, { timeout: 10000 });
+    const cs = gemReqs[n0].body.contents;
+    assert(cs.length === 3 && cs[1].role === 'model' && cs[2].parts.some(p => p.text === 'E o que é denominador?'), 'histórico: ' + cs.length);
+    await page.evaluate(() => { window.__falas = []; speechSynthesis.speak = u => window.__falas.push(u.text); });
+    await page.click('.tt-msg.bot >> nth=1 >> [data-a=say]'); await wait(200);
+    assert((await page.evaluate(() => window.__falas)).join(' ').includes('denominador'), 'não leu em voz alta');
+    const q0 = (await idb('quicknotes')).length;
+    await page.click('.tt-msg.bot >> nth=1 >> [data-a=quick]'); await wait(400);
+    assert((await idb('quicknotes')).length === q0 + 1, 'não salvou em nota rápida');
+    await page.click('.tt-msg.bot >> nth=0 >> [data-a=note]'); await wait(1200);
+    const note = (await idb('notes')).find(n => n.title.startsWith('Tutor — '));
+    assert(note && (note.searchText || '').includes('x = 4'), 'anotação do tutor');
+    assert(await page.locator('#editor:not([hidden])').count() === 1, 'anotação não abriu');
+    await page.click('#ed-back'); await wait(900);
+  });
+  await step('Tutor: busca acha a conversa pelo conteúdo e reabre', async () => {
+    await nav('today');
+    await page.keyboard.press('Control+k'); await page.fill('.pal-in input', 'denominador mostra'); await wait(200);
+    const item = page.locator('.pal-item:has-text("Conversa")').first();
+    assert(await item.count() === 1 && (await item.textContent()).includes('denominador'), 'conversa não aparece na busca');
+    await item.click(); await wait(500);
+    assert(await page.textContent('#view-title') === 'Tutor IA' && await page.locator('.tt-msg.bot').count() === 2, 'não reabriu a conversa');
+  });
+
+  // ================= GRAVADOR DE AULA =================
+  console.log('Gravador de aula (microfone simulado)');
+  const aulaNote = async () => (await idb('notes')).find(n => n.title.startsWith('Aula — '));
+  await step('Gravar aula pelo +: cria a anotação, grava o microfone e salva no banco', async () => {
+    await nav('today');
+    await page.click('#fab'); await page.click('.quick[data-q=record]');
+    await page.waitForSelector('#rec-pill:not([hidden])', { timeout: 8000 });
+    assert(await page.locator('#editor:not([hidden])').count() === 1, 'anotação da aula não abriu');
+    await wait(3300);
+    assert(await page.locator('#ed-rec.recording').count() === 1, 'botão de gravar não ficou vermelho');
+    assert(/0:0[2-5]/.test(await page.textContent('#rec-pill')), 'cronômetro: ' + await page.textContent('#rec-pill'));
+    await page.screenshot({ path: path.join(OUT, 'gravando.png') });
+    await page.click('#rec-pill');
+    await toastHas('Gravação salva', 8000);
+    const recs = await idb('recordings');
+    const note = await aulaNote();
+    assert(recs.length === 1 && recs[0].noteId === note.id && recs[0].duration >= 2 && recs[0].size > 1000 && !recs[0].partial, 'gravação: ' + JSON.stringify({ n: recs.length, d: recs[0] && recs[0].duration, s: recs[0] && recs[0].size }));
+    const ok = await page.evaluate(() => new Promise(res => { const o = indexedDB.open('caderno-estudos'); o.onsuccess = () => { const q = o.result.transaction('recordings').objectStore('recordings').getAll(); q.onsuccess = () => { const b = q.result[0].blob; res(b instanceof Blob && b.size > 1000 && b.type.startsWith('audio/')); }; }; }));
+    assert(ok, 'o áudio não ficou salvo no banco');
+    assert(await page.locator('#ed-rec.recording').count() === 0 && await page.locator('#rec-pill').isHidden(), 'continuou parecendo gravar');
+  });
+  await step('Gravações: ouvir, resumo do áudio pela IA e escrever na anotação', async () => {
+    await page.click('#ed-recs'); await page.waitForSelector('.rc-item audio');
+    const n0 = gemReqs.length;
+    await page.click('.rc-item [data-ai=summary]');
+    await page.waitForFunction(() => /Aula de frações/.test(document.getElementById('rc-out')?.textContent || ''), null, { timeout: 15000 });
+    const parts = gemReqs[n0].body.contents[0].parts;
+    assert(parts.some(p => p.inline_data && /^audio\/webm/.test(p.inline_data.mime_type) && p.inline_data.data.length > 1000), 'o áudio não foi enviado ao Gemini');
+    await page.click('#rc-acts .btn:has-text("Escrever na anotação")'); await wait(500); await saved();
+    const texts = (await contentOf((await aulaNote()).title)).pages.flatMap(p => p.texts.map(t => t.text)).join('\n');
+    assert(texts.includes('Frações representam partes de um inteiro'), 'resumo não foi escrito na anotação: ' + texts.slice(0, 120));
+    assert((await idb('recordings'))[0].summary.includes('Aula de frações'), 'resumo não ficou salvo na gravação');
+    assert(await page.locator('#rc-out').count() === 0 && await page.locator('.rc-item').count() === 1, 'janela errada fechou');
+  });
+  await step('Gravações: tarefas e datas ditas na aula viram tarefas', async () => {
+    const t0 = (await idb('tasks')).length;
+    await page.click('.rc-item [data-ai=tasks]');
+    await page.waitForSelector('#rc-acts .btn:has-text("Criar estas tarefas")', { timeout: 15000 });
+    await page.click('#rc-acts .btn:has-text("Criar estas tarefas")'); await wait(500);
+    const ts = await idb('tasks');
+    assert(ts.length === t0 + 2 && ts.some(t => t.title === 'Estudar frações para a prova de sexta') && !ts.some(t => /Tarefas da aula/.test(t.title)), 'tarefas da gravação: ' + ts.slice(t0).map(t => t.title).join(' | '));
+    await closeModals();
+    await page.click('#ed-back'); await wait(900);
+  });
+  await step('Caderno mostra o 🎙️ na anotação gravada e o menu abre as gravações', async () => {
+    await nav('all');
+    const card = page.locator('.card[data-id]:has-text("Aula — ")');
+    assert((await card.locator('.rec-badge').textContent()).includes('1'), 'selo de gravação');
+    await card.locator('.more').click(); await page.click('.menu-item:has-text("Gravações da aula (1)")');
+    await page.waitForSelector('.rc-item audio');
+    await closeModals();
+  });
+
+  // ================= SUGESTÕES, MAPA DO ANO E BUSCA =================
+  console.log('O que fazer agora, mapa do ano e busca no conteúdo');
+  await step('Hoje: "O que fazer agora" sugere a tarefa atrasada e já começa o foco nela', async () => {
+    await page.evaluate(async () => {
+      const st = await import('./js/store.js');
+      const d = new Date(Date.now() - 40 * 86400000), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      await st.db.put('tasks', { id: 'atrasada-1', title: 'Trabalho de História', done: false, due: day, prio: 3, folderId: '', createdAt: Date.now() });
+      localStorage.removeItem('caderno-foco');
+    });
+    await page.reload(); await wait(1500);
+    const sg = page.locator('.sg:has-text("Trabalho de História")');
+    assert(await sg.count() === 1, 'sugestão da tarefa atrasada não apareceu: ' + (await page.locator('.sg-txt b').allTextContents()).join(' | '));
+    assert((await sg.textContent()).includes('Atrasada'), 'motivo da sugestão');
+    await sg.locator('[data-sg]').click(); await wait(500);
+    assert(await page.textContent('#view-title') === 'Foco', 'não levou ao foco');
+    assert(await page.$eval('#fc-task', s => s.value) === 'atrasada-1', 'o foco não ficou ligado à tarefa');
+    await page.click('#fc-stop', { timeout: 3000 }); await wait(300);
+    assert(!(await page.evaluate(() => JSON.parse(localStorage.getItem('caderno-foco')).running)), '"Encerrar e salvar" não parou o foco');
+  });
+  await step('Relatório: mapa de estudos do ano com os dias estudados', async () => {
+    await nav('report');
+    const n = await page.locator('.hm-grid .hm').count();
+    assert(n >= 365 && n <= 371, 'dias no mapa: ' + n);
+    assert(await page.locator('.hm-grid .hm:not(.l0)').count() >= 1, 'nenhum dia marcado como estudado');
+    await page.locator('.hm-grid .hm').last().click();
+    assert((await page.textContent('#hm-tip')).includes(':'), 'detalhe do dia');
+  });
+  await step('Busca encontra texto dentro das notas rápidas', async () => {
+    await page.keyboard.press('Control+k'); await page.fill('.pal-in input', 'calculadora'); await wait(200);
+    const item = page.locator('.pal-item:has-text("Nota rápida")').first();
+    assert((await item.textContent()).includes('calculadora'), 'trecho da nota rápida');
+    await item.click(); await wait(400);
+    assert(await page.textContent('#view-title') === 'Notas rápidas', 'não abriu as notas rápidas');
+  });
+  await step('Flashcards: botão Ouvir lê a carta', async () => {
+    await page.evaluate(async () => { const st = await import('./js/store.js'); const cs = await st.db.all('cards'); const c = cs[0]; c.due = '2000-01-01'; await st.db.put('cards', c); });
+    await page.reload(); await wait(1300);
+    await nav('cards'); await page.click('#cd-study'); await page.waitForSelector('#rv-say');
+    await page.evaluate(() => { window.__falas = []; speechSynthesis.speak = u => window.__falas.push(u.text); });
+    const front = await page.textContent('.flash-front');
+    await page.click('#rv-say'); await wait(200);
+    assert((await page.evaluate(() => window.__falas)).join(' ').includes(front.trim().slice(0, 10)), 'não leu a frente da carta');
+    assert(!(await page.locator('.flash.shown').count()), 'o botão Ouvir virou a carta');
+    await page.click('#rv-quit'); await wait(300);
+  });
+  await step('Excluir tarefa tem "Desfazer"', async () => {
+    await nav('tasks'); await page.click('#task-mode [data-m=list]'); await wait(200);
+    const first = page.locator('#task-list .task').first();
+    const id = await first.getAttribute('data-id');
+    await first.locator('[data-del]').click(); await wait(300);
+    assert(!(await idb('tasks')).some(t => t.id === id), 'não excluiu');
+    await page.click('#toast .toast-btn'); await wait(400);
+    assert((await idb('tasks')).some(t => t.id === id), 'desfazer não trouxe a tarefa');
+    assert(await page.locator(`#task-list .task[data-id="${id}"]`).count() === 1, 'tarefa não voltou para a lista');
+  });
+
+  // ================= BANCO DE DADOS E BACKUP =================
+  console.log('Banco de dados, cópias e backup');
+  const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings'];
+  await step('Dados e backup: a tela mostra o que está salvo no banco', async () => {
+    await page.click('#btn-data'); await page.waitForSelector('.db-counts');
+    assert(await page.locator('.db-counts div').count() === 17, 'caixas: ' + await page.locator('.db-counts div').count());
+    const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.db-counts div')].map(d => [d.querySelector('span').textContent, +d.querySelector('b').textContent])));
+    const real = { 'Anotações': 'notes', 'Tarefas': 'tasks', 'Notas rápidas': 'quicknotes', 'Gravações de aula': 'recordings', 'Conversas com o tutor': 'chats', 'Flashcards': 'cards', 'Pastas': 'folders' };
+    for (const [label, s] of Object.entries(real)) { const n = (await idb(s)).length; assert(shown[label] === n, `${label}: tela ${shown[label]} ≠ banco ${n}`); }
+    assert((await page.textContent('#dt-saved')) !== 'ainda não', 'último salvamento');
+  });
+  await step('Cópia no banco: fazer agora, mudar os dados e voltar no tempo', async () => {
+    await page.click('#dt-snap'); await toastHas('Cópia feita');
+    await page.waitForSelector('.snap-row');
+    const snaps = await idb('snapshots');
+    assert(snaps.length >= 1 && snaps.length <= 3, 'cópias no banco: ' + snaps.length);
+    const t0 = (await idb('tasks')).length;
+    await page.evaluate(async () => { const st = await import('./js/store.js'); await st.db.put('tasks', { id: 'depois-da-copia', title: 'Feita depois da cópia', done: false, due: '', prio: 2, createdAt: Date.now() }); });
+    await page.click('.snap-row >> nth=0 >> [data-snap]'); await page.click('.modal-actions .btn.primary');
+    await toastHas('Cópia restaurada', 10000);
+    const ts = await idb('tasks');
+    assert(ts.length === t0 && !ts.some(t => t.id === 'depois-da-copia'), 'não voltou no tempo');
+    assert((await idb('recordings')).length === 1, 'restaurar a cópia apagou a gravação');
+    assert((await idb('snapshots')).length <= 3, 'guardou cópias demais');
+  });
+  await step('Verificar e reparar corrige ligações quebradas', async () => {
+    await page.evaluate(async () => {
+      const st = await import('./js/store.js');
+      await st.db.put('tasks', { id: 'tarefa-orfa', title: 'Tarefa de anotação apagada', done: false, due: '', prio: 2, noteId: 'anotacao-que-nao-existe', createdAt: Date.now() });
+      await st.db.put('cards', { id: 'carta-orfa', deckId: 'baralho-que-sumiu', front: 'Pergunta perdida', back: 'Resposta', due: '2000-01-01', interval: 0, ease: 2.5, reps: 0, lapses: 0, createdAt: Date.now() });
+    });
+    await page.click('#dt-check');
+    await page.waitForFunction(() => /Corrigido/.test(document.getElementById('dt-check-out')?.textContent || ''), null, { timeout: 8000 });
+    const t = (await idb('tasks')).find(x => x.id === 'tarefa-orfa');
+    const c = (await idb('cards')).find(x => x.id === 'carta-orfa');
+    const deck = (await idb('decks')).find(d => d.id === c.deckId);
+    assert(t.noteId === '' && deck && deck.name === 'Recuperados', 'não reparou');
+    await page.click('#dt-check');
+    await page.waitForFunction(() => /está tudo certo/.test(document.getElementById('dt-check-out')?.textContent || ''), null, { timeout: 8000 });
+  });
+  let fullBackup;
+  await step('Backup em arquivo leva tudo (até as gravações), mas não a chave da IA', async () => {
+    const dl = page.waitForEvent('download', { timeout: 15000 });
+    await page.click('#dt-export'); const d = await dl; fullBackup = path.join(OUT, 'backup-completo.json'); await d.saveAs(fullBackup);
+    const data = JSON.parse(fs.readFileSync(fullBackup, 'utf8'));
+    for (const s of STORES) assert(Array.isArray(data[s]) && data[s].length === (await idb(s)).length, 'faltou ou incompleto: ' + s);
+    assert(data.quicknotes.length >= 2 && data.chats.length === 1 && data.recordings.length === 1, 'dados novos ausentes');
+    assert(/^data:audio\/webm/.test(data.recordings[0].audio) && data.recordings[0].audio.length > 2000, 'o áudio não foi no backup');
+    assert(data.prefs && Object.keys(data.prefs).some(k => k.startsWith('caderno-')), 'preferências não foram no backup');
+    assert(!fs.readFileSync(fullBackup, 'utf8').includes('chave-teste'), 'a chave da IA foi para o backup!');
+  });
+  await step('Restaurar em outro tablet traz notas rápidas, conversas e o áudio', async () => {
+    const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
+    const p2 = await c2.newPage(); watch(p2);
+    await p2.goto(base); await p2.waitForTimeout(1200);
+    await p2.click('#btn-data'); await p2.waitForSelector('#dt-import');
+    await p2.setInputFiles('#backup-input', fullBackup);
+    await p2.waitForSelector('.modal h2:has-text("Restaurar backup")');
+    await p2.click('.modal-actions .btn.danger');
+    await p2.waitForFunction(() => (document.getElementById('toast') || {}).textContent?.includes('Backup restaurado'), null, { timeout: 30000 });
+    const nq = JSON.parse(fs.readFileSync(fullBackup, 'utf8')).quicknotes.length;
+    await p2.waitForFunction(n => [...document.querySelectorAll('.db-counts div')].some(d => d.textContent === n + 'Notas rápidas'), nq, { timeout: 8000 }).catch(() => {});
+    const r = await p2.evaluate(() => new Promise(res => {
+      const o = indexedDB.open('caderno-estudos');
+      o.onsuccess = () => {
+        const tx = o.result.transaction(['quicknotes', 'chats', 'recordings', 'notes']); const out = {}; let n = 0;
+        for (const s of ['quicknotes', 'chats', 'recordings', 'notes']) { const q = tx.objectStore(s).getAll(); q.onsuccess = () => { out[s] = q.result; if (++n === 4) res({ q: out.quicknotes.length, c: out.chats.length, notes: out.notes.length, rec: out.recordings.length, blob: !!out.recordings[0] && out.recordings[0].blob instanceof Blob && out.recordings[0].blob.size > 1000 }); }; }
+      };
+    }));
+    const shown = await p2.evaluate(() => [...document.querySelectorAll('.db-counts div')].map(d => d.textContent).join(' | '));
+    await c2.close();
+    const data = JSON.parse(fs.readFileSync(fullBackup, 'utf8'));
+    assert(r.q === data.quicknotes.length && r.c === 1 && r.rec === 1 && r.blob && r.notes === data.notes.length, 'restauração: ' + JSON.stringify(r));
+    assert(shown.includes(`${data.quicknotes.length}Notas rápidas`), 'tela de dados não atualizou: ' + shown);
+  });
+  await step('Fechar e abrir o app: tudo continua lá (banco e telas)', async () => {
+    const before = {}; for (const s of STORES) before[s] = (await idb(s)).length;
+    const ui = async () => {
+      await nav('quick'); const q = await page.locator('.qn-card').count();
+      await nav('tutor'); const c = await page.locator('.tt-item').count();
+      await nav('tasks'); const t = await page.textContent('#nav-main [data-k=tasks] em').catch(() => '');
+      return { q, c, t };
+    };
+    const u0 = await ui();
+    await page.reload(); await wait(1500);
+    const after = {}; for (const s of STORES) after[s] = (await idb(s)).length;
+    const u1 = await ui();
+    assert(JSON.stringify(before) === JSON.stringify(after), 'banco mudou: ' + JSON.stringify({ before, after }));
+    assert(JSON.stringify(u0) === JSON.stringify(u1) && u0.q >= 2 && u0.c === 1, 'telas diferentes: ' + JSON.stringify({ u0, u1 }));
+  });
+  await step('Telas novas no tablet em pé e no tema escuro: nada estoura a largura', async () => {
+    await page.click('#btn-settings'); await page.click('#s-theme [data-t=dark]'); await page.click('.modal-actions .btn.primary'); await wait(200);
+    const bad = [];
+    let qbg = '';
+    for (const [w, hh] of [[800, 1280], [1280, 800]]) {
+      await page.setViewportSize({ width: w, height: hh }); await wait(250);
+      for (const k of ['today', 'quick', 'tutor', 'data', 'report']) {
+        await page.evaluate(k => { document.body.classList.remove('side-open'); (k === 'data' ? document.getElementById('btn-data') : document.querySelector(`#nav-main [data-k=${k}]`)).click(); }, k); await wait(400);
+        const over = await page.evaluate(() => document.querySelector('#main').scrollWidth - document.querySelector('#main').clientWidth);
+        if (over > 2) bad.push(`${k} ${w}px (+${over})`);
+        if (k === 'quick') qbg = await page.evaluate(() => getComputedStyle(document.querySelector('.qn-card')).backgroundColor);
+        await page.screenshot({ path: path.join(OUT, `novas-${w > hh ? 'deitado' : 'em-pe'}-escuro-${k}.png`) });
+      }
+    }
+    await page.click('#btn-settings'); await page.click('#s-theme [data-t=auto]'); await page.click('.modal-actions .btn.primary'); await wait(200);
+    assert(!bad.length, 'estouram a largura: ' + bad.join(', '));
+    assert(qbg && qbg !== 'rgb(255, 244, 184)', 'nota rápida continua clara no tema escuro: ' + qbg);
   });
 
   await step('nenhum erro de JavaScript em todo o teste', async () => {

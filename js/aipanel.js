@@ -3,6 +3,7 @@ import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTask
 import { getEditorContext, insertText } from './editor.js';
 import { shareText } from './export.js';
 import { ic, esc, h, toast, modal } from './ui.js';
+import { speak, stopSpeak } from './voice.js';
 
 let cb = {};
 let panel, conv = null, busy = null;
@@ -72,7 +73,7 @@ export function closeAIPanel() {
   document.body.classList.remove('ai-open');
 }
 export function toggleAIPanel() { panel.hidden ? openAIPanel() : closeAIPanel(); }
-export function resetAIPanel() { stop(); conv = null; if (panel) { renderLog(); closeAIPanel(); } }
+export function resetAIPanel() { stop(); stopSpeak(); conv = null; if (panel) { renderLog(); closeAIPanel(); } }
 
 function setScope(s) {
   scope = s;
@@ -88,7 +89,7 @@ function renderSetup() {
   if (ok) return;
   box.innerHTML = `<div class="ai-setup-card">
     <p><b>A IA resume suas anotações, corrige e melhora sua escrita, explica a matéria, cria perguntas e escreve mais conteúdo.</b></p>
-    <p class="muted small">Funciona com o <b>Gemini</b> (Google), o <b>Claude</b> (Anthropic) ou a <b>Groq</b>. Gemini e Groq têm plano gratuito. Crie uma chave no site escolhido e cole em Ajustes → Inteligência artificial.</p>
+    <p class="muted small">Usa o <b>Gemini</b>, do Google, na versão rápida e gratuita. Crie uma chave em <b>aistudio.google.com/apikey</b> e cole em Ajustes → Inteligência artificial.</p>
     <button class="btn primary" id="ai-config">${ic('settings')}<span>Configurar a IA</span></button></div>`;
   box.querySelector('#ai-config').onclick = async () => { await cb.onSettings(); renderSetup(); };
 }
@@ -226,6 +227,7 @@ function renderLog() {
       const bar = h(`<div class="ai-result">
         <button class="chip small" data-r="new">${ic('page')}<span>Nova página</span></button>
         <button class="chip small" data-r="here">${ic('plus')}<span>Nesta página</span></button>
+        <button class="chip small" data-r="say">${ic('speaker')}<span>Ouvir</span></button>
         <button class="chip small" data-r="copy">${ic('copy')}<span>Copiar</span></button>
         <button class="chip small" data-r="share">${ic('share')}<span>Enviar</span></button></div>`);
       const tasks = last && conv.action === 'plan' ? extractTasks(t.text) : [];
@@ -241,6 +243,8 @@ function renderLog() {
         if (b.dataset.r === 'new' || b.dataset.r === 'here') {
           const n = insertText(txt, b.dataset.r);
           toast(n > 1 ? `Texto escrito em ${n} páginas ✓` : 'Texto escrito na folha ✓');
+        } else if (b.dataset.r === 'say') {
+          speak(txt, { button: b });
         } else if (b.dataset.r === 'copy') {
           try { await navigator.clipboard.writeText(txt); toast('Copiado'); } catch { toast('Não foi possível copiar'); }
         } else if (b.dataset.r === 'share') {
@@ -269,7 +273,7 @@ export async function openAIDialog({ title, subtitle, pages, bg, folder, onSave,
   if (!aiConfigured()) {
     const go = await modal({
       title: 'Assistente IA',
-      body: '<p>Para usar a IA, cole sua chave da API da Anthropic em <b>Ajustes → Inteligência artificial</b>.</p>',
+      body: '<p>Para usar a IA, cole a chave do Gemini (grátis em aistudio.google.com/apikey) em <b>Ajustes → Inteligência artificial</b>.</p>',
       actions: [{ label: 'Cancelar', value: false }, { label: 'Abrir Ajustes', value: true, primary: true }],
     });
     if (go) await onSettings();

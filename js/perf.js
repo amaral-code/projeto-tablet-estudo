@@ -3,6 +3,8 @@
 import { ic, esc, h, toast, modal, confirmBox, menu } from './ui.js';
 import { dayStr, addDays, hubData, reviewsByDay, studyStreak, markHabitToday, startFocus } from './hub.js';
 import { aiConfigured, streamChat, cleanText, extractTasks } from './ai.js';
+import { quickData } from './quicknotes.js';
+import { chatsData, openChat } from './tutor.js';
 
 let A;
 const P = { books: [], reads: [], grades: [] };
@@ -511,6 +513,41 @@ function reportText(m, prev) {
 Analise minha semana como um treinador de estudos: diga em poucas linhas o que foi bem, o que piorou e por quê (com base nos números), e dê 3 a 5 recomendações práticas e específicas para a próxima semana (quando estudar, quais matérias priorizar, como usar foco, flashcards e leitura). Termine com uma seção "# Tarefas" com 3 a 6 tarefas curtas, uma por linha começando com "- ".`;
 }
 let aiReport = null;
+// ----- mapa de estudos do ano (um quadradinho por dia; mais escuro = mais estudo) -----
+function heatmapHTML() {
+  const H = hubData(), rv = reviewsByDay();
+  const today = dayStr();
+  const minutes = new Map(), active = new Set();
+  for (const s of H.sessions) minutes.set(s.date, (minutes.get(s.date) || 0) + s.minutes);
+  for (const d of Object.keys(rv)) active.add(d);
+  for (const r of P.reads) if (r.pages > 0) active.add(r.date);
+  for (const t of A.state.tasks) if (t.doneAt) active.add(dayStr(new Date(t.doneAt)));
+  for (const hb of H.habits) for (const d of Object.keys(hb.days)) if (hb.days[d]) active.add(d);
+  // começa num domingo, ~52 semanas atrás
+  let start = addDays(today, -364);
+  while (parseDay(start).getDay() !== 0) start = addDays(start, -1);
+  const cells = [];
+  let studied = 0, best = 0, totalMin = 0;
+  for (let d = start; d <= today; d = addDays(d, 1)) {
+    const m = minutes.get(d) || 0;
+    const lvl = m >= 90 ? 4 : m >= 45 ? 3 : m >= 15 ? 2 : (m > 0 || active.has(d)) ? 1 : 0;
+    if (lvl) studied++;
+    best = Math.max(best, m); totalMin += m;
+    const label = `${parseDay(d).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}: ${m ? fmtMin(m) + ' de foco' : lvl ? 'estudou' : 'sem estudo'}`;
+    cells.push(`<i class="hm l${lvl}" title="${label}" data-tip="${label}"></i>`);
+  }
+  const months = [];
+  for (let w = 0; w * 7 < cells.length; w++) {
+    const d = parseDay(addDays(start, w * 7));
+    months.push(d.getDate() <= 7 ? `<span style="grid-column:${w + 1}">${d.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}</span>` : '');
+  }
+  return `<div class="panel heat"><h3>${ic('calendar')}Mapa de estudos do ano</h3>
+    <p class="muted small"><b>${studied}</b> ${studied === 1 ? "dia" : "dias"} com estudo no último ano · <b>${fmtMin(totalMin)}</b> de foco · recorde: <b>${fmtMin(best)}</b> num dia</p>
+    <div class="hm-scroll"><div class="hm-months">${months.join('')}</div><div class="hm-grid" role="img" aria-label="Dias com estudo no último ano">${cells.join('')}</div></div>
+    <div class="hm-legend"><span class="muted small" id="hm-tip">Toque num dia para ver os detalhes</span><span class="grow"></span><span class="muted small">Menos</span><i class="hm l0"></i><i class="hm l1"></i><i class="hm l2"></i><i class="hm l3"></i><i class="hm l4"></i><span class="muted small">Mais</span></div>
+  </div>`;
+}
+
 function renderReport(el) {
   const r = weekRange(reportWeek), m = metrics(r), prev = metrics(weekRange(reportWeek + 1));
   const t = totals(), xp = xpOf(t), L = levelOf(xp);
@@ -543,9 +580,13 @@ function renderReport(el) {
         <div class="badges">${BADGES.map(([e, n, d, f]) => `<div class="badge ${f(t) ? 'on' : ''}" title="${esc(d)}"><span>${e}</span><b>${esc(n)}</b><small>${esc(d)}</small></div>`).join('')}</div>
       </div>
     </div>
-    <div class="panel ai-report" ${aiReport ? '' : 'hidden'}><h3>${ic('magic')}Análise da IA</h3><div class="ai-out" id="rp-out"></div><div class="row wrap" id="rp-actions"></div></div>`;
+    <div class="panel ai-report" ${aiReport ? '' : 'hidden'}><h3>${ic('magic')}Análise da IA</h3><div class="ai-out" id="rp-out"></div><div class="row wrap" id="rp-actions"></div></div>
+    ${heatmapHTML()}`;
   el.querySelector('#rp-week').onclick = e => { const b = e.target.closest('[data-w]'); if (b) { reportWeek = +b.dataset.w; renderReport(el); } };
   el.querySelector('#rp-ai').onclick = () => analyzeWeek(el, m, prev);
+  el.querySelector('.hm-grid')?.addEventListener('click', e => { const c = e.target.closest('.hm'); if (c) el.querySelector('#hm-tip').textContent = c.dataset.tip; });
+  // se não couber, mostra o fim (os dias mais recentes)
+  const sc = el.querySelector('.hm-scroll'); if (sc) sc.scrollLeft = sc.scrollWidth;
   if (aiReport) showAIReport(el);
 }
 function showAIReport(el) {
@@ -619,29 +660,42 @@ export async function openPalette() {
       ['Abrir Kindle', 'bookOpen', openKindle], ['Registrar leitura', 'bookOpen', () => A.goTo({ kind: 'reading' })],
       ['Lançar nota ou prova', 'award', () => gradeDialog()], ['Revisar flashcards', 'cards', () => A.goTo({ kind: 'cards' })],
       ['Relatório da semana', 'chart', () => A.goTo({ kind: 'report' })], ['Importar PDF', 'upload', () => A.importPdf()],
-      ['Ajustes e backup', 'settings', () => A.settings()],
+      ['Ajustes e IA', 'settings', () => A.settings()],
+      ['Nova nota rápida', 'sticky', () => A.quick('quicknote')], ['Gravar a aula (áudio)', 'mic', () => A.quick('record')],
+      ['Perguntar ao tutor IA', 'chat', () => A.goTo({ kind: 'tutor' })],
       ...Object.entries(A.views()).map(([k, v]) => [`Ir para ${v.title}`, v.icon, () => A.goTo({ kind: k })]),
     ].map(([label, icon, run]) => ({ label, icon, run, kind: 'Ação' }));
-    const notes = A.state.notes.map(n => ({ label: n.title, icon: 'page', kind: 'Anotação', run: () => A.openNote(n.id) }));
-    const tasks = A.state.tasks.filter(t => !t.done).map(t => ({ label: t.title, icon: 'tasks', kind: 'Tarefa', run: () => A.taskDialog(t) }));
+    // busca também dentro do conteúdo (texto digitado das anotações, notas rápidas, conversas, flashcards)
+    const notes = A.state.notes.map(n => ({ label: n.title, text: n.searchText || '', icon: 'page', kind: 'Anotação', run: () => A.openNote(n.id) }));
+    const tasks = A.state.tasks.filter(t => !t.done).map(t => ({ label: t.title, text: [t.notes, ...(t.subtasks || []).map(x => x.title)].join(' '), icon: 'tasks', kind: 'Tarefa', run: () => A.taskDialog(t) }));
+    const quick = quickData().map(q => ({ label: q.text.split('\n')[0].replace(/^\s*\[( |x)\]\s*/i, '').slice(0, 60) || 'Nota rápida', text: q.text, icon: 'sticky', kind: 'Nota rápida', run: () => A.goTo({ kind: 'quick' }) }));
+    const chats = chatsData().map(c => ({ label: c.title, text: c.messages.map(m => m.text || '').join(' ').slice(0, 6000), icon: 'chat', kind: 'Conversa', run: () => openChat(c.id) }));
+    const cards = hubData().cards.map(c => ({ label: c.front.slice(0, 70), text: c.back, icon: 'cards', kind: 'Flashcard', run: () => A.goTo({ kind: 'cards' }) }));
     const decks = hubData().decks.map(d => ({ label: d.name, icon: 'cards', kind: 'Baralho', run: () => A.goTo({ kind: 'cards' }) }));
     const books = P.books.map(b => ({ label: b.title, icon: 'bookOpen', kind: 'Livro', run: () => logReading(b) }));
     const folders = A.state.folders.map(f => ({ label: f.name, icon: 'folder', kind: 'Pasta', run: () => A.goTo({ kind: 'notes', filter: f.id }) }));
-    return [...acts, ...notes, ...tasks, ...folders, ...decks, ...books];
+    return [...acts, ...notes, ...tasks, ...quick, ...folders, ...decks, ...books, ...chats, ...cards];
   };
   const all = items();
   const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const back = h(`<div class="modal-back show palette-back"><div class="palette" role="dialog" aria-label="Busca global">
-    <div class="pal-in">${ic('search')}<input placeholder="Buscar anotações, tarefas, livros… ou digitar uma ação" aria-label="Buscar"></div>
+    <div class="pal-in">${ic('search')}<input placeholder="Buscar em tudo: anotações, tarefas, notas, conversas… ou uma ação" aria-label="Buscar"></div>
     <div class="pal-list" role="listbox"></div></div></div>`);
   const input = back.querySelector('input'), list = back.querySelector('.pal-list');
   let sel = 0, shown = [];
   const close = () => { back.remove(); };
   const draw = () => {
     const q = norm(input.value.trim());
-    shown = (q ? all.filter(x => norm(x.label).includes(q)) : all.filter(x => x.kind === 'Ação')).slice(0, 40);
+    if (q) {
+      const byTitle = all.filter(x => norm(x.label).includes(q));
+      const byText = all.filter(x => !byTitle.includes(x) && x.text && norm(x.text).includes(q)).map(x => {
+        const t = norm(x.text), i = t.indexOf(q);
+        return { ...x, snippet: (i > 30 ? '…' : '') + x.text.slice(Math.max(0, i - 30), i + q.length + 50).trim() + '…' };
+      });
+      shown = [...byTitle, ...byText].slice(0, 40);
+    } else shown = all.filter(x => x.kind === 'Ação').slice(0, 40);
     sel = Math.min(sel, Math.max(0, shown.length - 1));
-    list.innerHTML = shown.map((x, i) => `<button class="pal-item ${i === sel ? 'sel' : ''}" data-i="${i}" role="option">${ic(x.icon)}<span class="grow">${esc(x.label)}</span><em>${x.kind}</em></button>`).join('') || '<p class="muted small pad">Nada encontrado.</p>';
+    list.innerHTML = shown.map((x, i) => `<button class="pal-item ${i === sel ? 'sel' : ''}" data-i="${i}" role="option">${ic(x.icon)}<span class="grow">${esc(x.label)}${x.snippet ? `<small class="pal-snip">${esc(x.snippet)}</small>` : ''}</span><em>${x.kind}</em></button>`).join('') || '<p class="muted small pad">Nada encontrado.</p>';
   };
   const run = i => { const x = shown[i]; if (!x) return; close(); x.run(); };
   input.oninput = () => { sel = 0; draw(); };

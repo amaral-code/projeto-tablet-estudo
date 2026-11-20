@@ -25,24 +25,32 @@ O app tem **3 áreas**, sempre no menu da esquerda (tablet deitado) ou em **Mais
 
 | Área | Telas |
 |---|---|
-| 🗓️ **Planejar** | **Hoje** (seu dia em uma tela) · **Tarefas** (lista, quadro e matriz) · **Agenda** (mês) · **Horário de aulas** · **Metas** |
-| 📚 **Estudar** | **Caderno** (anotações à mão + IA) · **Foco** (Pomodoro e cronômetro) · **Flashcards** · **Simulado** (prova feita pela IA) · **Leitura** (com Kindle) |
-| 📈 **Acompanhar** | **Hábitos** · **Diário** · **Notas e provas** · **Relatório** (semana, conquistas e análise da IA) |
+| 🗓️ **Planejar** | **Hoje** (seu dia em uma tela, com "O que fazer agora") · **Tarefas** (lista, quadro e matriz) · **Notas rápidas** · **Agenda** (mês) · **Horário de aulas** · **Metas** |
+| 📚 **Estudar** | **Caderno** (anotações à mão + IA + gravação da aula) · **Foco** (Pomodoro e cronômetro) · **Flashcards** · **Simulado** (prova feita pela IA) · **Tutor IA** · **Leitura** (com Kindle) |
+| 📈 **Acompanhar** | **Hábitos** · **Diário** · **Notas e provas** · **Relatório** (semana, mapa do ano, conquistas e análise da IA) |
 
-- O botão azul **+** no canto cria qualquer coisa de qualquer tela, e no topo da lista aparece a ação da tela em que você está.
-- A tela **Tudo e ajuda** (no fim do menu) mostra cada recurso com uma frase dizendo para que serve, e tem o **tour** de boas-vindas.
-- Cada tela mostra uma **dica curta** no topo até você tocar em "Entendi".
-- O nome da área aparece acima do título de cada tela, então você sempre sabe onde está.
+No fim do menu ficam **Tudo e ajuda**, **Dados e backup** e **Ajustes e IA**.
+
+- **Menu retrátil:** com o tablet deitado, toque na setinha **‹** ao lado do nome do app (ou no **☰**) para o menu virar uma coluna fina só com ícones e nomes curtos. Toque de novo para abrir. O app lembra como você deixou. Com o tablet em pé, o menu é uma gaveta: toque no **☰** ou **arraste da borda esquerda** para abrir, e arraste para a esquerda (ou toque fora) para fechar.
+- O botão azul **+** no canto cria qualquer coisa de qualquer tela (anotação, nota rápida, tarefa, gravar aula, perguntar ao tutor, foco…), e no topo da lista aparece a ação da tela em que você está.
+- A tela **Tudo e ajuda** mostra cada recurso com uma frase dizendo para que serve, e tem o **tour** de boas-vindas.
+- Cada tela mostra uma **dica curta** no topo até você tocar em "Entendi". O nome da área aparece acima do título, então você sempre sabe onde está.
 
 ## 🆕 Novidades desta versão
 
 | Recurso | O que faz |
 |---|---|
-| ⭐ **Prioridades de hoje** | Toque na estrela de até 3 tarefas: elas ficam no topo do painel Hoje, com a contagem de quantas já foram feitas |
-| 🎯 **Metas** | Horas de foco, páginas, livros, flashcards, tarefas, dias de um hábito, média numa matéria ou um contador seu. O progresso é **calculado sozinho**, com o prazo e o ritmo necessário ("44 min por dia", "1 livro a cada 25 dias") |
-| 📝 **Simulado com IA** | Escolha uma anotação ou uma pasta, o número de perguntas e o nível. A IA monta uma prova de múltipla escolha, você responde no app e vê a correção com explicação. A nota pode ir para **Notas e provas**, e os erros viram **flashcards**. **Testado com o Gemini de verdade** |
-| ⏱️ **Cronômetro livre** | No Foco, além do Pomodoro: conte o tempo no seu ritmo e salve quando terminar |
-| 🌗 **Aparência** | Em Ajustes: tema Automático, Claro ou Escuro, e texto Normal, Grande ou Maior |
+| ☰ **Menu lateral retrátil** | Recolhe para só ícones e deixa mais espaço para estudar; com o tablet em pé, abre arrastando da borda |
+| ⚡ **IA só com o Gemini rapidão** | Uma chave só, sem escolher provedor. Usa o **Gemini Flash-Lite**, o mais rápido do Google: **0,8 s** para responder um texto e **2 s** para ler uma página do caderno nos testes de verdade |
+| 💬 **Tutor IA** | Converse com a IA como com um professor particular. Mande a **foto de um exercício** (câmera do tablet) e ela resolve passo a passo. Fale em vez de digitar (🎙️ ditado) e ouça a resposta (🔊). As conversas ficam salvas e aparecem na busca |
+| 🎙️ **Gravar a aula** | No caderno, toque no 🎙️ do topo (ou **+ → Gravar aula**) para gravar o áudio enquanto escreve. A gravação fica ligada à anotação e é salva aos poucos (se o app fechar, não perde). Depois, a IA faz o **resumo da aula**, a **transcrição** ou tira as **tarefas e datas** que o professor falou, e escreve tudo na anotação |
+| 📌 **Notas rápidas** | Ideias e lembretes estilo post-it, com cores, **listas de marcar**, ditado por voz e leitura em voz alta. Fixe no Hoje com 📌 e transforme os itens em tarefas com um toque |
+| 💡 **O que fazer agora** | No topo do Hoje: a aula que está acontecendo, provas chegando, tarefas atrasadas, prioridades, flashcards para revisar, meta de foco, hábitos e diário — cada sugestão com o botão que já começa |
+| 🗓️ **Mapa de estudos do ano** | No Relatório, cada dia do último ano pintado conforme o quanto você estudou. Toque num dia para ver os detalhes |
+| 🗄️ **Dados e backup** | O banco de dados do app à vista: o que está salvo, espaço usado, **proteção contra o Android apagar**, **cópias automáticas diárias** dentro do app (volta no tempo com um toque), backup em arquivo (com as gravações), **verificar e reparar** |
+| 🔊 **Ouvir e ditar** | Botão **Ouvir** nas respostas da IA, no tutor, nas notas rápidas e nos flashcards; **Ditar** nas notas rápidas e no tutor |
+| 🔍 **Busca por dentro** | A lupa agora acha o **texto** de anotações, notas rápidas, conversas do tutor, subtarefas e flashcards, mostrando o trecho |
+| ↩️ **Desfazer** | Apagou uma tarefa ou nota rápida sem querer? Toque em **Desfazer** no aviso |
 
 ## 🚀 Tudo em um: central de produtividade
 
@@ -77,12 +85,15 @@ O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos 
 | 📊 **Relatório semanal** | Foco, tarefas, flashcards, páginas, hábitos e atrasos comparados com a semana anterior. Mostra seu melhor dia e as matérias esquecidas. Com **Analisar minha semana com IA**, você recebe conselhos e tarefas para a semana seguinte |
 | 🏆 **Nível e conquistas** | Você ganha XP estudando (foco, tarefas, cartas, páginas, livros, hábitos) e libera 12 conquistas |
 | 🔗 **Atalhos de apps** | Kindle, Classroom, Drive, YouTube, Tradutor e Khan Academy, todos editáveis. No tablet abrem o app instalado; se não conseguirem, abrem o site |
-| 🔍 **Busca rápida** | A lupa no topo (ou Ctrl+K num teclado) encontra anotações, tarefas, livros, pastas e baralhos, e executa ações como "Começar foco" e "Abrir Kindle" |
+| 🔍 **Busca rápida** | A lupa no topo (ou Ctrl+K num teclado) encontra anotações, tarefas, notas rápidas, conversas, livros, pastas e baralhos — pelo título ou pelo texto de dentro — e executa ações como "Começar foco", "Gravar a aula" e "Abrir Kindle" |
+| ⭐ **Prioridades de hoje** | Toque na estrela de até 3 tarefas: elas ficam no topo do painel Hoje |
+| 🎯 **Metas** | Horas de foco, páginas, livros, flashcards, tarefas, dias de um hábito, média numa matéria ou um contador seu, com progresso **calculado sozinho** e o ritmo necessário |
+| 📝 **Simulado com IA** | A IA monta uma prova de múltipla escolha das suas anotações, corrige com explicação, lança a nota e transforma os erros em flashcards |
 | 📲 **Atalhos no ícone** | Segure o ícone do app na tela inicial para abrir direto em Hoje, Começar foco, Nova anotação ou Leitura |
 
-## ✦ Assistente de IA
+## ✦ Assistente de IA (Gemini rapidão)
 
-Toque no botão roxo **IA** dentro de uma anotação. A IA (Claude, da Anthropic) **lê a sua letra direto da folha**, sem precisar converter antes. Escolha **Seleção**, **Esta página** ou **Todas** e peça:
+Toque no botão roxo **IA** dentro de uma anotação. A IA **lê a sua letra direto da folha**, sem precisar converter antes. Escolha **Seleção**, **Esta página** ou **Todas** e peça:
 
 | Ação | O que faz |
 |---|---|
@@ -95,36 +106,20 @@ Toque no botão roxo **IA** dentro de uma anotação. A IA (Claude, da Anthropic
 | **Plano de estudo** | Plano da semana. Um toque transforma o plano em **tarefas** |
 | **Pergunta livre** | Converse sobre a anotação ("o que é denominador?") |
 
-O resultado pode ser **escrito na folha**, alinhado às pautas (numa página nova ou abaixo do que já está escrito), além de copiado ou enviado. Pelo menu **⋮** de uma anotação ou de uma pasta, dá para resumir uma **pasta inteira** e salvar o resultado como uma anotação nova.
+O resultado pode ser **escrito na folha**, alinhado às pautas, **ouvido em voz alta**, copiado ou enviado. Pelo menu **⋮** de uma anotação ou de uma pasta, dá para resumir uma **pasta inteira** e salvar como anotação nova. A mesma IA faz o **Tutor**, o **Simulado**, o resumo das **gravações de aula**, a análise do **Relatório** e o resumo do **Diário**.
 
-**Como ativar:** crie uma chave em **platform.claude.com → API Keys**, depois cole em **Ajustes → Inteligência artificial** e toque em **Testar**. Você pode escolher o modelo: Opus 5.5 (melhor qualidade, padrão), Sonnet 5.5 ou Haiku 5.5 (o mais barato).
-
-### Usar o Gemini, do Google (recomendado, tem plano gratuito)
+### Como ligar (grátis, pelo tablet)
 
 1. Entre em **aistudio.google.com/apikey** com a sua conta Google.
 2. Toque em **Create API key** (Criar chave de API) e copie a chave.
-3. No app, abra **Ajustes → Inteligência artificial**, deixe **Gemini (Google)** selecionado, cole a chave e toque em **Testar**.
+3. No app, abra **Ajustes e IA**, cole a chave em **Inteligência artificial — Gemini** e toque em **Testar**. Tem que aparecer "✓ Gemini funcionando em 0,8 s".
 
-O modelo padrão é o `gemini-flash-lite-latest`, que sempre aponta para a versão mais nova do Flash-Lite. Ele foi **testado de verdade em 20/11/2026**: respondeu em cerca de 1 s com texto e 2 s com a página do caderno, leu a página, achou uma conta errada e corrigiu um erro de conteúdo. Proteções incluídas:
-- Se o Google estiver sobrecarregado, o app **tenta de novo sozinho**.
-- Se o modelo escolhido estiver lento demais (mais de 45 s), desligado ou indisponível, o app **troca para o modelo reserva** automaticamente.
+O app usa o **`gemini-flash-lite-latest`**, que sempre aponta para a versão mais nova e rápida do Flash-Lite, com o raciocínio no nível baixo para responder logo. Para nunca ficar esperando:
+- se o principal **não começar a responder em 6 segundos** (o Google às vezes tem picos de demora), o reserva **`gemini-3.1-flash-lite`** entra junto e vale o que responder primeiro;
+- se o principal estiver sobrecarregado, o app tenta de novo sozinho e, se continuar, passa para o reserva;
+- se a cota gratuita do principal acabar, o reserva (que tem cota separada) responde no lugar.
 
-No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele. O `gemini-pro-latest` exige plano pago.
-
-Teste real (a chave não fica salva em arquivo nenhum):
-
-```
-GEMINI_API_KEY=sua_chave node tests/teste-gemini-real.cjs
-```
-
-### Usar a Groq (tem plano gratuito)
-
-1. Entre em **console.groq.com** e crie uma conta grátis (dá para entrar com o Google).
-2. Vá em **API Keys → Create API Key**, dê um nome (ex.: Caderno) e copie a chave. Ela começa com `gsk_`.
-3. No app, abra **Ajustes → Inteligência artificial** e toque em **Groq**.
-4. Cole a chave e toque em **Testar**. Tem que aparecer "✓ Groq funcionando".
-
-O modelo padrão é `qwen/qwen3.8-27b`, que **lê imagens** e por isso entende a sua letra. Ele foi conferido na documentação da Groq em 20/11/2026; os modelos Llama 4 foram desligados pela Groq. Se a Groq trocar os modelos de novo, edite o campo "Modelo da Groq". Com o Qwen 3.8, cada pedido envia **no máximo 3 páginas**, e o plano gratuito tem limite de pedidos por minuto e por dia. A qualidade das respostas costuma ser menor que a do Claude, principalmente para ler letra cursiva.
+Medido de verdade em 20/11/2026: texto em **0,8 s**, página do caderno lida em **2,3 s**, simulado de 5 perguntas em **2,1 s**, foto de exercício resolvida pelo tutor em **1,8 s** e resumo de uma aula gravada em **2,6 s**.
 
 ## ✨ O que ele faz
 
@@ -144,7 +139,8 @@ O modelo padrão é `qwen/qwen3.8-27b`, que **lê imagens** e por isso entende a
 | 📁 **Pastas** | Separe por matéria, com cor. Também tem busca, favoritas e ordenação |
 | ✅ **Tarefas** | Lista com prazo, prioridade, pasta e ligação com a anotação. Filtros: pendentes, hoje, atrasadas e concluídas |
 | 📤 **Compartilhar** | Envia **PDF** (todas as páginas ou só uma) ou **imagem PNG** pelo WhatsApp, Gmail, Drive, Classroom… Dá para enviar uma pasta inteira em PDF e a lista de tarefas como texto |
-| 💾 **Backup** | Em *Ajustes* você exporta e restaura tudo num arquivo |
+| 🎙️ **Gravar a aula** | O 🎙️ no topo do editor grava o áudio ligado à anotação; o ▶ ao lado lista as gravações para ouvir, resumir, transcrever ou tirar as tarefas |
+| 💾 **Dados e backup** | Tudo é salvo sozinho no banco de dados do tablet. Na tela *Dados e backup* você vê o que está salvo, faz cópias e exporta/restaura um arquivo |
 
 **Gestos:** pinça com 2 dedos = zoom · arrastar com 2 dedos = mover a folha · tocar com 2 dedos = desfazer · tocar com 3 dedos = refazer.
 
@@ -152,15 +148,17 @@ O modelo padrão é `qwen/qwen3.8-27b`, que **lê imagens** e por isso entende a
 
 ## ⚠️ Bom saber
 
-- **A IA precisa de internet e de uma chave da Anthropic.** O uso é cobrado na sua conta da Anthropic, por tamanho de pedido e resposta. Enviar muitas páginas de uma vez custa mais. A chave fica salva só neste tablet e é enviada apenas para a Anthropic. Não use a sua chave num tablet de outra pessoa.
-- **Correção de escrita e verificação de contas precisam de internet.** Elas usam o reconhecimento de escrita à mão do Google (o mesmo serviço do teclado de escrita do Google). Todo o resto funciona offline.
-- O serviço de reconhecimento não é uma API oficial e documentada. Se um dia ele parar de responder, o resto do app continua funcionando normalmente.
-- As anotações ficam **só no tablet**, no armazenamento do navegador. Não limpe os dados do Chrome. Faça **backup** de vez em quando em *Ajustes → Exportar backup* e salve o arquivo no Drive.
+- **Onde ficam os dados:** tudo é gravado na hora no **banco de dados do próprio app** (IndexedDB do Chrome), mesmo sem internet: anotações, tarefas, flashcards, notas rápidas, conversas, gravações… Em **Dados e backup**, toque em **Proteger meus dados** para o Android não apagar nada quando faltar espaço (instalar o app na tela inicial ajuda).
+- **Cópias automáticas:** uma por dia, guardadas dentro do app (as 3 mais recentes). Servem para **voltar no tempo** se algo der errado. Elas não levam o áudio das gravações, que continua salvo.
+- **Backup em arquivo:** de vez em quando, toque em **Exportar backup** e guarde o arquivo no Google Drive. Ele leva tudo, até as gravações. **A chave da IA não vai no backup**, por segurança. Não limpe os dados do Chrome sem ter um backup.
+- **IA:** precisa de internet e da sua chave do Gemini, que fica salva só neste tablet e é enviada apenas para o Google. No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele. Não use a sua chave no tablet de outra pessoa e, se ela vazar, apague-a em aistudio.google.com/apikey e crie outra.
+- **Gravações:** ocupam cerca de **10 MB por hora** de aula. A IA consegue resumir de uma vez gravações de até cerca de 1 hora.
+- **Correção de escrita e verificação de contas precisam de internet.** Elas usam o reconhecimento de escrita à mão do Google (o mesmo do teclado de escrita do Google), que não é uma API oficial. Se um dia parar, o resto do app continua funcionando. Todo o resto funciona offline.
 - As contas aceitam `+ − × ÷ : x / ^ √ %`, parênteses e vírgula decimal (`2,5`).
 
 ## 🧪 Testes
 
-`tests/teste-completo.cjs` abre o app num navegador de verdade e passa por **47 cenários**: editor, ferramentas, correção, IA, PDF, tarefas, foco, flashcards, hábitos, leitura, notas, relatório, busca, backup, modo offline e o layout com o tablet em pé. Os serviços externos (reconhecimento de escrita e IA) são simulados.
+`tests/teste-completo.cjs` abre o app num navegador de verdade e passa por **96 cenários**: editor e ferramentas, correção, IA (Gemini simulado, com sobrecarga, modelo reserva e limite), PDF, tarefas, foco, flashcards, hábitos, leitura, notas, relatório e mapa do ano, busca por dentro do texto, menu retrátil (inclusive arrastar da borda), notas rápidas, tutor com foto, gravador com microfone simulado, "O que fazer agora", banco de dados (contagens, cópias, voltar no tempo, verificar e reparar, backup com áudio sem a chave, restaurar em outro tablet, tudo continua depois de reabrir), modo offline, tema escuro e o layout com o tablet em pé e deitado.
 
 ```
 npm install
@@ -168,39 +166,45 @@ npx playwright install chromium
 npm test
 ```
 
-Teste **real** da IA pela Groq (envia uma página do caderno de verdade para a Groq e confere a resposta):
+Teste **real** com o Gemini (22 verificações: velocidade, modelo reserva, leitura da página, simulado em JSON, tutor com foto e, se o `espeak-ng` estiver instalado, uma aula falada gravada pelo microfone simulado e resumida, transcrita e transformada em tarefas). A chave vai só pela variável de ambiente e não fica salva em arquivo nenhum:
 
 ```
-GROQ_API_KEY=gsk_... node tests/teste-groq-real.cjs
+GEMINI_API_KEY=sua_chave node tests/teste-gemini-real.cjs
 ```
 
 ## 🛠️ Para desenvolvedores
 
-É HTML, CSS e JavaScript puro, sem etapa de build. As duas bibliotecas usadas ficam embutidas em `js/vendor/`.
+É HTML, CSS e JavaScript puro, sem etapa de build. A única biblioteca usada (pdf.js) fica embutida em `js/vendor/`.
 
 ```
 index.html            estrutura das telas
-css/style.css         visual (tema claro/escuro automático)
-js/app.js             biblioteca, pastas, tarefas, ajustes, backup, compartilhar
+css/style.css         visual (tema claro/escuro, menu retrátil, telas em pé e deitado)
+js/app.js             liga tudo: biblioteca, pastas, tarefas, ajustes, compartilhar
 js/editor.js          editor: ferramentas, gestos, laço, desfazer, páginas, correção
 js/ink.js             desenho dos traços, papel, texto, imagens e geometria
 js/shapes.js          reconhecimento de formas
 js/recognize.js       reconhecimento de escrita + verificador de contas
 js/export.js          gerador de PDF/PNG e compartilhamento
-js/ai.js              assistente de IA (Claude): pedidos, ações e tratamento de erros
+js/ai.js              IA pelo Gemini rapidão: pedidos em streaming, modelo reserva e erros
 js/aipanel.js         painel da IA no editor e janela de IA para pastas/anotações
 js/importer.js        importação de PDF (pdf.js) e fotos como páginas
 js/hub.js             Hoje, Foco (Pomodoro), Agenda, Flashcards (repetição espaçada) e Hábitos
-js/perf.js            Leitura/Kindle, Notas e provas, Relatório, Conquistas, Atalhos e Busca rápida
+js/perf.js            Leitura/Kindle, Notas e provas, Relatório, mapa do ano, Conquistas, Atalhos e Busca
 js/plus.js            Horário de aulas, Diário, Revisão espaçada, Quadro e Matriz de tarefas
-js/sound.js           sons de foco (ruídos gerados no tablet)
-js/nav.js             navegação: menu em 3 áreas, barra de baixo, botão +, tela Tudo, dicas e tour
 js/goals.js           Metas com progresso automático
 js/quiz.js            Simulado com IA (perguntas em JSON, correção e histórico)
-tests/                teste completo automatizado e teste real da Groq
-js/vendor/            SDK oficial da Anthropic (@anthropic-ai/sdk 1.11.0) e pdf.js 6.5.438, embutidos
-js/store.js           banco local (IndexedDB) e configurações
+js/quicknotes.js      Notas rápidas (post-its, listas de marcar)
+js/tutor.js           Tutor IA (conversa, foto do exercício, voz)
+js/recorder.js        Gravador de aula e resumo/transcrição do áudio pela IA
+js/suggest.js         "O que fazer agora" no painel Hoje
+js/voice.js           ler em voz alta e ditado
+js/data.js            Dados e backup: contagens, cópias automáticas, exportar/importar, reparar
+js/nav.js             navegação: menu em 3 áreas (retrátil), barra de baixo, botão +, tela Tudo, dicas e tour
+js/sound.js           sons de foco (ruídos gerados no tablet)
+js/store.js           banco de dados local (IndexedDB) e configurações
+js/vendor/            pdf.js 6.5.438, embutido
 sw.js                 funcionamento offline
+tests/                teste completo automatizado e teste real do Gemini
 ```
 
 Para testar no computador: `python3 -m http.server 8000` e abra `http://localhost:8000`.

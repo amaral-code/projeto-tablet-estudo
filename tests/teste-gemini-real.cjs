@@ -1,9 +1,11 @@
-// Teste REAL da IA pelo Gemini (Google): monta o pedido com o próprio código do app
-// (página do caderno renderizada como imagem) e envia para a API do Gemini.
-// Como rodar:  GEMINI_API_KEY=sua_chave node tests/teste-gemini-real.cjs [modelo]
-// A chave NÃO fica salva em nenhum arquivo.
+// Teste REAL da IA (Gemini rapidão): usa o próprio código do app e a API de verdade do Google.
+// Como rodar:  GEMINI_API_KEY=sua_chave node tests/teste-gemini-real.cjs
+// A chave NÃO é gravada em nenhum arquivo: fica só na memória e vai no pedido.
+// Opcional: com o espeak-ng instalado, uma "aula falada" é gravada pelo microfone simulado
+// e o Gemini resume, transcreve e tira as tarefas do áudio (como no tablet).
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { chromium } = require('playwright');
@@ -11,143 +13,220 @@ const { chromium } = require('playwright');
 const ROOT = path.resolve(__dirname, '..');
 const KEY = process.env.GEMINI_API_KEY;
 if (!KEY) { console.error('Defina GEMINI_API_KEY'); process.exit(2); }
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-real-'));
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
 
+// pedido direto (curl): a chave vai pela entrada padrão, nunca em arquivo nem na lista de processos
 function gemini(model, body) {
-  const f = path.join(require('os').tmpdir(), `gemini-body-${process.pid}.json`);
+  const f = path.join(TMP, 'body.json');
   fs.writeFileSync(f, JSON.stringify(body));
-  // a chave vai num arquivo de cabeçalho temporário para não aparecer na lista de processos
-  const hf = path.join(require('os').tmpdir(), `gemini-h-${process.pid}.txt`);
-  fs.writeFileSync(hf, `x-goog-api-key: ${KEY}\nContent-Type: application/json\n`, { mode: 0o600 });
+  const t0 = Date.now();
   try {
-    return execFileSync('curl', ['-sS', '-N', '-m', '150', `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`, '-H', `@${hf}`, '--data-binary', `@${f}`], { encoding: 'utf8', maxBuffer: 20e6 });
-  } finally { fs.rmSync(hf, { force: true }); fs.rmSync(f, { force: true }); }
+    const raw = execFileSync('curl', ['-sS', '-N', '-m', '150', `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`, '-H', '@-', '--data-binary', `@${f}`],
+      { encoding: 'utf8', maxBuffer: 20e6, input: `x-goog-api-key: ${KEY}\nContent-Type: application/json\n` });
+    return { ...readSSE(raw), secs: (Date.now() - t0) / 1000 };
+  } finally { fs.rmSync(f, { force: true }); }
 }
 function readSSE(raw) {
   let text = '', finish = null, err = null, version = null;
   for (const line of raw.split('\n')) {
     const l = line.trim();
-    if (!l.startsWith('data:')) { if (l.startsWith('{') || l.startsWith('[')) { try { const j = JSON.parse(raw); err = (Array.isArray(j) ? j[0] : j).error; } catch { /* */ } } continue; }
-    const j = JSON.parse(l.slice(5).trim());
+    if (!l.startsWith('data:')) continue;
+    let j; try { j = JSON.parse(l.slice(5).trim()); } catch { continue; }
     if (j.error) err = j.error;
     version = j.modelVersion || version;
     const c = j.candidates && j.candidates[0];
     for (const p of (c && c.content && c.content.parts) || []) if (p.text && !p.thought) text += p.text;
     if (c && c.finishReason) finish = c.finishReason;
   }
-  if (!text && !err && raw.trim().startsWith('{')) { try { err = JSON.parse(raw).error; } catch { /* */ } }
+  if (!text && !err && /^[{[]/.test(raw.trim())) { try { const j = JSON.parse(raw); err = (Array.isArray(j) ? j[0] : j).error || err; } catch { /* */ } }
   return { text, finish, err, version };
+}
+function serve() {
+  const srv = http.createServer((req, res) => {
+    let p = decodeURIComponent(new URL(req.url, 'http://x').pathname); if (p.endsWith('/')) p += 'index.html';
+    const f = path.join(ROOT, p);
+    if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res);
+  });
+  return new Promise(r => srv.listen(0, '127.0.0.1', () => r(srv)));
+}
+// "aula falada" para o microfone simulado (precisa do espeak-ng e do ffmpeg)
+function lessonAudio() {
+  const fala = 'Bom dia, turma. Hoje vamos estudar a fotossíntese. As plantas usam a luz do sol, a água e o gás carbônico para produzir glicose, e liberam oxigênio. ' +
+    'Isso acontece nos cloroplastos, por causa da clorofila. Tarefa para casa: fazer os exercícios da página quarenta e dois. A prova será na próxima sexta-feira.';
+  try {
+    const raw = path.join(TMP, 'fala.wav'), wav = path.join(TMP, 'aula.wav');
+    execFileSync('espeak-ng', ['-v', 'pt-br', '-s', '140', '-w', raw, fala], { stdio: 'ignore' });
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', raw, '-ar', '48000', '-ac', '1', '-c:a', 'pcm_s16le', wav]);
+    const secs = parseFloat(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', wav], { encoding: 'utf8' }));
+    return { wav, secs };
+  } catch { return null; }
 }
 
 (async () => {
   const results = [];
-  const ok = (name, cond, extra = '') => { results.push(cond); console.log(`  ${cond ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`); };
+  const ok = (name, cond, extra = '') => { results.push(!!cond); console.log(`  ${cond ? '✓' : '✗'} ${name}${extra ? ' — ' + extra : ''}`); };
+  const srv = await serve();
+  const base = `http://127.0.0.1:${srv.address().port}/`;
 
-  const srv = http.createServer((req, res) => {
-    let p = decodeURIComponent(new URL(req.url, 'http://x').pathname); if (p.endsWith('/')) p += 'index.html';
-    const f = path.join(ROOT, p);
-    if (!f.startsWith(ROOT) || !fs.existsSync(f)) { res.writeHead(404); res.end(); return; }
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res);
-  });
-  await new Promise(r => srv.listen(0, '127.0.0.1', r));
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
-  await page.goto(`http://127.0.0.1:${srv.address().port}/`); await page.waitForTimeout(1200);
+  // 1) monta os pedidos com o código do app
+  let browser = await chromium.launch();
+  let page = await browser.newPage();
+  await page.goto(base); await page.waitForTimeout(1200);
   const built = await page.evaluate(async () => {
     const ai = await import('./js/ai.js');
-    const st = await import('./js/store.js');
-    st.settings.aiProvider = 'gemini';
     const T = (y, text, size = 34) => ({ id: 't' + y, x: 110, y, text, size, color: '#1d1d1f' });
     const pg = { id: 'p1', strokes: [], images: [], texts: [T(80, 'Frações — aula de 20/11', 40), T(160, 'Fração é uma parte de um inteiro.'), T(240, 'Exercício: 3/4 + 1/4 = 2'), T(320, 'Numerador fica embaixo.')] };
     const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Frações', folder: 'Matemática', prompt: ai.ACTIONS.explain.prompt });
+    const ping = [{ role: 'user', content: 'Responda apenas: Tudo certo!' }];
     return {
-      model: ai.geminiModel(),
+      model: ai.GEMINI_MODEL, fallback: ai.GEMINI_FALLBACK,
       body: ai.geminiBody([{ role: 'user', content }]),
-      textBody: ai.geminiBody([{ role: 'user', content: 'Responda apenas: Tudo certo!' }]),
+      textBody: ai.geminiBody(ping), fallbackBody: ai.geminiBody(ping, ai.GEMINI_FALLBACK),
       chatBody: ai.geminiBody([{ role: 'user', content: 'Meu nome é Ana. Responda só: ok' }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'Qual é o meu nome? Responda só o nome.' }]),
     };
   });
-  await browser.close(); srv.close();
-  const model = process.argv[2] || built.model;
-  console.log(`\nTeste real do Gemini — modelo ${model}\n`);
+  await browser.close();
+  console.log(`\nTeste real do Gemini rapidão — principal: ${built.model} · reserva: ${built.fallback}\n`);
 
-  let t0 = Date.now();
-  const t1 = readSSE(gemini(model, built.textBody));
-  ok('chave aceita e resposta de texto em streaming', !t1.err && /tudo certo/i.test(t1.text), t1.err ? `${t1.err.code} ${t1.err.message}` : `${JSON.stringify(t1.text.trim())} em ${((Date.now() - t0) / 1000).toFixed(1)}s (${t1.version})`);
+  // 2) direto na API
+  const t1 = gemini(built.model, built.textBody);
+  ok('modelo principal: chave aceita e resposta em streaming', !t1.err && /tudo certo/i.test(t1.text), t1.err ? `${t1.err.code} ${t1.err.message}` : `${JSON.stringify(t1.text.trim())} em ${t1.secs.toFixed(1)}s (${t1.version})`);
   if (t1.err) return finish(results);
-
-  t0 = Date.now();
-  const t3 = readSSE(gemini(model, built.chatBody));
+  const tf = gemini(built.fallback, built.fallbackBody);
+  ok('modelo reserva também responde', !tf.err && /tudo certo/i.test(tf.text), tf.err ? `${tf.err.code} ${tf.err.message}` : `${tf.secs.toFixed(1)}s (${tf.version})`);
+  const t3 = gemini(built.model, built.chatBody);
   ok('conversa com histórico (lembra o nome)', !t3.err && /ana/i.test(t3.text), t3.err ? t3.err.message : JSON.stringify(t3.text.trim()));
-
-  t0 = Date.now();
-  const t2 = readSSE(gemini(model, built.body));
-  const secs = ((Date.now() - t0) / 1000).toFixed(1);
-  ok('pedido com a imagem da página aceito', !t2.err && t2.text.length > 50, t2.err ? `${t2.err.code} ${t2.err.message}` : `${t2.text.length} caracteres em ${secs}s`);
+  const t2 = gemini(built.model, built.body);
+  ok('pedido com a imagem da página aceito', !t2.err && t2.text.length > 50, t2.err ? `${t2.err.code} ${t2.err.message}` : `${t2.text.length} caracteres em ${t2.secs.toFixed(1)}s`);
   ok('a IA leu a página (fala de frações)', /fra[cç]/i.test(t2.text));
-  ok('a IA achou o erro da conta (3/4 + 1/4 = 1)', /(=|é|resulta em|igual a)\s*\**\s*1\b|4\/4|um inteiro/i.test(t2.text));
+  ok('a IA achou o erro da conta (3/4 + 1/4 = 1)', /(=|é|resulta em|igual a|dá)\s*\**\s*1\b|4\/4|um inteiro/i.test(t2.text));
   ok('a IA corrigiu "numerador fica embaixo"', /numerador[^.\n]*(em )?cima|denominador[^.\n]*(em )?baixo/i.test(t2.text));
   ok('resposta completa (não foi cortada)', t2.finish === 'STOP', String(t2.finish));
-  if (t2.text) console.log('\n--- resposta da IA (início) ---\n' + t2.text.slice(0, 900) + '\n---');
 
-  // 5) De ponta a ponta: o próprio app, dentro do navegador, chama o Gemini (confere CORS e streaming)
-  console.log('\nNo navegador (como no tablet):');
-  const srv2 = http.createServer((req, res) => {
-    let p = decodeURIComponent(new URL(req.url, 'http://x').pathname); if (p.endsWith('/')) p += 'index.html';
-    const f = path.join(ROOT, p);
-    if (!f.startsWith(ROOT) || !fs.existsSync(f)) { res.writeHead(404); res.end(); return; }
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res);
-  });
-  await new Promise(r => srv2.listen(0, '127.0.0.1', r));
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
-  const b2 = await chromium.launch(proxy ? { proxy: { server: proxy, bypass: '127.0.0.1,localhost' } } : {});
-  const p2 = await b2.newPage();
-  await p2.goto(`http://127.0.0.1:${srv2.address().port}/`); await p2.waitForTimeout(1200);
-  for (const m of [process.argv[2] || '', 'gemini-flash-latest']) {
-    const r = await p2.evaluate(async ({ key, m }) => {
+  // 3) o app no navegador chama o Gemini (CORS, streaming, JSON do simulado)
+  console.log('\nO app no navegador (como no tablet):');
+  const audio = lessonAudio();
+  const args = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
+  if (audio) args.push(`--use-file-for-fake-audio-capture=${audio.wav}`);
+  browser = await chromium.launch({ args, ...(proxy ? { proxy: { server: proxy, bypass: '127.0.0.1,localhost' } } : {}) });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone'], locale: 'pt-BR' });
+  await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
+  page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(base); await page.waitForTimeout(1500);
+  // a chave fica só na memória desta página de teste
+  await page.evaluate(async key => { (await import('./js/store.js')).settings.geminiKey = key; }, KEY);
+
+  // o app tem a "corrida": se o principal demorar, o reserva entra junto (por isso a resposta não passa de ~7 s)
+  const pings = [];
+  for (let i = 0; i < 3; i++) {
+    pings.push(await page.evaluate(async () => {
       const ai = await import('./js/ai.js');
-      const st = await import('./js/store.js');
-      Object.assign(st.settings, { aiProvider: 'gemini', geminiKey: key, geminiModel: m }); // só na memória, não é salvo
-      const T = (y, text) => ({ id: 't' + y, x: 110, y, text, size: 34, color: '#1d1d1f' });
-      const pg = { id: 'p', strokes: [], images: [], texts: [T(120, 'Verbo to be'), T(200, 'I is happy'), T(280, 'She are my friend')] };
-      const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Inglês', prompt: ai.ACTIONS.improve.prompt });
-      const t0 = performance.now(); let chunks = 0;
-      try {
-        const s = ai.streamChat([{ role: 'user', content }], () => { chunks++; });
-        const res = await s.done;
-        return { ok: true, text: res.text, chunks, secs: ((performance.now() - t0) / 1000).toFixed(1) };
-      } catch (e) { return { ok: false, err: e.message, secs: ((performance.now() - t0) / 1000).toFixed(1) }; }
-    }, { key: KEY, m });
-    const label = m || 'padrão do app';
-    ok(`app no navegador com ${label}: resposta em streaming`, r.ok && r.chunks >= 1, r.ok ? `${r.chunks} pedaços, ${r.secs}s` : `${r.err} (${r.secs}s)`);
-    if (r.ok) ok(`app no navegador com ${label}: corrigiu "I is" → "I am" e "She are" → "She is"`, /I am/.test(r.text) && /She is/i.test(r.text));
+      const t0 = performance.now(); let txt = '';
+      try { const res = await ai.streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; }).done; return { ok: /tudo certo/i.test(txt), secs: (performance.now() - t0) / 1000, model: res.model }; }
+      catch (e) { return { ok: false, err: e.message, secs: (performance.now() - t0) / 1000 }; }
+    }));
   }
-  // Simulado: a IA precisa devolver as perguntas no formato certo (JSON)
-  const qz = await p2.evaluate(async key => {
+  ok('rapidão no app: 3 respostas, cada uma em menos de 8 s', pings.every(p => p.ok && p.secs < 8), pings.map(p => p.ok ? `${p.secs.toFixed(1)}s (${p.model === built.model ? 'principal' : 'reserva'})` : p.err).join(' · '));
+
+  const r = await page.evaluate(async () => {
     const ai = await import('./js/ai.js');
-    const st = await import('./js/store.js');
+    const T = (y, text) => ({ id: 't' + y, x: 110, y, text, size: 34, color: '#1d1d1f' });
+    const pg = { id: 'p', strokes: [], images: [], texts: [T(120, 'Verbo to be'), T(200, 'I is happy'), T(280, 'She are my friend')] };
+    const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Inglês', prompt: ai.ACTIONS.improve.prompt });
+    const t0 = performance.now(); let chunks = 0, first = 0;
+    try {
+      const s = ai.streamChat([{ role: 'user', content }], () => { if (!chunks++) first = performance.now() - t0; });
+      const res = await s.done;
+      return { ok: true, text: res.text, chunks, first: (first / 1000).toFixed(1), secs: ((performance.now() - t0) / 1000).toFixed(1) };
+    } catch (e) { return { ok: false, err: e.message }; }
+  });
+  ok('melhorar a escrita: resposta em streaming', r.ok && r.chunks >= 1, r.ok ? `1º pedaço em ${r.first}s, total ${r.secs}s` : r.err);
+  if (r.ok) ok('corrigiu "I is" → "I am" e "She are" → "She is"', /I am/.test(r.text) && /She is/i.test(r.text));
+
+  const qz = await page.evaluate(async () => {
+    const ai = await import('./js/ai.js');
     const quiz = await import('./js/quiz.js');
-    Object.assign(st.settings, { aiProvider: 'gemini', geminiKey: key, geminiModel: '' });
     const T = (y, text) => ({ id: 't' + y, x: 110, y, text, size: 30, color: '#1d1d1f' });
     const pg = { id: 'p', strokes: [], images: [], texts: [T(100, 'Fotossíntese'), T(160, 'Plantas produzem glicose usando luz,'), T(200, 'água e gás carbônico. Libera oxigênio.'), T(260, 'Acontece nos cloroplastos (clorofila).')] };
     const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Ciências', prompt: quiz.quizPrompt(5, 'medio') });
     const t0 = performance.now();
     try {
-      const r = await ai.streamChat([{ role: 'user', content }], () => {}).done;
-      const qs = quiz.parseQuiz(r.text);
+      const res = await ai.streamChat([{ role: 'user', content }], () => {}, { json: true }).done;
+      const qs = quiz.parseQuiz(res.text);
       return { ok: true, n: qs.length, first: qs[0], secs: ((performance.now() - t0) / 1000).toFixed(1) };
     } catch (e) { return { ok: false, err: e.message }; }
-  }, KEY);
-  ok('simulado: a IA devolveu perguntas válidas', qz.ok && qz.n >= 4, qz.ok ? `${qz.n} perguntas em ${qz.secs}s` : qz.err);
-  if (qz.ok && qz.first) {
-    ok('simulado: pergunta sobre o conteúdo da página', /fotoss|glicose|clorof|oxig|luz|cloroplast/i.test(qz.first.q + qz.first.opts.join(' ')));
-    console.log(`     exemplo: ${qz.first.q}\n       ${qz.first.opts.map((o, i) => (i === qz.first.c ? '✓ ' : '  ') + o).join('\n       ')}`);
+  });
+  ok('simulado: perguntas válidas em JSON', qz.ok && qz.n >= 4, qz.ok ? `${qz.n} perguntas em ${qz.secs}s` : qz.err);
+  if (qz.ok && qz.first) ok('simulado: pergunta sobre o conteúdo da página', /fotoss|glicose|clorof|oxig|luz|cloroplast/i.test(qz.first.q + qz.first.opts.join(' ')), qz.first.q);
+
+  // 4) Tutor IA de verdade: foto de um exercício
+  console.log('\nTutor IA com foto do exercício:');
+  const shot = await ctx.newPage();
+  await shot.setContent('<div style="font:44px Georgia;padding:40px;background:#fff;width:720px">Exercício 3<br>Resolva a equação:<br><b>2x + 3 = 11</b></div>');
+  const photo = path.join(TMP, 'exercicio.png');
+  await shot.locator('div').screenshot({ path: photo }); await shot.close();
+  await page.click('#nav-main [data-k=tutor]'); await page.waitForTimeout(400);
+  await page.setInputFiles('#tt-file', photo); await page.waitForSelector('#tt-attach img');
+  let t0 = Date.now();
+  await page.click('#tt-send');
+  await page.waitForSelector('.tt-msg.bot:not(.streaming) .tt-acts, .tt-msg.error', { timeout: 90000 });
+  const tutor = await page.textContent('.tt-msg.bot, .tt-msg.error');
+  ok('tutor leu a foto e resolveu: x = 4', /x\s*=\s*4/.test(tutor), `${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  ok('tutor explicou passo a passo (subtrair 3, dividir por 2)', /8/.test(tutor) && /2/.test(tutor));
+  // (se o aluno pedir "só a resposta", o tutor prefere guiar o caminho, de propósito; aqui pedimos para resolver)
+  await page.fill('#tt-q', 'E se fosse 2x + 3 = 15? Resolva também.'); await page.press('#tt-q', 'Enter');
+  await page.waitForFunction(() => document.querySelectorAll('.tt-msg.bot:not(.streaming) .tt-acts').length === 2 || document.querySelector('.tt-msg.error'), null, { timeout: 60000 });
+  const tutor2 = await page.textContent('.tt-msg.bot >> nth=1').catch(() => '');
+  ok('tutor continua a conversa (2x = 12, x = 6)', /x\s*=\s*6\b/.test(tutor2) && /12/.test(tutor2), JSON.stringify(tutor2.replace(/\s+/g, ' ').trim().slice(0, 90)));
+
+  // 5) Gravador de aula + resumo/transcrição/tarefas do áudio
+  if (!audio) console.log('\n(gravação de aula pulada: instale espeak-ng e ffmpeg para testar o áudio)');
+  else {
+    console.log(`\nGravador de aula (aula falada de ${audio.secs.toFixed(0)} s no microfone simulado):`);
+    await page.click('#nav-main [data-k=today]'); await page.waitForTimeout(300); // no Tutor o + fica escondido
+    await page.click('#fab'); await page.click('.quick[data-q=record]');
+    await page.waitForSelector('#rec-pill:not([hidden])', { timeout: 8000 });
+    await page.waitForTimeout(Math.ceil(audio.secs * 1000) + 1500);
+    await page.click('#rec-pill');
+    await page.waitForFunction(() => /Gravação salva/.test(document.getElementById('toast')?.textContent || ''), null, { timeout: 10000 });
+    await page.click('#ed-recs'); await page.waitForSelector('.rc-item audio');
+    const runAI = async (kind, before) => {
+      const t = Date.now();
+      await page.click(`.rc-item [data-ai=${kind}]`);
+      await page.waitForSelector('#rc-acts .btn, #rc-out.error', { timeout: 150000 });
+      const out = await page.textContent('#rc-out');
+      const secs = ((Date.now() - t) / 1000).toFixed(1);
+      if (before) await before();
+      await page.evaluate(() => { const all = document.querySelectorAll('.modal-back'); all[all.length - 1]._close(true); });
+      await page.waitForTimeout(300);
+      return { out, secs };
+    };
+    const sum = await runAI('summary');
+    ok('resumo da aula gravada', /fotoss/i.test(sum.out) && /glicose|oxig|clorof/i.test(sum.out), `${sum.secs}s`);
+    ok('o resumo avisou da prova e da tarefa', /sexta|prova/i.test(sum.out) && /42|quarenta e dois|exerc/i.test(sum.out));
+    const tr = await runAI('transcript');
+    ok('transcrição do áudio', /fotoss[ií]ntese/i.test(tr.out) && /plantas/i.test(tr.out), `${tr.secs}s: ${JSON.stringify(tr.out.trim().slice(0, 90))}…`);
+    let created = [];
+    const tk = await runAI('tasks', async () => {
+      await page.click('#rc-acts .btn:has-text("Criar estas tarefas")'); await page.waitForTimeout(600);
+      created = await page.evaluate(async () => (await (await import('./js/store.js')).db.all('tasks')).filter(t => t.notes === 'Da gravação da aula').map(t => t.title));
+    });
+    ok('tarefas e datas tiradas da aula', /42|quarenta e dois/i.test(tk.out) && /sexta|prova/i.test(tk.out), JSON.stringify(tk.out.trim().slice(0, 120)));
+    ok('"Criar estas tarefas" cria só os itens da lista', created.length >= 1 && created.length <= 6 && created.every(t => !t.startsWith('#')) && created.some(t => /42|quarenta e dois/.test(t)), created.join(' | '));
+    if (sum.out) console.log('\n--- resumo da aula (início) ---\n' + sum.out.slice(0, 600) + '\n---');
   }
-  await b2.close(); srv2.close();
+  ok('nenhum erro de JavaScript na página', !errors.length, errors.slice(0, 3).join(' | '));
+  await browser.close(); srv.close();
   finish(results);
 })().catch(e => { console.error(e); process.exit(2); });
 
 function finish(r) {
+  fs.rmSync(TMP, { recursive: true, force: true });
   const n = r.filter(Boolean).length;
   console.log(`\n${n} de ${r.length} verificações passaram.\n`);
   process.exit(n === r.length ? 0 : 1);

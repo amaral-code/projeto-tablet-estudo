@@ -1,16 +1,21 @@
 // App principal: biblioteca (pastas e anotações), tarefas, ajustes, compartilhamento e backup.
 import { db, settings, saveSettings } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
-import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages } from './editor.js';
+import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages, insertText, getEditorContext } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
-import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFAULT_MODEL, groqModel, GEMINI_MODELS, GEMINI_DEFAULT_MODEL, geminiModel } from './ai.js';
+import { streamChat } from './ai.js';
+import { initData, DATA_VIEWS, renderData, importBackupFile } from './data.js';
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
-import { initPlus, reloadPlus, PLUS_VIEWS, PLUS_NEW_LABEL, renderPlus, plusNewAction, plusToday, plusCounts, newReview, toggleReview, renderBoard, renderMatrix } from './plus.js';
+import { initPlus, reloadPlus, PLUS_VIEWS, PLUS_NEW_LABEL, renderPlus, plusNewAction, plusToday, plusCounts, newReview, toggleReview, renderBoard, renderMatrix, noteForClass } from './plus.js';
 import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette, openBookOrNew, newGrade } from './perf.js';
 import { initGoals, reloadGoals, GOAL_VIEWS, renderGoals, goalsToday, goalsCount, newGoal } from './goals.js';
 import { initQuiz, reloadQuiz, QUIZ_VIEWS, renderQuiz, leaveQuiz } from './quiz.js';
-import { initNav, SECTIONS, sectionOf, sidebarHTML, updateBottomBar, renderMap, quickAdd, addTip, tour } from './nav.js';
+import { initNav, SECTIONS, sectionOf, sidebarHTML, navItem, updateBottomBar, renderMap, quickAdd, addTip, tour, initSidebar, toggleMenu } from './nav.js';
+import { initQuick, reloadQuick, QUICK_VIEWS, renderQuick, newQuick, quickToday, addQuick } from './quicknotes.js';
+import { initTutor, reloadTutor, TUTOR_VIEWS, renderTutor, leaveTutor } from './tutor.js';
+import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording } from './recorder.js';
+import { initSuggest, suggestToday } from './suggest.js';
 
 // Registro único de todas as telas da central: título, ícone, como desenhar e o botão "novo"
 const VIEW_REG = {};
@@ -23,13 +28,21 @@ reg(PERF_VIEWS, (k, el) => renderPerf(k, el), PERF_NEW_LABEL, k => perfNewAction
 reg(GOAL_VIEWS, (k, el) => renderGoals(el), { goals: 'Nova meta' }, () => newGoal());
 reg(QUIZ_VIEWS, (k, el) => renderQuiz(el), {}, () => {});
 reg({ map: { title: 'Tudo', icon: 'grid' } }, (k, el) => renderMap(el));
+reg(DATA_VIEWS, (k, el) => renderData(el));
+reg(QUICK_VIEWS, (k, el) => renderQuick(el), { quick: 'Nova nota' }, () => newQuick());
+reg(TUTOR_VIEWS, (k, el) => renderTutor(el), { tutor: '' });
 const HUB_VIEWS = VIEW_REG;
-const renderHub = (kind, el) => { if (!VIEW_REG[kind].isHub) leaveHub(); if (kind !== 'quiz') leaveQuiz(); VIEW_REG[kind].render(el); };
+const renderHub = (kind, el) => {
+  if (!VIEW_REG[kind].isHub) leaveHub();
+  if (kind !== 'quiz') leaveQuiz();
+  if (kind !== 'tutor') leaveTutor();
+  VIEW_REG[kind].render(el);
+};
 const hubNewAction = kind => VIEW_REG[kind].newAction();
 // cartões extras do painel Hoje (aulas, revisões, metas, diário, provas, leitura, atalhos)
 const todayCards = {
-  html: () => plusToday.html() + goalsToday.html() + extraToday.html(),
-  bind: el => { plusToday.bind(el); goalsToday.bind(el); extraToday.bind(el); },
+  html: () => quickToday.html() + plusToday.html() + goalsToday.html() + extraToday.html(),
+  bind: el => { quickToday.bind(el); plusToday.bind(el); goalsToday.bind(el); extraToday.bind(el); },
 };
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
 import { LANGS } from './recognize.js';
@@ -65,6 +78,8 @@ async function init() {
     onSettings: settingsDialog,
     onAI: toggleAIPanel,
     onImport: () => pickImport('editor'),
+    onRecord: meta => toggleRecording(meta),
+    onRecordings: meta => openRecordings(meta),
   });
   initAIPanel({
     onSettings: settingsDialog,
@@ -88,7 +103,12 @@ async function init() {
     views: () => HUB_VIEWS,
     importPdf: () => pickImport('library'),
     settings: settingsDialog,
-    extraToday: todayCards, levelBadge, examsOn, createNote,
+    extraToday: todayCards, todayTop: suggestToday, levelBadge, examsOn, createNote, createNoteFromText,
+    addQuick: (text, extra) => addQuick(text, extra),
+    writeToNote,
+    noteForClass,
+    startRecording: (meta, title) => startRecording({ noteId: meta.id, title: title || `Aula — ${meta.title}` }),
+    journalMissing: () => plusCounts().journal === 1,
     // navegação
     go: k => { if (editorIsOpen()) history.back(); setView(k === 'notes' ? { kind: 'notes', filter: 'all' } : { kind: k }); },
     counts: navCounts,
@@ -99,14 +119,23 @@ async function init() {
       if (!label || k === 'focus' || k === 'today') return null;
       return { label, where: viewTitle(), run: () => $('btn-new').click() };
     },
+    reloadAll,
+    currentView: () => state.view.kind,
     afterTour: () => { if (!aiReadyAny()) toast('Dica: ligue a IA em Ajustes → Inteligência artificial', 4000); },
   };
   initNav(api);
+  initSidebar();
   await initHub(api);
   await initPerf(api);
   await initPlus(api);
   await initGoals(api);
   await initQuiz(api);
+  await initQuick(api);
+  await initTutor(api);
+  await initRecorder(api);
+  initSuggest(api);
+  EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder);
+  initData(api);
   appReady = true;
   routeFromURL();
   render();
@@ -122,14 +151,17 @@ async function init() {
 
 function fillIcons() {
   $('btn-new-folder').innerHTML = ic('plus');
-  $('btn-settings').innerHTML = `${ic('settings')}<span>Ajustes, IA e backup</span>`;
-  $('btn-map').innerHTML = `${ic('grid')}<span>Tudo e ajuda</span>`;
+  $('btn-settings').innerHTML = `${ic('settings')}<span class="lbl-full">Ajustes e IA</span><span class="lbl-short">Ajustes</span>`;
+  $('btn-map').innerHTML = `${ic('grid')}<span class="lbl-full">Tudo e ajuda</span><span class="lbl-short">Tudo</span>`;
+  $('btn-data').innerHTML = `${ic('database')}<span class="lbl-full">Dados e backup</span><span class="lbl-short">Dados</span>`;
   $('btn-menu').innerHTML = ic('menu');
   $('btn-palette').innerHTML = ic('search');
   $('btn-new').innerHTML = `${ic('plus')}<span>Nova anotação</span>`;
   $('btn-import').innerHTML = `${ic('upload')}<span>Importar PDF</span>`;
   $('ed-ai').innerHTML = `${ic('magic')}<span>IA</span>`;
   $('ed-import').innerHTML = ic('upload');
+  $('ed-rec').innerHTML = ic('mic');
+  $('ed-recs').innerHTML = ic('play');
   document.querySelector('.search-ic').innerHTML = ic('search');
   $('btn-share-tasks').innerHTML = `${ic('share')}<span>Compartilhar lista</span>`;
   $('ed-back').innerHTML = ic('back');
@@ -149,6 +181,13 @@ async function loadAll() {
   [state.folders, state.notes, state.tasks] = await Promise.all([db.all('folders'), db.all('notes'), db.all('tasks')]);
   state.folders.sort((a, b) => a.createdAt - b.createdAt);
 }
+// Relê o banco inteiro (depois de restaurar backup, reparar ou apagar tudo)
+async function reloadAll() {
+  await loadAll();
+  await Promise.all([reloadHub(), reloadPerf(), reloadPlus(), reloadGoals(), reloadQuiz(), ...EXTRA_RELOADS.map(f => f())]);
+  if (appReady && !editorIsOpen()) render();
+}
+const EXTRA_RELOADS = [];
 
 async function seed() {
   localStorage.setItem('caderno-seeded', '1');
@@ -190,7 +229,8 @@ function bindLibrary() {
   $('btn-new-folder').onclick = newFolder;
   $('btn-settings').onclick = settingsDialog;
   $('btn-map').onclick = () => setView({ kind: 'map' });
-  $('btn-menu').onclick = () => document.body.classList.toggle('side-open');
+  $('btn-menu').onclick = toggleMenu;
+  $('btn-data').onclick = () => setView({ kind: 'data' });
   $('scrim').onclick = () => document.body.classList.remove('side-open');
   $('search').oninput = e => { state.search = e.target.value.trim().toLowerCase(); renderMain(); };
   $('sort').value = settings.sort;
@@ -270,16 +310,40 @@ async function onImportFiles(e) {
 }
 
 // =================== IA fora do editor ===================
-async function createNoteFromText(title, folderId, text) {
+async function createNoteFromText(title, folderId, text, { open = true } = {}) {
   const groups = layoutText(text);
   const now = Date.now();
-  const meta = { id: uid(), title, folderId: folderId || '', fav: false, createdAt: now, updatedAt: now, pageCount: groups.length, thumb: '' };
+  const meta = { id: uid(), title, folderId: folderId || '', fav: false, createdAt: now, updatedAt: now, pageCount: groups.length, thumb: '', searchText: String(text).slice(0, 5000) };
   await db.put('pages', { id: meta.id, bg: { type: 'lines', color: 'white' }, pages: groups.map(g => ({ id: uid(), strokes: [], texts: g, images: [] })) });
   await db.put('notes', meta);
   state.notes.push(meta);
-  render();
+  if (!editorIsOpen()) render();
   toast('Anotação criada ✓');
-  openNote(meta.id);
+  if (open) openNote(meta.id);
+  return meta;
+}
+
+// Escreve um texto (ex.: resumo da gravação) no fim de uma anotação: no editor, se ela estiver aberta; senão, direto no banco
+async function writeToNote(noteId, text, title) {
+  const ctx = getEditorContext();
+  if (ctx && ctx.meta.id === noteId) {
+    const n = insertText(`# ${title}\n${text}`, 'new');
+    toast(`Escrito na anotação ✓ (${n} página${n > 1 ? 's' : ''})`);
+    return;
+  }
+  const meta = noteById(noteId);
+  if (!meta) { await createNoteFromText(title, '', text, { open: false }); return; }
+  const c = await loadContent(noteId);
+  const dark = c.bg && c.bg.color === 'dark';
+  const groups = layoutText(`# ${title}\n${text}`, { color: dark ? '#f1f3f5' : '#1d1d1f', accent: dark ? '#7fb2ff' : '#0a6cff' });
+  c.pages.push(...groups.map(g => ({ id: uid(), strokes: [], texts: g, images: [] })));
+  meta.pageCount = c.pages.length;
+  meta.updatedAt = Date.now();
+  meta.searchText = ((meta.searchText || '') + ' ' + text).slice(0, 5000);
+  await db.put('pages', c);
+  await db.put('notes', meta);
+  if (!editorIsOpen()) render();
+  toast(`Escrito em “${meta.title}” ✓ (${groups.length} página${groups.length > 1 ? 's' : ''} no fim)`, 3500);
 }
 
 async function aiForNote(n) {
@@ -324,7 +388,7 @@ function navCounts() {
     notes: state.notes.length, goals: goalsCount(), running: hc.running, today: xc.review,
   };
 }
-const aiReadyAny = () => !!(settings.geminiKey || settings.aiKey || settings.groqKey);
+const aiReadyAny = () => !!settings.geminiKey;
 
 // Botão + : cria qualquer coisa
 async function quickAction(k) {
@@ -341,6 +405,14 @@ async function quickAction(k) {
   else if (k === 'class') { go('schedule'); hubNewAction('schedule'); }
   else if (k === 'pdf') pickImport('library');
   else if (k === 'search') openPalette();
+  else if (k === 'quicknote') newQuick();
+  else if (k === 'tutor') go('tutor');
+  else if (k === 'record') {
+    if (isRecording()) { toast('Já existe uma gravação em andamento: toque no botão vermelho para parar'); return; }
+    const d = new Date();
+    const meta = await createNote({ title: `Aula — ${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` });
+    await startRecording({ noteId: meta.id, title: meta.title });
+  }
 }
 
 function setView(v) {
@@ -358,13 +430,12 @@ function render() { renderSidebar(); renderMain(); }
 function renderSidebar() {
   const v = state.view;
   const count = f => state.notes.filter(f).length;
-  const item = (key, icon, label, n, active) =>
-    `<button class="nav-item ${active ? 'active' : ''}" data-k="${key}">${ic(icon)}<span>${esc(label)}</span>${n ? `<em>${n}</em>` : ''}</button>`;
+  const item = (key, icon, label, n, active, short) => navItem(key, icon, label, n, active, short);
   const xc = plusCounts();
   $('nav-main').innerHTML = sidebarHTML(v.kind === 'notes' ? (v.filter === 'all' ? 'notes' : '') : v.kind, navCounts(),
     item('fav', 'star', 'Favoritas', count(n => n.fav), v.kind === 'notes' && v.filter === 'fav') +
-    item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none') +
-    (xc.review ? item('review', 'repeat', `Revisar hoje (${xc.review})`, 0, false) : ''));
+    item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none', 'S/ pasta') +
+    (xc.review ? item('review', 'repeat', `Revisar hoje (${xc.review})`, 0, false, `Revisar ${xc.review}`) : ''));
   $('nav-main').onclick = e => {
     const b = e.target.closest('[data-k]'); if (!b) return;
     if (b.dataset.k === 'review') setView({ kind: 'today' });
@@ -372,8 +443,8 @@ function renderSidebar() {
     else setView({ kind: 'notes', filter: b.dataset.k });
   };
   $('nav-folders').innerHTML = state.folders.map(f => `
-    <div class="nav-item folder ${v.kind === 'notes' && v.filter === f.id ? 'active' : ''}" data-id="${f.id}" role="button" tabindex="0">
-      <span class="dot" style="background:${f.color}"></span><span>${esc(f.name)}</span>
+    <div class="nav-item folder ${v.kind === 'notes' && v.filter === f.id ? 'active' : ''}" data-id="${f.id}" role="button" tabindex="0" title="${esc(f.name)}">
+      <span class="dot" style="background:${f.color}"></span><span class="lbl-full">${esc(f.name)}</span><span class="lbl-short">${esc(f.name)}</span>
       <em>${count(n => n.folderId === f.id) || ''}</em>
       <button class="icon-btn small more" data-more="${f.id}" aria-label="Opções da pasta">${ic('more')}</button>
     </div>`).join('') || '<p class="muted small pad">Crie pastas para separar por matéria.</p>';
@@ -406,6 +477,9 @@ function renderMain() {
   $('view-notes').hidden = isTasks || isHub;
   $('view-tasks').hidden = !isTasks;
   $('view-hub').hidden = !isHub;
+  // o Tutor ocupa a altura toda (a conversa rola por dentro, a caixa de texto fica sempre à vista)
+  $('view-hub').classList.toggle('fill', kind === 'tutor');
+  document.body.classList.toggle('in-tutor', kind === 'tutor');
   $('sort').hidden = isTasks || isHub;
   document.querySelector('.search').hidden = isHub;
   $('btn-import').hidden = isHub || isTasks;
@@ -432,7 +506,7 @@ function visibleNotes() {
   const f = state.view.filter, q = state.search;
   let list = state.notes.filter(n =>
     f === 'all' ? true : f === 'fav' ? n.fav : f === 'none' ? !n.folderId : n.folderId === f);
-  if (q) list = list.filter(n => n.title.toLowerCase().includes(q) || folderName(n.folderId).toLowerCase().includes(q));
+  if (q) list = list.filter(n => n.title.toLowerCase().includes(q) || folderName(n.folderId).toLowerCase().includes(q) || (n.searchText || '').toLowerCase().includes(q));
   const s = settings.sort;
   list.sort((a, b) => s === 'title' ? a.title.localeCompare(b.title, 'pt-BR') : s === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt);
   return list;
@@ -440,6 +514,7 @@ function visibleNotes() {
 
 function renderNotes() {
   const list = visibleNotes();
+  const recs = recCounts();
   const grid = $('notes-grid');
   grid.innerHTML = `<button class="card new-card" id="card-new">${ic('plus')}<span>Nova anotação</span></button>` +
     list.map(n => `
@@ -447,7 +522,7 @@ function renderNotes() {
       <div class="thumb">${n.thumb ? `<img src="${n.thumb}" alt="" loading="lazy">` : `<div class="thumb-empty">${ic('page')}</div>`}</div>
       <div class="card-info">
         <div class="card-title">${esc(n.title)}</div>
-        <div class="card-meta">${n.folderId ? `<span class="dot" style="background:${folderColor(n.folderId)}"></span>${esc(folderName(n.folderId))} · ` : ''}${fmtDate(n.updatedAt)} · ${n.pageCount || 1} pág.</div>
+        <div class="card-meta">${n.folderId ? `<span class="dot" style="background:${folderColor(n.folderId)}"></span>${esc(folderName(n.folderId))} · ` : ''}${fmtDate(n.updatedAt)} · ${n.pageCount || 1} pág.${recs[n.id] ? ` · <span class="rec-badge" title="${recs[n.id]} gravação(ões)">${ic('mic')}${recs[n.id]}</span>` : ''}</div>
       </div>
       <button class="icon-btn small fav ${n.fav ? 'on' : ''}" data-fav="${n.id}" aria-label="Favoritar">${ic('star')}</button>
       <button class="icon-btn small more" data-more="${n.id}" aria-label="Opções">${ic('more')}</button>
@@ -650,6 +725,7 @@ async function noteMenu(id) {
     { label: 'Mover para pasta', icon: 'folder', value: 'move' },
     { label: n.fav ? 'Remover dos favoritos' : 'Favoritar', icon: 'star', value: 'fav' },
     { label: 'Criar tarefa', icon: 'tasks', value: 'task' },
+    { label: recCounts()[n.id] ? `Gravações da aula (${recCounts()[n.id]})` : 'Gravações da aula', icon: 'mic', value: 'recs' },
     { label: n.review && !n.review.done ? 'Desligar revisões programadas' : 'Programar revisões (1, 3, 7, 14, 30 dias)', icon: 'repeat', value: 'review' },
     { label: 'Duplicar', icon: 'copy', value: 'dup' },
     { label: 'Excluir', icon: 'trash', value: 'del', danger: true },
@@ -669,6 +745,7 @@ async function noteMenu(id) {
     if (f) { n.folderId = f.v; await db.put('notes', n); render(); toast(`Movida para ${folderName(f.v) || 'Sem pasta'}`); }
   } else if (a === 'fav') { n.fav = !n.fav; await db.put('notes', n); render(); }
   else if (a === 'task') taskDialog({ noteId: n.id, folderId: n.folderId });
+  else if (a === 'recs') openRecordings(n);
   else if (a === 'review') toggleReview(n);
   else if (a === 'dup') {
     const c = await loadContent(id);
@@ -682,6 +759,7 @@ async function noteMenu(id) {
     await db.del('notes', id); await db.del('pages', id);
     state.notes = state.notes.filter(x => x.id !== id);
     for (const t of state.tasks) if (t.noteId === id) { t.noteId = ''; await db.put('tasks', t); }
+    // as gravações da aula continuam salvas, mas soltas (aparecem em Dados e backup → Conferir)
     render(); toast('Anotação excluída');
   }
 }
@@ -810,10 +888,13 @@ function renderTasks() {
     if (o) { openNote(o.dataset.open); return; }
     const d = e.target.closest('[data-del]');
     if (d) {
-      if (!(await confirmBox('Excluir tarefa', 'Excluir esta tarefa?', 'Excluir'))) return;
-      await db.del('tasks', d.dataset.del);
-      state.tasks = state.tasks.filter(t => t.id !== d.dataset.del);
-      render(); return;
+      const gone = state.tasks.find(t => t.id === d.dataset.del);
+      if (!gone) return;
+      await db.del('tasks', gone.id);
+      state.tasks = state.tasks.filter(t => t.id !== gone.id);
+      render();
+      toast('Tarefa excluída', 5000, { label: 'Desfazer', run: async () => { await db.put('tasks', gone); state.tasks.push(gone); render(); toast('Tarefa de volta ✓'); } });
+      return;
     }
     const ed = e.target.closest('[data-edit]');
     if (ed) taskDialog(state.tasks.find(t => t.id === ed.dataset.edit));
@@ -941,50 +1022,25 @@ async function settingsDialog() {
       <option value="math" ${settings.autoMode === 'math' ? 'selected' : ''}>Conferir contas (✓ / ✗) ao terminar de escrever</option>
     </select>
     <hr>
-    <label class="lbl">Inteligência artificial</label>
-    <p class="muted small">Resumos, melhoria da escrita, explicações, perguntas, flashcards, plano de estudo e análise da semana. As chaves ficam salvas só neste tablet.</p>
-    <div class="seg full-seg" id="s-provider">${Object.entries(PROVIDERS).map(([k, v]) => `<button type="button" data-p="${k}" class="${(settings.aiProvider || 'gemini') === k ? 'active' : ''}">${esc(v)}</button>`).join('')}</div>
-    <div class="prov-box" data-box="anthropic">
-      <p class="muted small">Crie a chave em <b>platform.claude.com</b> → API Keys. O uso é cobrado na sua conta da Anthropic.</p>
-      <input class="input" id="s-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(settings.aiKey || '')}">
-      <select class="select full" id="s-aimodel" style="margin-top:8px">${Object.entries(AI_MODELS).map(([k, v]) => `<option value="${k}" ${(settings.aiModel || DEFAULT_MODEL) === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
-    </div>
-    <div class="prov-box" data-box="gemini">
-      <ol class="help small">
-        <li>Entre em <b>aistudio.google.com/apikey</b> com a sua conta Google.</li>
-        <li>Toque em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
-        <li>Cole a chave abaixo e toque em <b>Testar</b>.</li>
-      </ol>
-      <input class="input" id="s-geminikey" type="password" autocomplete="off" spellcheck="false" placeholder="Chave do Gemini" value="${esc(settings.geminiKey || '')}">
-      <label class="lbl">Modelo do Gemini</label>
-      <input class="input" id="s-geminimodel" list="gemini-models" autocomplete="off" spellcheck="false" value="${esc(geminiModel())}">
-      <datalist id="gemini-models">${GEMINI_MODELS.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</datalist>
-      <p class="muted small">O Gemini lê imagens, então entende a sua letra, e tem plano gratuito com limite de pedidos por minuto e por dia. No plano gratuito, o Google pode usar os dados enviados para melhorar os produtos dele.</p>
-    </div>
-    <div class="prov-box" data-box="groq">
-      <ol class="help small">
-        <li>Entre em <b>console.groq.com</b> e crie uma conta grátis (dá para entrar com o Google).</li>
-        <li>Vá em <b>API Keys</b> → <b>Create API Key</b>, dê um nome (ex.: Caderno) e copie a chave (começa com <b>gsk_</b>).</li>
-        <li>Cole a chave abaixo e toque em <b>Testar</b>.</li>
-      </ol>
-      <input class="input" id="s-groqkey" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…" value="${esc(settings.groqKey || '')}">
-      <label class="lbl">Modelo da Groq</label>
-      <input class="input" id="s-groqmodel" list="groq-models" autocomplete="off" spellcheck="false" value="${esc(groqModel())}">
-      <datalist id="groq-models">${GROQ_MODELS.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</datalist>
-      <p class="muted small">Use um modelo que <b>lê imagens</b> para a IA entender a sua letra. Com o Qwen 3.8, cada pedido envia no máximo <b>3 páginas</b>. O plano gratuito tem limite de pedidos por minuto e por dia.</p>
-    </div>
+    <label class="lbl">Inteligência artificial — Gemini (versão rápida)</label>
+    <ol class="help small">
+      <li>Entre em <b>aistudio.google.com/apikey</b> com a sua conta Google.</li>
+      <li>Toque em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
+      <li>Cole a chave abaixo e toque em <b>Testar</b>.</li>
+    </ol>
+    <input class="input" id="s-geminikey" type="password" autocomplete="off" spellcheck="false" placeholder="Cole aqui a chave do Gemini" value="${esc(settings.geminiKey || '')}">
     <div class="row wrap" style="margin-top:8px">
-      <button class="btn" id="s-aitest" type="button">${ic('check')}<span>Testar</span></button>
+      <button class="btn primary" id="s-aitest" type="button">${ic('check')}<span>Testar</span></button>
+      ${settings.geminiKey ? `<button class="btn" id="s-aiclear" type="button">${ic('trash')}<span>Remover chave</span></button>` : ''}
     </div>
     <p class="muted small" id="s-aistatus"></p>
+    <p class="muted small">Usa o <b>Gemini Flash-Lite</b>, o modelo mais rápido do Google (responde em menos de 1 segundo nos testes), com um reserva também rápido se ele estiver ocupado. A chave fica salva só neste tablet. No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele.</p>
     <hr>
-    <label class="lbl">Backup</label>
-    <p class="muted small">Tudo fica salvo no próprio tablet, sem precisar de conta. Faça backup de vez em quando (ex.: enviar para o Google Drive).</p>
+    <label class="lbl">Dados e backup</label>
+    <p class="muted small">Tudo fica salvo automaticamente no banco de dados do tablet, com cópias automáticas diárias.${est ? ` Espaço usado: ${(est.usage / 1048576).toFixed(1)} MB.` : ''}${persisted ? ' Armazenamento protegido ✓' : ''}</p>
     <div class="row wrap">
-      <button class="btn" id="s-export" type="button">${ic('download')}<span>Exportar backup</span></button>
-      <button class="btn" id="s-import" type="button">${ic('upload')}<span>Restaurar backup</span></button>
+      <button class="btn" id="s-data" type="button">${ic('database')}<span>Abrir Dados e backup</span></button>
     </div>
-    <p class="muted small">${est ? `Espaço usado: ${(est.usage / 1048576).toFixed(1)} MB` : ''}${persisted ? ' · armazenamento protegido ✓' : ''}</p>
     <hr>
     <details><summary><b>Como usar</b></summary>
       <ul class="help">
@@ -1002,7 +1058,7 @@ async function settingsDialog() {
       </ul>
     </details>
   </div>`);
-  body.querySelector('#s-export').onclick = exportBackup;
+  body.querySelector('#s-data').onclick = () => { body.closest('.modal-back')?._close?.(); setView({ kind: 'data' }); };
   body.querySelector('#s-theme').onclick = e => {
     const b = e.target.closest('[data-t]'); if (!b) return;
     settings.theme = b.dataset.t; saveSettings(); applyLook();
@@ -1013,39 +1069,24 @@ async function settingsDialog() {
     settings.uiScale = +b.dataset.z; saveSettings(); applyLook();
     body.querySelectorAll('#s-scale button').forEach(x => x.classList.toggle('active', x === b));
   };
-  const readAI = () => {
-    settings.aiKey = body.querySelector('#s-aikey').value.trim();
-    settings.aiModel = body.querySelector('#s-aimodel').value;
-    settings.groqKey = body.querySelector('#s-groqkey').value.trim();
-    settings.groqModel = body.querySelector('#s-groqmodel').value.trim() || GROQ_DEFAULT_MODEL;
-    settings.geminiKey = body.querySelector('#s-geminikey').value.trim();
-    settings.geminiModel = body.querySelector('#s-geminimodel').value.trim() || GEMINI_DEFAULT_MODEL;
-    settings.aiProvider = body.querySelector('#s-provider .active')?.dataset.p || 'anthropic';
-  };
-  const showProv = () => {
-    const p = body.querySelector('#s-provider .active')?.dataset.p || 'anthropic';
-    body.querySelectorAll('.prov-box').forEach(b => { b.hidden = b.dataset.box !== p; });
-  };
-  showProv();
-  body.querySelector('#s-provider').onclick = e => {
-    const b = e.target.closest('[data-p]'); if (!b) return;
-    body.querySelectorAll('#s-provider button').forEach(x => x.classList.toggle('active', x === b));
-    body.querySelector('#s-aistatus').textContent = '';
-    showProv();
-  };
+  const readAI = () => { settings.geminiKey = body.querySelector('#s-geminikey').value.trim(); };
+  body.querySelector('#s-aiclear')?.addEventListener('click', () => {
+    body.querySelector('#s-geminikey').value = ''; readAI(); saveSettings();
+    body.querySelector('#s-aistatus').textContent = 'Chave removida deste tablet.';
+  });
   body.querySelector('#s-aitest').onclick = async () => {
     const st = body.querySelector('#s-aistatus');
     readAI();
     saveSettings();
     st.textContent = 'Testando…';
+    const t0 = performance.now();
     try {
       let txt = '';
       const r = streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; });
       await r.done;
-      st.textContent = `✓ ${{ groq: 'Groq', gemini: 'Gemini', anthropic: 'Claude' }[settings.aiProvider] || 'IA'} funcionando: ` + txt.trim().slice(0, 60);
+      st.textContent = `✓ Gemini funcionando em ${((performance.now() - t0) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s: ` + txt.trim().slice(0, 60);
     } catch (e) { st.textContent = '✗ ' + e.message; }
   };
-  body.querySelector('#s-import').onclick = () => $('backup-input').click();
   await modal({ title: 'Ajustes', body, wide: true, actions: [{ label: 'Fechar', value: true, primary: true }] });
   settings.fingerDraw = body.querySelector('#s-finger').checked;
   settings.shapes = body.querySelector('#s-shapes').checked;
@@ -1056,38 +1097,12 @@ async function settingsDialog() {
   syncToggles();
 }
 
-async function exportBackup() {
-  toast('Gerando backup…');
-  const data = { app: 'caderno-estudos', version: 1, exportedAt: new Date().toISOString() };
-  for (const s of db.STORES) data[s] = await db.all(s);
-  const file = new File([JSON.stringify(data)], `backup_caderno_${todayStr()}.json`, { type: 'application/json' });
-  const r = await shareFile(file, 'Backup do Caderno de Estudos', '');
-  if (r === 'downloaded' || r === 'needs-gesture') { if (r === 'needs-gesture') download(file); toast('Backup salvo em Downloads'); }
-}
-
 $('backup-input').addEventListener('change', async e => {
   const f = e.target.files && e.target.files[0];
   e.target.value = '';
   if (!f) return;
-  try {
-    const data = JSON.parse(await f.text());
-    if (data.app !== 'caderno-estudos') throw new Error('Arquivo não é um backup do Caderno');
-    const n = (data.notes || []).length, t = (data.tasks || []).length;
-    if (!(await confirmBox('Restaurar backup', `Restaurar ${n} anotação(ões), ${(data.folders || []).length} pasta(s) e ${t} tarefa(s)? Itens iguais serão substituídos; o resto é mantido.`, 'Restaurar', false))) return;
-    toast('Restaurando…', 30000);
-    for (const s of db.STORES) if (Array.isArray(data[s]) && data[s].length) await db.bulkPut(s, data[s].filter(it => it && it.id));
-    await loadAll();
-    await reloadHub();
-    await reloadPerf();
-    await reloadPlus();
-    await reloadGoals();
-    await reloadQuiz();
-    document.querySelector('.modal-back')?._close?.(true);
-    render();
-    toast('Backup restaurado ✓');
-  } catch (err) {
-    toast('Erro ao restaurar: ' + err.message, 4000);
-  }
+  document.querySelectorAll('.modal-back').forEach(m => m._close && m._close());
+  await importBackupFile(f);
 });
 
 async function addTask({ title, due = '', prio = 2, folderId = '', noteId = '', notes = '' }) {

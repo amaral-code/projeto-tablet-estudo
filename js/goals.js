@@ -166,4 +166,5 @@ export const goalsToday = {
   bind() { /* os links [data-goto] já são ligados pelo painel */ },
 };
 export const goalsCount = () => G.filter(g => !progress(g).done).length;
+export const goalsList = () => G;
 export const newGoal = () => goalDialog();

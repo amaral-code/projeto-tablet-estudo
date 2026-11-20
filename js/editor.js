@@ -74,6 +74,8 @@ export function initEditor(callbacks) {
   $('pg-zoom').onclick = () => { fitWidth(); redraw(); };
   $('pg-label').onclick = openPageOverview;
   $('ed-ai').onclick = () => cb.onAI();
+  $('ed-rec').onclick = () => cb.onRecord(E.meta);
+  $('ed-recs').onclick = () => cb.onRecordings(E.meta);
   $('ed-import').onclick = () => cb.onImport();
   $('img-input').addEventListener('change', onImageFile);
 
@@ -1136,6 +1138,8 @@ export async function flushSave() {
   st.dirty = false;
   st.meta.updatedAt = Date.now();
   st.meta.pageCount = st.content.pages.length;
+  // texto digitado das páginas (inclusive o escrito pela IA) para a busca encontrar pelo conteúdo
+  st.meta.searchText = st.content.pages.flatMap(p => p.texts.filter(t => !t.mark).map(t => t.text)).join(' ').replace(/\s+/g, ' ').slice(0, 5000);
   try {
     st.meta.thumb = renderPageToCanvas(st.content.pages[0], st.content.bg, 280).toDataURL('image/jpeg', 0.72);
   } catch { /* imagem ainda carregando */ }

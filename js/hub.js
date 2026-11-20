@@ -2,6 +2,7 @@
 import { ic, esc, h, toast, modal, confirmBox, menu } from './ui.js';
 import { ACTIONS, aiConfigured, buildContent, streamChat, parseFlashcards } from './ai.js';
 import { SOUNDS, playSound, stopSound, setVolume } from './sound.js';
+import { speak, stopSpeak, canSpeak } from './voice.js';
 
 let A; // funções e dados do app
 const H = { sessions: [], habits: [], decks: [], cards: [] };
@@ -58,6 +59,8 @@ const T = (() => {
   try { const v = JSON.parse(localStorage.getItem(FKEY)); return v ? { ...def, ...v, cfg: { ...def.cfg, ...v.cfg } } : def; } catch { return def; }
 })();
 const saveT = () => { try { localStorage.setItem(FKEY, JSON.stringify(T)); } catch { /* */ } };
+// backup restaurado: aplica as configurações do foco que vieram nele
+document.addEventListener('caderno-foco-cfg', e => { Object.assign(T.cfg, e.detail || {}); saveT(); });
 const dur = m => (m === 'free' ? 3600 : T.cfg[m === 'focus' ? 'focus' : m === 'short' ? 'short' : 'long'] * 60);
 const left = () => (T.running ? Math.max(0, Math.round((T.endAt - Date.now()) / 1000)) : T.remaining);
 // cronômetro livre: tempo já estudado
@@ -234,7 +237,7 @@ function renderFocus(el) {
         <button class="btn primary big" id="fc-start">${ic(T.running ? 'pause' : 'timer')}<span>${T.running ? 'Pausar' : (free ? sec > 0 : sec < dur(T.mode)) ? 'Continuar' : 'Começar'}</span></button>
         <button class="btn" id="fc-reset" title="${free ? 'Zerar' : 'Reiniciar'}">${ic('undo')}<span>${free ? 'Zerar' : 'Reiniciar'}</span></button>
         ${free ? '' : `<button class="btn" id="fc-skip" title="Pular para a próxima fase">${ic('right')}<span>Pular</span></button>`}
-        ${(T.mode === 'focus' && sec < dur('focus')) || (free && sec > 0) ? `<button class="btn" id="fc-stop">${ic('check')}<span>Encerrar e salvar</span></button>` : ''}
+        ${(T.mode === 'focus' && (T.running || sec < dur('focus'))) || (free && sec > 0) ? `<button class="btn" id="fc-stop">${ic('check')}<span>Encerrar e salvar</span></button>` : ''}
       </div>
       <div class="row wrap focus-ctx">
         <div class="grow"><label class="lbl">Matéria</label><select class="select full" id="fc-folder">${A.folderOptions(T.folderId, 'Geral')}</select></div>
@@ -600,7 +603,7 @@ function renderReview(el) {
   el.innerHTML = `<div class="review">
     <div class="row"><button class="btn" id="rv-quit">${ic('close')}<span>Sair</span></button><div class="grow progress"><i style="width:${(r.done / r.total) * 100}%"></i></div><span class="muted">${r.done} / ${r.total}</span></div>
     <div class="flash ${r.shown ? 'shown' : ''}" id="rv-card" role="button" tabindex="0">
-      <div class="muted small">${esc(deck ? deck.name : '')}</div>
+      <div class="row flash-head"><span class="muted small grow">${esc(deck ? deck.name : '')}</span>${canSpeak() ? `<button class="chip small" id="rv-say" type="button" aria-label="Ouvir a carta">${ic('speaker')}<span>Ouvir</span></button>` : ''}</div>
       <div class="flash-front">${esc(c.front)}</div>
       ${r.shown ? `<hr><div class="flash-back">${esc(c.back)}</div>` : '<div class="muted tap">Toque para ver a resposta</div>'}
     </div>
@@ -611,11 +614,13 @@ function renderReview(el) {
       <button class="grade g3" data-g="3"><b>Fácil</b><span>${ivLabel(prev[3])}</span></button></div>`
       : '<button class="btn primary big full" id="rv-show">Mostrar resposta</button>'}
   </div>`;
-  el.querySelector('#rv-quit').onclick = () => { review = null; A.onChange(); };
-  const show = () => { if (!r.shown) { r.shown = true; renderReview(el); } };
+  el.querySelector('#rv-quit').onclick = () => { stopSpeak(); review = null; A.onChange(); };
+  el.querySelector('#rv-say')?.addEventListener('click', e => { e.stopPropagation(); speak(r.shown ? `${c.front}. ${c.back}` : c.front, { button: e.currentTarget }); });
+  const show = () => { if (!r.shown) { stopSpeak(); r.shown = true; renderReview(el); } };
   el.querySelector('#rv-card').onclick = show;
   el.querySelector('#rv-show')?.addEventListener('click', show);
   el.querySelectorAll('[data-g]').forEach(b => b.onclick = async () => {
+    stopSpeak();
     const g = +b.dataset.g;
     const n = schedule(c, g);
     Object.assign(c, n);
@@ -730,6 +735,7 @@ function renderToday(el) {
       ${A.levelBadge ? A.levelBadge() : ''}
       <div class="streak ${streak ? 'on' : ''}">🔥 <b>${streak}</b> <span>${streak === 1 ? 'dia seguido' : 'dias seguidos'} estudando</span></div>
     </div>
+    ${A.todayTop ? A.todayTop.html() : ''}
     <div class="today-grid">
       <div class="panel t-tasks"><div class="p-head"><h3>${ic('tasks')}Tarefas de hoje</h3><button class="icon-btn small" id="td-add" aria-label="Nova tarefa">${ic('plus')}</button></div>
         <div class="top3 ${tops.length ? '' : 'empty'}"><h4>⭐ Prioridades de hoje <span class="muted">${tops.length + doneTops ? `${doneTops} de ${tops.length + doneTops} feitas` : ''}</span></h4>
@@ -759,6 +765,7 @@ function renderToday(el) {
   el.querySelectorAll('[data-open]').forEach(b => b.onclick = () => A.openNote(b.dataset.open));
   bindMiniTasks(el);
   if (A.extraToday) A.extraToday.bind(el);
+  if (A.todayTop) A.todayTop.bind(el);
 }
 
 // ======================= roteamento =======================
@@ -769,7 +776,7 @@ export function renderHub(kind, el) {
   ({ today: renderToday, calendar: renderCalendar, focus: renderFocus, cards: renderCards, habits: renderHabits })[kind](el);
   tickUI();
 }
-export function leaveHub() { currentKind = null; review = null; document.body.classList.remove('zen'); tickUI(); }
+export function leaveHub() { if (review) stopSpeak(); currentKind = null; review = null; document.body.classList.remove('zen'); tickUI(); }
 function rerenderIf(kind) { if (currentKind === kind) { const el = document.getElementById('view-hub'); el && renderHub(kind, el); } }
 
 export function hubNewAction(kind) {
@@ -790,6 +797,22 @@ export function reviewsByDay() { try { return JSON.parse(localStorage.getItem(RK
 export function hubData() { return H; }
 export function focusCfg() { return T.cfg; }
 export function startFocus() { if (!T.running) startT(); }
+// Começa um foco já com a matéria e a tarefa escolhidas (usado pelo "O que fazer agora")
+export function startFocusFor({ folderId = '', taskId = '' } = {}) {
+  if (T.running) { toast('Já existe um foco rodando'); return; }
+  if (T.mode !== 'focus') resetT('focus');
+  T.folderId = folderId; T.taskId = taskId; saveT();
+  startT();
+}
+// Abre a revisão de todas as cartas vencidas
+export function reviewNow() {
+  A.goTo({ kind: 'cards' });
+  const el = document.getElementById('view-hub');
+  if (dueCards().length) startReview(null, el); else toast('Nenhuma carta para revisar agora 🎉');
+}
+export const dueCount = () => dueCards().length;
+export const focusToday = () => H.sessions.filter(s => s.date === dayStr()).reduce((a, s) => a + s.minutes, 0);
+export async function markHabitDone(id) { await toggleHabit(id); }
 // Marca hoje o hábito cujo nome combina (ex.: leitura → "Ler 20 páginas")
 export async function markHabitToday(regex) {
   const hb = H.habits.find(x => regex.test(x.name));

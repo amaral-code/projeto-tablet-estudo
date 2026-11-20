@@ -65,7 +65,7 @@ async function start(el, src, n, level) {
   el.querySelector('#qz-go').disabled = true;
   try {
     const content = await buildContent({ pages, bg, title, folder: A.folderName(folderId), prompt: quizPrompt(n, level) });
-    busy = streamChat([{ role: 'user', content }], () => {});
+    busy = streamChat([{ role: 'user', content }], () => {}, { json: true }); // resposta em JSON garantida pelo Gemini
     const r = await busy.done;
     const qs = parseQuiz(r.text).slice(0, n);
     if (qs.length < 2) throw new Error('A IA não montou as perguntas direito. Tente de novo.');

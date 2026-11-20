@@ -1,7 +1,7 @@
 // Armazenamento local (IndexedDB) — tudo fica salvo no próprio tablet.
 const DB_NAME = 'caderno-estudos';
-const VERSION = 3;
-const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades'];
+const VERSION = 4;
+const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal'];
 let dbp;
 
 function open() {
@@ -66,7 +66,7 @@ const DEFAULTS = {
   aiModel: 'claude-opus-5-5',
   aiProvider: 'anthropic', // anthropic | groq
   groqKey: '',
-  groqModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+  groqModel: 'qwen/qwen3.8-27b',
 };
 export const settings = (() => {
   let v = {};

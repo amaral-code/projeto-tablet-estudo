@@ -1,9 +1,9 @@
 // Service worker: deixa o app funcionando offline.
-const CACHE = 'caderno-v5';
+const CACHE = 'caderno-v7';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/editor.js', 'js/ink.js', 'js/shapes.js', 'js/recognize.js', 'js/store.js', 'js/export.js', 'js/ui.js',
-  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/vendor/anthropic-sdk.mjs', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
+  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/plus.js', 'js/sound.js', 'js/vendor/anthropic-sdk.mjs', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 self.addEventListener('install', e => {

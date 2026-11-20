@@ -14,16 +14,24 @@ export const MAX_PAGES = 20;
 
 // ----- Groq (alternativa gratuita) -----
 export const PROVIDERS = { anthropic: 'Claude (Anthropic)', groq: 'Groq (tem plano gratuito)' };
-export const GROQ_DEFAULT_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Conferido na documentação da Groq (docs/vision e docs/deprecations) em 20/11/2026:
+// os modelos Llama 4 foram desligados; o modelo de visão atual é o Qwen 3.8 27B (até 3 imagens).
+export const GROQ_DEFAULT_MODEL = 'qwen/qwen3.8-27b';
 export const GROQ_MODELS = [
-  ['meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout — lê imagens (recomendado)'],
-  ['meta-llama/llama-4-maverick-17b-128e-instruct', 'Llama 4 Maverick — lê imagens'],
-  ['llama-3.3-70b-versatile', 'Llama 3.3 70B — só texto (não lê a folha)'],
+  ['qwen/qwen3.8-27b', 'Qwen 3.8 27B — lê imagens, até 3 páginas (recomendado)'],
+  ['meta-models/muse-spark-open', 'Muse Spark Open — lê imagens, até 5 páginas (prévia limitada)'],
+  ['openai/gpt-oss-120b', 'GPT-OSS 120B — só texto (relatório e diário; não lê a folha)'],
 ];
+const GROQ_DEAD = /llama-4-(scout|maverick)|^qwen\/qwen3-32b$|llama-3\.[13]-/; // descontinuados
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MAX_IMAGES = 5; // limite de imagens por pedido nos modelos de visão da Groq
 export const provider = () => (settings.aiProvider === 'groq' ? 'groq' : 'anthropic');
-export const maxPages = () => (provider() === 'groq' ? GROQ_MAX_IMAGES : MAX_PAGES);
+export const groqModel = () => {
+  const m = (settings.groqModel || '').trim();
+  return !m || GROQ_DEAD.test(m) ? GROQ_DEFAULT_MODEL : m;
+};
+// Limite de imagens por pedido de cada modelo de visão da Groq
+const groqMaxImages = m => (/muse-spark/.test(m) ? 5 : 3);
+export const maxPages = () => (provider() === 'groq' ? groqMaxImages(groqModel()) : MAX_PAGES);
 
 const SYSTEM = `Você é um professor particular e assistente de estudos dentro do app "Caderno de Estudos", usado por um estudante brasileiro num tablet.
 As anotações do estudante chegam como imagens de páginas de caderno, quase sempre escritas à mão (às vezes com textos digitados, fotos de livros ou PDFs importados). Leia com atenção a escrita, as contas, os desenhos e os destaques do marca-texto.
@@ -227,21 +235,29 @@ function groqError(status, msg) {
   if (status === 429) return new AIError('Limite da Groq atingido (o plano gratuito tem limite por minuto e por dia). Espere um pouco e tente de novo.');
   if (status === 413 || /too large|payload/i.test(m)) return new AIError('Pedido grande demais para a Groq. Use “Esta página” ou selecione um trecho com o laço.');
   if (status === 404 || /model.*(not found|does not exist|decommissioned)/i.test(m)) return new AIError('Modelo não encontrado na Groq. Confira o nome do modelo em Ajustes → Inteligência artificial.');
+  if (/decommission|deprecat/i.test(m)) return new AIError('Este modelo foi desligado pela Groq. Em Ajustes, use ' + GROQ_DEFAULT_MODEL + '.');
   if (/image|vision|content must be a string/i.test(m)) return new AIError('Este modelo da Groq não lê imagens. Escolha um modelo com visão, como ' + GROQ_DEFAULT_MODEL + '.');
   if (status >= 500) return new AIError('A Groq está instável agora. Tente de novo em instantes.');
   return new AIError('Erro da Groq: ' + (m || 'código ' + status).slice(0, 200));
 }
 
+export function groqBody(model, messages) {
+  const body = { model, messages: toGroqMessages(messages), stream: true, max_completion_tokens: 8192, temperature: 0.4 };
+  // modelos que "pensam" antes de responder: esconde o raciocínio e usa esforço médio
+  if (/qwen3\.\d|gpt-oss|muse-spark|minimax/i.test(model)) { body.reasoning_format = 'hidden'; body.reasoning_effort = 'medium'; }
+  return body;
+}
+
 function streamGroq(messages, onText) {
   const ctrl = new AbortController();
-  const model = (settings.groqModel || '').trim() || GROQ_DEFAULT_MODEL;
+  const model = groqModel();
   const done = (async () => {
     let res;
     try {
       res = await fetch(GROQ_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.groqKey.trim()}` },
-        body: JSON.stringify({ model, messages: toGroqMessages(messages), stream: true, max_completion_tokens: 8192, temperature: 0.4 }),
+        body: JSON.stringify(groqBody(model, messages)),
         signal: ctrl.signal,
       });
     } catch (e) {
@@ -276,6 +292,7 @@ function streamGroq(messages, onText) {
         if (ch && ch.finish_reason) finish = ch.finish_reason;
       }
     }
+    text = text.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim(); // por segurança, caso venha o raciocínio
     if (!text) throw new AIError('A Groq não devolveu resposta. Tente de novo.');
     return { text, truncated: finish === 'length', message: { content: [{ type: 'text', text }] } };
   })().catch(e => {

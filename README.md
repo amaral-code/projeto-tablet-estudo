@@ -17,7 +17,18 @@ O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos 
 | 🔥 **Hábitos** | Marque o que fez em cada dia da semana e acompanhe a sequência de cada hábito |
 | ✅ **Tarefas** | Agora com **repetição** (todo dia, toda semana ou todo mês): ao concluir uma, a próxima é criada sozinha |
 
-## 📈 Desempenho (novo)
+## ⚡ Mais produtividade (novo)
+
+| Recurso | O que faz |
+|---|---|
+| 🗓️ **Horário de aulas** | Grade da semana. O painel Hoje mostra a aula de **agora** e a **próxima**. **Anotar nesta aula** cria a anotação na pasta da matéria com a data. Dá para repetir uma aula de segunda a sexta |
+| 📋 **Tarefas em 3 visões** | **Lista**, **Quadro** (A fazer, Fazendo, Feito) e **Matriz de prioridades** (urgente × importante), além de **subtarefas** com progresso (ex.: 2/5) |
+| 🎧 **Sons de foco** | Ruído branco, rosa, marrom e chuva, gerados no tablet e funcionando sem internet. Tocam só durante o foco, com volume ajustável |
+| 🖥️ **Modo tela cheia** | Na tela de Foco, esconde tudo e deixa só o relógio, sem distrações |
+| 📔 **Diário de estudos** | Seu humor, o que aprendeu, o que foi difícil e o plano para amanhã. O que foi difícil vira tarefa de revisão, e a IA faz o **resumo do mês** |
+| 🔁 **Revisão espaçada** | As anotações novas voltam para revisão depois de 1, 3, 7, 14 e 30 dias e aparecem em "Revisar hoje". Dá para ligar ou desligar pelo menu ⋮ da anotação |
+
+## 📈 Desempenho
 
 | Seção | O que faz |
 |---|---|
@@ -55,7 +66,7 @@ O resultado pode ser **escrito na folha**, alinhado às pautas (numa página nov
 3. No app, abra **Ajustes → Inteligência artificial** e toque em **Groq**.
 4. Cole a chave e toque em **Testar**. Tem que aparecer "✓ Groq funcionando".
 
-O modelo padrão é `meta-llama/llama-4-scout-17b-16e-instruct`, que **lê imagens** e por isso entende a sua letra. Se a Groq trocar o nome dos modelos, edite o campo "Modelo da Groq". Com a Groq, cada pedido envia **no máximo 5 páginas**, e o plano gratuito tem limite de pedidos por minuto e por dia. A qualidade das respostas costuma ser menor que a do Claude, principalmente para ler letra cursiva.
+O modelo padrão é `qwen/qwen3.8-27b`, que **lê imagens** e por isso entende a sua letra. Ele foi conferido na documentação da Groq em 20/11/2026; os modelos Llama 4 foram desligados pela Groq. Se a Groq trocar os modelos de novo, edite o campo "Modelo da Groq". Com o Qwen 3.8, cada pedido envia **no máximo 3 páginas**, e o plano gratuito tem limite de pedidos por minuto e por dia. A qualidade das respostas costuma ser menor que a do Claude, principalmente para ler letra cursiva.
 
 ## ✨ O que ele faz
 
@@ -114,6 +125,12 @@ npx playwright install chromium
 npm test
 ```
 
+Teste **real** da IA pela Groq (envia uma página do caderno de verdade para a Groq e confere a resposta):
+
+```
+GROQ_API_KEY=gsk_... node tests/teste-groq-real.cjs
+```
+
 ## 🛠️ Para desenvolvedores
 
 É HTML, CSS e JavaScript puro, sem etapa de build. As duas bibliotecas usadas ficam embutidas em `js/vendor/`.
@@ -132,7 +149,9 @@ js/aipanel.js         painel da IA no editor e janela de IA para pastas/anotaç�
 js/importer.js        importação de PDF (pdf.js) e fotos como páginas
 js/hub.js             Hoje, Foco (Pomodoro), Agenda, Flashcards (repetição espaçada) e Hábitos
 js/perf.js            Leitura/Kindle, Notas e provas, Relatório, Conquistas, Atalhos e Busca rápida
-tests/                teste completo automatizado
+js/plus.js            Horário de aulas, Diário, Revisão espaçada, Quadro e Matriz de tarefas
+js/sound.js           sons de foco (ruídos gerados no tablet)
+tests/                teste completo automatizado e teste real da Groq
 js/vendor/            SDK oficial da Anthropic (@anthropic-ai/sdk 1.11.0) e pdf.js 6.5.438, embutidos
 js/store.js           banco local (IndexedDB) e configurações
 sw.js                 funcionamento offline

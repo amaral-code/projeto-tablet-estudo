@@ -519,7 +519,7 @@ function watch(p) {
     await page.click('#s-export'); const d = await dl; backupFile = path.join(OUT, 'backup.json'); await d.saveAs(backupFile);
     await closeModals();
     const data = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
-    for (const s of ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades']) assert(Array.isArray(data[s]), 'faltou ' + s);
+    for (const s of ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal']) assert(Array.isArray(data[s]), 'faltou ' + s);
     assert(data.books.length === 1 && data.grades.length === 2, 'dados incompletos');
   });
   await step('restaura backup num tablet "novo"', async () => {
@@ -547,7 +547,7 @@ function watch(p) {
   await step('nenhuma tela passa da largura no tablet em pé (800px)', async () => {
     await page.setViewportSize({ width: 800, height: 1280 });
     const bad = [];
-    for (const k of ['today', 'calendar', 'tasks', 'focus', 'cards', 'habits', 'reading', 'grades', 'report', 'all']) {
+    for (const k of ['today', 'calendar', 'schedule', 'tasks', 'focus', 'cards', 'habits', 'journal', 'reading', 'grades', 'report', 'all']) {
       await page.evaluate(k => { document.body.classList.remove('side-open'); document.querySelector(`#nav-main [data-k=${k}]`).click(); }, k); await wait(250);
       const over = await page.evaluate(() => Math.max(...[...document.querySelectorAll('#main *')].map(e => e.getBoundingClientRect().right)) - window.innerWidth);
       if (over > 2) bad.push(`${k} (+${Math.round(over)}px)`);
@@ -555,6 +555,89 @@ function watch(p) {
     }
     await page.setViewportSize({ width: 1280, height: 800 });
     assert(!bad.length, 'estouram a largura: ' + bad.join(', '));
+  });
+
+  // ================= MAIS PRODUTIVIDADE =================
+  console.log('Horário, tarefas (quadro/matriz/subtarefas), sons, diário, revisões');
+  const hhmm = d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  await step('Horário: aula de agora aparece e "Anotar nesta aula" cria a anotação', async () => {
+    await nav('schedule');
+    const now = new Date(); const st = new Date(now.getTime() - 5 * 60000); const en = new Date(now.getTime() + 40 * 60000);
+    const safeSt = st.getDate() !== now.getDate() ? '00:00' : hhmm(st), safeEn = en.getDate() !== now.getDate() ? '23:59' : hhmm(en);
+    await page.click(`.class-add[data-day="${now.getDay()}"]`);
+    await page.selectOption('#cl-folder', { label: 'Matemática' }); await page.fill('#cl-start', safeSt); await page.fill('#cl-end', safeEn); await page.fill('#cl-room', '12');
+    await page.click('.modal .btn.primary'); await wait(400);
+    assert((await page.textContent('.now-class')).includes('Matemática'), 'aula de agora não apareceu');
+    await page.click('.now-class [data-note]'); await wait(1000);
+    const t = `Matemática — ${now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+    const n = await noteByTitle(t);
+    assert(n && n.review && n.review.step === 0, 'anotação da aula não criada com revisões');
+    await page.click('#ed-back'); await wait(900);
+  });
+  await step('Horário: validação de horário e repetir de segunda a sexta', async () => {
+    await nav('schedule');
+    await page.click('#btn-new'); await page.fill('#cl-name', 'Educação Física'); await page.fill('#cl-start', '10:00'); await page.fill('#cl-end', '09:00');
+    await page.click('.modal .btn.primary'); await toastHas('O fim precisa ser depois do início');
+    await page.fill('#cl-end', '10:50'); await page.check('#cl-rep'); await page.click('.modal .btn.primary'); await wait(500);
+    assert((await idb('classes')).filter(c => c.name === 'Educação Física').length === 5, 'não repetiu nos 5 dias');
+  });
+  await step('Hoje mostra aulas, diário e revisões', async () => {
+    const n = (await idb('notes')).find(x => x.review && x.review.step === 0);
+    await page.evaluate(id => new Promise(res => { const r = indexedDB.open('caderno-estudos'); r.onsuccess = () => { const st = r.result.transaction('notes', 'readwrite').objectStore('notes'); const g = st.get(id); g.onsuccess = () => { const v = g.result; v.review.due = '2000-01-01'; st.put(v).onsuccess = () => res(); }; }; }), n.id);
+    await page.reload(); await wait(1500);
+    assert(await page.locator('.t-class').count() === 1, 'cartão de aulas');
+    assert(await page.locator('.t-journal').count() === 1, 'cartão do diário');
+    await page.click('.t-review [data-rvdone]'); await wait(500);
+    const after = (await idb('notes')).find(x => x.id === n.id);
+    assert(after.review.step === 1 && after.review.due > new Date().toISOString().slice(0, 10), 'revisão não avançou');
+  });
+  await step('Tarefas: subtarefas com progresso', async () => {
+    await nav('tasks');
+    await page.click('#task-mode [data-m=list]');
+    await page.click('#btn-new'); await page.fill('#t-title', 'Trabalho de ciências');
+    for (const x of ['Pesquisar', 'Escrever', 'Revisar']) { await page.fill('#t-subnew', x); await page.press('#t-subnew', 'Enter'); }
+    await page.check('#t-subs [data-si="0"]'); await page.click('#t-subs [data-sr="2"]');
+    await page.click('.modal .btn.primary'); await wait(400);
+    const t = (await idb('tasks')).find(x => x.title === 'Trabalho de ciências');
+    assert(t.subtasks.length === 2 && t.subtasks[0].done && !t.subtasks[1].done, 'subtarefas erradas');
+    assert((await page.textContent('.task:has-text("Trabalho de ciências")')).includes('1/2'), 'progresso não aparece');
+  });
+  await step('Tarefas: quadro move de "A fazer" para "Fazendo" e "Feito"', async () => {
+    await page.click('#task-mode [data-m=board]'); await wait(300);
+    assert(await page.locator('.kanban .k-col').count() === 3, 'quadro não apareceu');
+    await page.click('.k-col >> nth=0 >> .k-card:has-text("Trabalho de ciências") [data-to=doing]'); await wait(400);
+    assert((await idb('tasks')).find(x => x.title === 'Trabalho de ciências').status === 'doing', 'não foi para Fazendo');
+    await page.click('.k-col >> nth=1 >> .k-card:has-text("Trabalho de ciências") [data-to=done]'); await wait(500);
+    assert((await idb('tasks')).find(x => x.title === 'Trabalho de ciências').done, 'não foi para Feito');
+  });
+  await step('Tarefas: matriz coloca tarefa urgente e importante em "Fazer agora"', async () => {
+    await page.click('#task-mode [data-m=matrix]'); await wait(200);
+    await page.click('#btn-new'); await page.fill('#t-title', 'Entregar redação'); await page.fill('#t-due', new Date().toISOString().slice(0, 10)); await page.selectOption('#t-prio', '3');
+    await page.click('.modal .btn.primary'); await wait(400);
+    assert((await page.textContent('.mq.q0')).includes('Entregar redação'), 'quadrante errado');
+    await page.click('#task-mode [data-m=list]');
+  });
+  await step('Foco: som de fundo e modo tela cheia', async () => {
+    await nav('focus');
+    await page.selectOption('#fc-sound', 'brown'); await wait(300);
+    await page.click('#fc-start'); await wait(800);
+    const cfg = await page.evaluate(() => JSON.parse(localStorage.getItem('caderno-foco')).cfg);
+    assert(cfg.sound === 'brown', 'som não salvo');
+    await page.click('#fc-zen'); await wait(300);
+    assert(await page.evaluate(() => document.body.classList.contains('zen')), 'tela cheia não ativou');
+    assert(!(await page.locator('#sidebar').isVisible()), 'menu continua visível');
+    await page.click('#zen-exit'); await wait(300);
+    assert(!(await page.evaluate(() => document.body.classList.contains('zen'))), 'não saiu da tela cheia');
+    await page.click('#fc-start'); await page.selectOption('#fc-sound', 'none');
+  });
+  await step('Diário: salvar dia, virar tarefa de revisão e resumo com IA', async () => {
+    await nav('journal');
+    await page.click('.mood[data-m="4"]'); await page.fill('#jr-learned', 'Frações equivalentes'); await page.fill('#jr-hard', 'Divisão de frações'); await page.click('#jr-form button[type=submit]'); await wait(400);
+    const j = (await idb('journal'))[0];
+    assert(j && j.mood === 4 && j.learned === 'Frações equivalentes', 'diário não salvo');
+    await page.click('#jr-task'); await wait(400);
+    assert((await idb('tasks')).some(t => t.title === 'Revisar: Divisão de frações'), 'tarefa de revisão não criada');
+    await page.click('#jr-ai'); await page.waitForFunction(() => /Resumo/.test(document.getElementById('jr-out')?.textContent || ''), null, { timeout: 8000 });
   });
 
   // ================= GROQ =================
@@ -569,9 +652,12 @@ function watch(p) {
     assert((await page.textContent('#s-aistatus')).includes('Groq funcionando: Tudo certo'), 'teste falhou: ' + await page.textContent('#s-aistatus'));
     await page.click('.modal-actions .btn.primary'); await wait(300);
     const last = groqReqs[groqReqs.length - 1];
-    assert(last.h.authorization === 'Bearer gsk_teste' && last.body.stream === true && last.body.model === 'meta-llama/llama-4-scout-17b-16e-instruct', 'pedido errado');
+    // modelo antigo (desligado pela Groq) salvo de versões anteriores é trocado sozinho
+    const migr = await page.evaluate(async () => { const st = await import('./js/store.js'); const ai = await import('./js/ai.js'); const old = st.settings.groqModel; st.settings.groqModel = 'meta-llama/llama-4-scout-17b-16e-instruct'; const m = ai.groqModel(); st.settings.groqModel = old; return m; });
+    assert(migr === 'qwen/qwen3.8-27b', 'não trocou modelo descontinuado');
+    assert(last.h.authorization === 'Bearer gsk_teste' && last.body.stream === true && last.body.model === 'qwen/qwen3.8-27b' && last.body.reasoning_format === 'hidden', 'pedido errado: ' + JSON.stringify({ m: last.body.model, r: last.body.reasoning_format }));
   });
-  await step('Groq: resumo de todas as páginas envia no máximo 5 imagens', async () => {
+  await step('Groq: resumo de todas as páginas envia no máximo 3 imagens (limite do Qwen 3.8)', async () => {
     await nav('all');
     await page.click('.card:has-text("Frações e decimais")'); await wait(900);
     await page.click('#ed-ai'); await page.click('#ai-scope [data-s=all]');
@@ -579,7 +665,7 @@ function watch(p) {
     const b = groqReqs[groqReqs.length - 1].body;
     const parts = b.messages[0].content;
     const imgs = parts.filter(p => p.type === 'image_url');
-    assert(imgs.length >= 1 && imgs.length <= 5, 'imagens: ' + imgs.length);
+    assert(imgs.length === 3, 'imagens: ' + imgs.length);
     assert(imgs.every(p => p.image_url.url.startsWith('data:image/jpeg;base64,')), 'formato da imagem');
     assert(parts[0].type === 'text' && parts[0].text.includes('assistente de estudos'), 'instruções ausentes');
     assert((await page.textContent('.ai-turn.assistant')).includes('Resumo pela Groq'), 'resposta não apareceu');

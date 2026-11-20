@@ -1,6 +1,7 @@
 // Central de produtividade: Hoje, Foco (Pomodoro), Agenda, Flashcards e Hábitos.
 import { ic, esc, h, toast, modal, confirmBox, menu } from './ui.js';
 import { ACTIONS, aiConfigured, buildContent, streamChat, parseFlashcards } from './ai.js';
+import { SOUNDS, playSound, stopSound, setVolume } from './sound.js';
 
 let A; // funções e dados do app
 const H = { sessions: [], habits: [], decks: [], cards: [] };
@@ -53,7 +54,7 @@ async function seedHub() {
 const FKEY = 'caderno-foco';
 const T = (() => {
   const def = { mode: 'focus', running: false, endAt: 0, remaining: 25 * 60, startedAt: 0, cycle: 0, folderId: '', taskId: '',
-    cfg: { focus: 25, short: 5, long: 15, every: 4, autoBreak: true, goal: 60 } };
+    cfg: { focus: 25, short: 5, long: 15, every: 4, autoBreak: true, goal: 60, sound: 'none', vol: 0.4 } };
   try { const v = JSON.parse(localStorage.getItem(FKEY)); return v ? { ...def, ...v, cfg: { ...def.cfg, ...v.cfg } } : def; } catch { return def; }
 })();
 const saveT = () => { try { localStorage.setItem(FKEY, JSON.stringify(T)); } catch { /* */ } };
@@ -66,6 +67,9 @@ function initTimer() {
   pill = h(`<button id="focus-pill" hidden aria-label="Abrir o foco"></button>`);
   pill.onclick = () => A.goTo({ kind: 'focus' });
   document.body.appendChild(pill);
+  const zx = h(`<button id="zen-exit">${ic('close')}<span>Sair</span></button>`);
+  zx.onclick = toggleZen;
+  document.body.appendChild(zx);
   setInterval(() => { if (T.running && left() <= 0) completePhase(); tickUI(); }, 500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && T.running) requestWake(); });
   if (T.running && left() <= 0) completePhase(true);
@@ -103,14 +107,19 @@ function notify(msg) {
   } catch { /* sem notificação */ }
 }
 
+// som de fundo só durante o foco (as pausas ficam em silêncio)
+function syncSound() {
+  if (T.running && T.mode === 'focus' && T.cfg.sound !== 'none') playSound(T.cfg.sound, T.cfg.vol);
+  else stopSound();
+}
 function startT() {
   if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
   if (!T.startedAt) T.startedAt = Date.now();
   T.running = true; T.endAt = Date.now() + T.remaining * 1000;
-  saveT(); requestWake(); tickUI(); rerenderIf('focus');
+  saveT(); requestWake(); syncSound(); tickUI(); rerenderIf('focus');
 }
-function pauseT() { T.remaining = left(); T.running = false; saveT(); releaseWake(); tickUI(); rerenderIf('focus'); }
-function resetT(mode = T.mode) { T.mode = mode; T.running = false; T.remaining = dur(mode); T.startedAt = 0; saveT(); releaseWake(); tickUI(); rerenderIf('focus'); }
+function pauseT() { T.remaining = left(); T.running = false; saveT(); releaseWake(); syncSound(); tickUI(); rerenderIf('focus'); }
+function resetT(mode = T.mode) { T.mode = mode; T.running = false; T.remaining = dur(mode); T.startedAt = 0; saveT(); releaseWake(); syncSound(); tickUI(); rerenderIf('focus'); }
 
 async function recordSession(minutes) {
   if (minutes < 1) return;
@@ -133,7 +142,7 @@ async function completePhase(silent) {
   T.mode = next; T.remaining = dur(next); T.running = false; T.startedAt = 0;
   saveT();
   if (T.cfg.autoBreak && next !== 'focus' && !silent) startT();
-  else releaseWake();
+  else { releaseWake(); syncSound(); }
   tickUI(); rerenderIf('focus'); rerenderIf('today');
   A.onChange();
 }
@@ -220,6 +229,12 @@ function renderFocus(el) {
         </div>
         <label class="check"><input type="checkbox" id="fc-auto" ${T.cfg.autoBreak ? 'checked' : ''}> Começar a pausa automaticamente</label>
       </details>
+      <div class="row wrap sound-row">
+        <span class="sound-ic">${ic('volume')}</span>
+        <select class="select" id="fc-sound" aria-label="Som de foco">${Object.entries(SOUNDS).map(([k, v]) => `<option value="${k}" ${T.cfg.sound === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        <input type="range" id="fc-vol" min="0.05" max="1" step="0.05" value="${T.cfg.vol}" aria-label="Volume">
+        <button class="btn" id="fc-zen">${ic('maximize')}<span>Tela cheia</span></button>
+      </div>
     </div>
     <div class="panel">
       <h3>Seu foco</h3>
@@ -257,7 +272,28 @@ function renderFocus(el) {
     saveT(); tickUI();
   });
   el.querySelector('#fc-auto').onchange = e => { T.cfg.autoBreak = e.target.checked; saveT(); };
+  el.querySelector('#fc-sound').onchange = e => {
+    T.cfg.sound = e.target.value; saveT();
+    if (T.cfg.sound === 'none') stopSound();
+    else if (T.running && T.mode === 'focus') playSound(T.cfg.sound, T.cfg.vol);
+    else { playSound(T.cfg.sound, T.cfg.vol); setTimeout(() => { if (!T.running) stopSound(); }, 2500); toast('Prévia do som — ele toca durante o foco'); }
+  };
+  el.querySelector('#fc-vol').oninput = e => { T.cfg.vol = +e.target.value; setVolume(T.cfg.vol); saveT(); };
+  el.querySelector('#fc-zen').onclick = toggleZen;
 }
+
+// Modo tela cheia: esconde menus e deixa só o relógio
+function toggleZen() {
+  const on = !document.body.classList.contains('zen');
+  document.body.classList.toggle('zen', on);
+  try {
+    if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+    else if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  } catch { /* sem tela cheia */ }
+  if (on) toast('Modo foco total. Toque em “Sair” no canto para voltar.', 3000);
+}
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) document.body.classList.remove('zen'); });
+export function exitZen() { if (document.body.classList.contains('zen')) toggleZen(); }
 
 // ======================= SEQUÊNCIA DE ESTUDOS =======================
 function activeDays() {
@@ -690,7 +726,7 @@ export function renderHub(kind, el) {
   ({ today: renderToday, calendar: renderCalendar, focus: renderFocus, cards: renderCards, habits: renderHabits })[kind](el);
   tickUI();
 }
-export function leaveHub() { currentKind = null; review = null; tickUI(); }
+export function leaveHub() { currentKind = null; review = null; document.body.classList.remove('zen'); tickUI(); }
 function rerenderIf(kind) { if (currentKind === kind) { const el = document.getElementById('view-hub'); el && renderHub(kind, el); } }
 
 export function hubNewAction(kind) {

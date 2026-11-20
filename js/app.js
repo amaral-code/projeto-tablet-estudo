@@ -3,16 +3,23 @@ import { db, settings, saveSettings } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
 import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
-import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFAULT_MODEL } from './ai.js';
+import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFAULT_MODEL, groqModel } from './ai.js';
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
+import { initPlus, reloadPlus, PLUS_VIEWS, PLUS_NEW_LABEL, renderPlus, plusNewAction, plusToday, plusCounts, newReview, toggleReview, renderBoard, renderMatrix } from './plus.js';
 import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette } from './perf.js';
 
 // Todas as telas da central de produtividade
-const HUB_VIEWS = { ...HUB_ONLY, ...PERF_VIEWS };
-const HUB_NEW_LABEL = { ...HUB_LABELS, ...PERF_NEW_LABEL };
-const renderHub = (kind, el) => (PERF_VIEWS[kind] ? (leaveHub(), renderPerf(kind, el)) : renderHubView(kind, el));
-const hubNewAction = kind => (PERF_VIEWS[kind] ? perfNewAction(kind) : hubNew(kind));
+const HUB_VIEWS = { ...HUB_ONLY, ...PLUS_VIEWS, ...PERF_VIEWS };
+const HUB_NEW_LABEL = { ...HUB_LABELS, ...PLUS_NEW_LABEL, ...PERF_NEW_LABEL };
+const renderHub = (kind, el) => (PERF_VIEWS[kind] ? (leaveHub(), renderPerf(kind, el))
+  : PLUS_VIEWS[kind] ? (leaveHub(), renderPlus(kind, el)) : renderHubView(kind, el));
+const hubNewAction = kind => (PERF_VIEWS[kind] ? perfNewAction(kind) : PLUS_VIEWS[kind] ? plusNewAction(kind) : hubNew(kind));
+// cartões extras do painel Hoje (aulas, revisões, diário, provas, leitura, atalhos)
+const todayCards = {
+  html: () => plusToday.html() + extraToday.html(),
+  bind: el => { plusToday.bind(el); extraToday.bind(el); },
+};
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
 import { LANGS } from './recognize.js';
 import { ic, esc, h, toast, modal, promptText, confirmBox, menu } from './ui.js';
@@ -27,6 +34,7 @@ const state = {
 };
 
 // =================== Inicialização ===================
+let appReady = false;
 async function init() {
   fillIcons();
   initEditor({
@@ -55,14 +63,17 @@ async function init() {
     newNote: () => newNoteDialog(),
     addTask,
     goTo: v => { if (editorIsOpen()) history.back(); setView(v); },
-    onChange: light => { if (editorIsOpen()) return; light ? renderSidebar() : render(); },
+    // só redesenha depois que todos os módulos terminaram de carregar
+    onChange: light => { if (!appReady || editorIsOpen()) return; light ? renderSidebar() : render(); },
     views: () => HUB_VIEWS,
     importPdf: () => pickImport('library'),
     settings: settingsDialog,
-    extraToday, levelBadge, examsOn,
+    extraToday: todayCards, levelBadge, examsOn, createNote,
   };
   await initHub(api);
   await initPerf(api);
+  await initPlus(api);
+  appReady = true;
   routeFromURL();
   render();
   $('btn-palette').onclick = openPalette;
@@ -168,6 +179,11 @@ function bindLibrary() {
     renderTasks();
   };
   $('btn-share-tasks').onclick = shareTasks;
+  $('task-mode').onclick = e => {
+    const b = e.target.closest('[data-m]'); if (!b) return;
+    localStorage.setItem('caderno-modo-tarefas', b.dataset.m);
+    renderTasks();
+  };
   $('btn-import').onclick = () => pickImport('library');
   $('import-input').addEventListener('change', onImportFiles);
 }
@@ -281,19 +297,22 @@ function renderSidebar() {
   const count = f => state.notes.filter(f).length;
   const item = (key, icon, label, n, active) =>
     `<button class="nav-item ${active ? 'active' : ''}" data-k="${key}">${ic(icon)}<span>${esc(label)}</span>${n ? `<em>${n}</em>` : ''}</button>`;
-  const hc = hubCounts(), pc = perfCounts();
+  const hc = hubCounts(), pc = perfCounts(), xc = plusCounts();
   $('nav-main').innerHTML =
     item('today', 'home', 'Hoje', 0, v.kind === 'today') +
     item('calendar', 'calendar', 'Agenda', 0, v.kind === 'calendar') +
+    item('schedule', 'clock', 'Horário de aulas', 0, v.kind === 'schedule') +
     item('tasks', 'tasks', 'Tarefas', pending, v.kind === 'tasks') +
     item('focus', 'timer', hc.running ? 'Foco (rodando)' : 'Foco', 0, v.kind === 'focus') +
     item('cards', 'cards', 'Flashcards', hc.cards, v.kind === 'cards') +
     item('habits', 'flame', 'Hábitos', hc.habits, v.kind === 'habits') +
+    item('journal', 'journal', 'Diário', 0, v.kind === 'journal') +
     item('reading', 'bookOpen', 'Leitura', 0, v.kind === 'reading') +
     item('grades', 'award', 'Notas e provas', pc.exams, v.kind === 'grades') +
     item('report', 'chart', 'Relatório', 0, v.kind === 'report') +
     '<div class="nav-title"><span>Caderno</span></div>' +
     item('all', 'book', 'Todas as anotações', state.notes.length, v.kind === 'notes' && v.filter === 'all') +
+    (xc.review ? item('today', 'repeat', `Revisar hoje (${xc.review})`, 0, false) : '') +
     item('fav', 'star', 'Favoritas', count(n => n.fav), v.kind === 'notes' && v.filter === 'fav') +
     item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none');
   $('nav-main').onclick = e => {
@@ -488,7 +507,9 @@ async function newNoteDialog(folderId) {
     <label class="lbl">Cor do papel</label>
     <div class="paper-opts" data-g="color">${Object.entries(PAPER_COLORS).map(([k, c]) =>
       `<button type="button" class="paper-opt ${choice.color === k ? 'active' : ''}" data-v="${k}"><span class="pc" style="background:${c.fill}"></span>${c.label}</button>`).join('')}</div>
+    <label class="check"><input type="checkbox" id="n-review" ${localStorage.getItem('caderno-revisao-auto') === '0' ? '' : 'checked'}> Programar revisões (1, 3, 7, 14 e 30 dias)</label>
   </div>`);
+  body.querySelector('#n-review').onchange = e => localStorage.setItem('caderno-revisao-auto', e.target.checked ? '1' : '0');
   body.querySelectorAll('.paper-opts').forEach(g => g.onclick = e => {
     const b = e.target.closest('[data-v]'); if (!b) return;
     choice[g.dataset.g] = b.dataset.v;
@@ -502,7 +523,7 @@ async function newNoteDialog(folderId) {
     title: 'Nova anotação', body,
     actions: [{ label: 'Cancelar', value: null }, {
       label: 'Criar', primary: true,
-      value: el => ({ title: el.querySelector('#n-title').value.trim(), folderId: el.querySelector('#n-folder').value }),
+      value: el => ({ title: el.querySelector('#n-title').value.trim(), folderId: el.querySelector('#n-folder').value, review: el.querySelector('#n-review').checked }),
     }],
   });
   if (!res) return;
@@ -511,6 +532,7 @@ async function newNoteDialog(folderId) {
   const meta = {
     id: uid(), title: res.title || `Anotação ${new Date().toLocaleDateString('pt-BR')}`,
     folderId: res.folderId, fav: false, createdAt: now, updatedAt: now, pageCount: 1, thumb: '',
+    review: res.review ? newReview() : null,
   };
   const content = { id: meta.id, bg: choice, pages: [{ id: uid(), strokes: [], texts: [], images: [] }] };
   await db.put('pages', content);
@@ -518,6 +540,18 @@ async function newNoteDialog(folderId) {
   state.notes.push(meta);
   render();
   openNote(meta.id);
+}
+
+// Cria uma anotação vazia e abre no editor (usado pelo Horário de aulas)
+async function createNote({ title, folderId = '', bg = { type: 'lines', color: 'white' } }) {
+  const now = Date.now();
+  const meta = { id: uid(), title, folderId, fav: false, createdAt: now, updatedAt: now, pageCount: 1, thumb: '', review: newReview() };
+  await db.put('pages', { id: meta.id, bg, pages: [{ id: uid(), strokes: [], texts: [], images: [] }] });
+  await db.put('notes', meta);
+  state.notes.push(meta);
+  render();
+  openNote(meta.id);
+  return meta;
 }
 
 async function loadContent(id) {
@@ -557,6 +591,7 @@ async function noteMenu(id) {
     { label: 'Mover para pasta', icon: 'folder', value: 'move' },
     { label: n.fav ? 'Remover dos favoritos' : 'Favoritar', icon: 'star', value: 'fav' },
     { label: 'Criar tarefa', icon: 'tasks', value: 'task' },
+    { label: n.review && !n.review.done ? 'Desligar revisões programadas' : 'Programar revisões (1, 3, 7, 14, 30 dias)', icon: 'repeat', value: 'review' },
     { label: 'Duplicar', icon: 'copy', value: 'dup' },
     { label: 'Excluir', icon: 'trash', value: 'del', danger: true },
   ]);
@@ -575,6 +610,7 @@ async function noteMenu(id) {
     if (f) { n.folderId = f.v; await db.put('notes', n); render(); toast(`Movida para ${folderName(f.v) || 'Sem pasta'}`); }
   } else if (a === 'fav') { n.fav = !n.fav; await db.put('notes', n); render(); }
   else if (a === 'task') taskDialog({ noteId: n.id, folderId: n.folderId });
+  else if (a === 'review') toggleReview(n);
   else if (a === 'dup') {
     const c = await loadContent(id);
     const nid = uid(), now = Date.now();
@@ -674,6 +710,17 @@ function visibleTasks() {
 function renderTasks() {
   $('task-folder').innerHTML = folderOptions(
     state.view.kind === 'notes' ? '' : $('task-folder').value, 'Sem pasta');
+  const mode = localStorage.getItem('caderno-modo-tarefas') || 'list';
+  [...$('task-mode').children].forEach(b => b.classList.toggle('active', b.dataset.m === mode));
+  $('task-filter').hidden = mode !== 'list';
+  if (mode !== 'list') {
+    $('tasks-empty').hidden = true;
+    $('task-list').onclick = null;
+    const q = state.search;
+    const all = q ? state.tasks.filter(x => x.title.toLowerCase().includes(q)) : state.tasks;
+    (mode === 'board' ? renderBoard : renderMatrix)($('task-list'), all);
+    return;
+  }
   const list = visibleTasks(), t = todayStr();
   $('task-list').innerHTML = list.map(x => {
     const late = !x.done && x.due && x.due < t;
@@ -687,6 +734,8 @@ function renderTasks() {
           <span class="prio-tag">${['', 'Baixa', 'Média', 'Alta'][x.prio] || ''}</span>
           ${x.folderId ? `<span class="tag"><span class="dot" style="background:${folderColor(x.folderId)}"></span>${esc(folderName(x.folderId))}</span>` : ''}
           ${note ? `<button class="tag link" data-open="${note.id}">${ic('page')}${esc(note.title)}</button>` : ''}
+          ${x.subtasks && x.subtasks.length ? `<span class="tag">${ic('check')}${x.subtasks.filter(s => s.done).length}/${x.subtasks.length}</span>` : ''}
+          ${x.status === 'doing' && !x.done ? '<span class="tag doing">Fazendo</span>' : ''}
           ${x.notes ? `<span class="muted">${esc(x.notes.slice(0, 80))}</span>` : ''}
         </div>
       </div>
@@ -753,10 +802,29 @@ async function taskDialog(t) {
     </div>
     <label class="lbl">Repetir</label>
     <select class="select full" id="t-repeat">${[['', 'Não repetir'], ['daily', 'Todo dia'], ['weekly', 'Toda semana'], ['monthly', 'Todo mês']].map(([k, l]) => `<option value="${k}" ${(t.repeat || '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label class="lbl">Subtarefas</label>
+    <div class="subtasks" id="t-subs"></div>
+    <div class="row"><input class="input grow" id="t-subnew" placeholder="Adicionar subtarefa (ex.: exercícios 1 a 10)"><button class="btn" type="button" id="t-subadd">${ic('plus')}</button></div>
     <label class="lbl">Observações</label>
     <textarea class="input" id="t-notes" rows="3" placeholder="Detalhes, páginas do livro…">${esc(t.notes)}</textarea>
     ${isNew ? '' : `<label class="check"><input type="checkbox" id="t-done" ${t.done ? 'checked' : ''}> Concluída</label>`}
   </div>`);
+  let subs = (t.subtasks || []).map(x => ({ ...x }));
+  const drawSubs = () => {
+    body.querySelector('#t-subs').innerHTML = subs.map((x, i) => `<div class="sub-row">
+      <label class="check"><input type="checkbox" data-si="${i}" ${x.done ? 'checked' : ''}><span class="${x.done ? 'muted' : ''}">${esc(x.title)}</span></label>
+      <button type="button" class="icon-btn small" data-sr="${i}" aria-label="Remover">${ic('trash')}</button></div>`).join('');
+  };
+  drawSubs();
+  const addSub = () => {
+    const inp = body.querySelector('#t-subnew'), v = inp.value.trim();
+    if (!v) return;
+    subs.push({ id: uid(), title: v, done: false }); inp.value = ''; drawSubs(); inp.focus();
+  };
+  body.querySelector('#t-subadd').onclick = addSub;
+  body.querySelector('#t-subnew').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addSub(); } });
+  body.querySelector('#t-subs').addEventListener('change', e => { const i = e.target.dataset.si; if (i != null) { subs[+i].done = e.target.checked; drawSubs(); } });
+  body.querySelector('#t-subs').addEventListener('click', e => { const b = e.target.closest('[data-sr]'); if (b) { subs.splice(+b.dataset.sr, 1); drawSubs(); } });
   const res = await modal({
     title: isNew ? 'Nova tarefa' : 'Editar tarefa', body,
     actions: [{ label: 'Cancelar', value: null }, {
@@ -768,6 +836,7 @@ async function taskDialog(t) {
         noteId: el.querySelector('#t-note').value, notes: el.querySelector('#t-notes').value.trim(),
         done: el.querySelector('#t-done') ? el.querySelector('#t-done').checked : false,
         repeat: el.querySelector('#t-repeat').value,
+        subtasks: subs,
       }),
     }],
   });
@@ -823,9 +892,9 @@ async function settingsDialog() {
       </ol>
       <input class="input" id="s-groqkey" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…" value="${esc(settings.groqKey || '')}">
       <label class="lbl">Modelo da Groq</label>
-      <input class="input" id="s-groqmodel" list="groq-models" autocomplete="off" spellcheck="false" value="${esc(settings.groqModel || GROQ_DEFAULT_MODEL)}">
+      <input class="input" id="s-groqmodel" list="groq-models" autocomplete="off" spellcheck="false" value="${esc(groqModel())}">
       <datalist id="groq-models">${GROQ_MODELS.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</datalist>
-      <p class="muted small">Use um modelo que <b>lê imagens</b> para a IA entender a sua letra. Na Groq, cada pedido envia no máximo 5 páginas. O plano gratuito tem limite de pedidos por minuto e por dia.</p>
+      <p class="muted small">Use um modelo que <b>lê imagens</b> para a IA entender a sua letra. Com o Qwen 3.8, cada pedido envia no máximo <b>3 páginas</b>. O plano gratuito tem limite de pedidos por minuto e por dia.</p>
     </div>
     <div class="row wrap" style="margin-top:8px">
       <button class="btn" id="s-aitest" type="button">${ic('check')}<span>Testar</span></button>
@@ -921,6 +990,7 @@ $('backup-input').addEventListener('change', async e => {
     await loadAll();
     await reloadHub();
     await reloadPerf();
+    await reloadPlus();
     document.querySelector('.modal-back')?._close?.(true);
     render();
     toast('Backup restaurado ✓');

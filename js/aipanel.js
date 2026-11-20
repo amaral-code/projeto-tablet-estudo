@@ -1,5 +1,5 @@
 // Interface do Assistente IA: painel lateral no editor e janela para pastas/anotações.
-import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTasks, parseFlashcards, MAX_PAGES } from './ai.js';
+import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTasks, parseFlashcards, maxPages } from './ai.js';
 import { getEditorContext, insertText } from './editor.js';
 import { shareText } from './export.js';
 import { ic, esc, h, toast, modal } from './ui.js';
@@ -88,7 +88,7 @@ function renderSetup() {
   if (ok) return;
   box.innerHTML = `<div class="ai-setup-card">
     <p><b>A IA resume suas anotações, corrige e melhora sua escrita, explica a matéria, cria perguntas e escreve mais conteúdo.</b></p>
-    <p class="muted small">Ela usa o Claude, da Anthropic. Para ativar, crie uma chave da API em <b>platform.claude.com</b> e cole em Ajustes. O uso é cobrado na sua conta da Anthropic.</p>
+    <p class="muted small">Funciona com o <b>Claude</b> (Anthropic) ou com a <b>Groq</b>, que tem plano gratuito. Crie uma chave no site escolhido e cole em Ajustes → Inteligência artificial.</p>
     <button class="btn primary" id="ai-config">${ic('settings')}<span>Configurar a IA</span></button></div>`;
   box.querySelector('#ai-config').onclick = async () => { await cb.onSettings(); renderSetup(); };
 }
@@ -113,7 +113,7 @@ async function runAction(key) {
   const a = ACTIONS[key];
   const src = pagesForScope();
   if (!src) return;
-  if (src.pages.length > MAX_PAGES) toast(`Só as primeiras ${MAX_PAGES} páginas serão enviadas`);
+  if (src.pages.length > maxPages()) toast(`Só as primeiras ${maxPages()} páginas serão enviadas`);
   conv = { messages: [], turns: [], action: key };
   conv.turns.push({ role: 'user', text: `${a.label} — ${scopeLabel(src)}` });
   renderLog();
@@ -276,7 +276,7 @@ export async function openAIDialog({ title, subtitle, pages, bg, folder, onSave,
     if (!aiConfigured()) return;
   }
   const body = h(`<div class="ai-dialog">
-    <p class="muted small">${esc(subtitle)}${pages.length > MAX_PAGES ? ` — só as primeiras ${MAX_PAGES} páginas serão enviadas` : ''}</p>
+    <p class="muted small">${esc(subtitle)}${pages.length > maxPages() ? ` — só as primeiras ${maxPages()} páginas serão enviadas` : ''}</p>
     <div class="ai-actions">${Object.entries(ACTIONS).map(([k, a]) =>
       `<button class="ai-act" data-a="${k}">${ic(a.icon)}<span>${esc(a.label)}</span></button>`).join('')}</div>
     <div class="ai-out" hidden></div>

@@ -113,6 +113,27 @@ async function mocks(c) {
     await r.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream', 'access-control-allow-origin': '*' }, body: sse });
   });
 }
+
+let groqReqs = [], groqMode = 'ok';
+async function groqMock(c) {
+  await c.route('https://api.groq.com/**', async r => {
+    if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+    const h = await r.request().allHeaders();
+    const body = JSON.parse(r.request().postData());
+    groqReqs.push({ h, body });
+    const cors = { 'access-control-allow-origin': '*' };
+    if (/gsk_invalida/.test(h.authorization || '')) return r.fulfill({ status: 401, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Invalid API Key', type: 'invalid_request_error' } }) });
+    if (groqMode === '429') return r.fulfill({ status: 429, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Rate limit reached' } }) });
+    const first = body.messages[0].content;
+    const txt = typeof first === 'string' ? first : first.filter(p => p.type === 'text').map(p => p.text).join(' ');
+    const reply = /Responda apenas/.test(txt) ? 'Tudo certo!' : '# Resumo pela Groq\n- Frações são partes de um inteiro.';
+    let sse = '';
+    for (const ch of reply.match(/[\s\S]{1,12}/g)) sse += `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: ch }, finish_reason: null }] })}\n\n`;
+    sse += `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
+    await r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'text/event-stream' }, body: sse });
+  });
+}
+
 function watch(p) {
   p.on('pageerror', e => errors.push('ERRO DE PÁGINA: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/favicon|net::ERR_INTERNET_DISCONNECTED|Failed to load resource/.test(m.text())) errors.push('CONSOLE: ' + m.text()); });
@@ -124,6 +145,7 @@ function watch(p) {
   browser = await chromium.launch();
   ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write'] });
   await mocks(ctx);
+  await groqMock(ctx);
   page = await ctx.newPage();
   watch(page);
   console.log(`\nCaderno de Estudos — teste completo (${base})\n`);
@@ -533,6 +555,47 @@ function watch(p) {
     }
     await page.setViewportSize({ width: 1280, height: 800 });
     assert(!bad.length, 'estouram a largura: ' + bad.join(', '));
+  });
+
+  // ================= GROQ =================
+  console.log('IA pela Groq (respostas simuladas)');
+  await step('Groq: chave inválida e chave válida no "Testar"', async () => {
+    await page.goto(base); await wait(1200);
+    await page.click('#btn-settings'); await page.click('#s-provider [data-p=groq]');
+    assert(await page.locator('#s-groqkey').isVisible(), 'campos da Groq não apareceram');
+    await page.fill('#s-groqkey', 'gsk_invalida'); await page.click('#s-aitest'); await wait(1000);
+    assert((await page.textContent('#s-aistatus')).includes('Chave da Groq inválida'), 'erro 401 não amigável');
+    await page.fill('#s-groqkey', 'gsk_teste'); await page.click('#s-aitest'); await wait(1000);
+    assert((await page.textContent('#s-aistatus')).includes('Groq funcionando: Tudo certo'), 'teste falhou: ' + await page.textContent('#s-aistatus'));
+    await page.click('.modal-actions .btn.primary'); await wait(300);
+    const last = groqReqs[groqReqs.length - 1];
+    assert(last.h.authorization === 'Bearer gsk_teste' && last.body.stream === true && last.body.model === 'meta-llama/llama-4-scout-17b-16e-instruct', 'pedido errado');
+  });
+  await step('Groq: resumo de todas as páginas envia no máximo 5 imagens', async () => {
+    await nav('all');
+    await page.click('.card:has-text("Frações e decimais")'); await wait(900);
+    await page.click('#ed-ai'); await page.click('#ai-scope [data-s=all]');
+    await page.click('.ai-act[data-a=summary]'); await page.waitForSelector('.ai-turn.assistant:not(.streaming) .ai-result', { timeout: 10000 });
+    const b = groqReqs[groqReqs.length - 1].body;
+    const parts = b.messages[0].content;
+    const imgs = parts.filter(p => p.type === 'image_url');
+    assert(imgs.length >= 1 && imgs.length <= 5, 'imagens: ' + imgs.length);
+    assert(imgs.every(p => p.image_url.url.startsWith('data:image/jpeg;base64,')), 'formato da imagem');
+    assert(parts[0].type === 'text' && parts[0].text.includes('assistente de estudos'), 'instruções ausentes');
+    assert((await page.textContent('.ai-turn.assistant')).includes('Resumo pela Groq'), 'resposta não apareceu');
+  });
+  await step('Groq: pergunta de acompanhamento mantém a conversa', async () => {
+    await page.fill('#ai-q', 'Explique o denominador'); await page.click('#ai-send');
+    await page.waitForFunction(() => document.querySelectorAll('.ai-turn.assistant:not(.streaming)').length >= 2, null, { timeout: 8000 });
+    const m = groqReqs[groqReqs.length - 1].body.messages;
+    assert(m.length === 3 && m[1].role === 'assistant' && typeof m[1].content === 'string' && m[2].content === 'Explique o denominador', 'histórico errado');
+  });
+  await step('Groq: limite atingido mostra aviso claro', async () => {
+    groqMode = '429';
+    await page.click('.ai-act[data-a=quiz]'); await page.waitForSelector('.ai-turn.error', { timeout: 8000 });
+    assert((await page.textContent('.ai-turn.error')).includes('Limite da Groq'), 'mensagem do 429');
+    groqMode = 'ok';
+    await page.click('#ai-close'); await page.click('#ed-back'); await wait(900);
   });
 
   await step('nenhum erro de JavaScript em todo o teste', async () => {

@@ -12,6 +12,19 @@ export const AI_MODELS = {
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 export const MAX_PAGES = 20;
 
+// ----- Groq (alternativa gratuita) -----
+export const PROVIDERS = { anthropic: 'Claude (Anthropic)', groq: 'Groq (tem plano gratuito)' };
+export const GROQ_DEFAULT_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+export const GROQ_MODELS = [
+  ['meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout — lê imagens (recomendado)'],
+  ['meta-llama/llama-4-maverick-17b-128e-instruct', 'Llama 4 Maverick — lê imagens'],
+  ['llama-3.3-70b-versatile', 'Llama 3.3 70B — só texto (não lê a folha)'],
+];
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MAX_IMAGES = 5; // limite de imagens por pedido nos modelos de visão da Groq
+export const provider = () => (settings.aiProvider === 'groq' ? 'groq' : 'anthropic');
+export const maxPages = () => (provider() === 'groq' ? GROQ_MAX_IMAGES : MAX_PAGES);
+
 const SYSTEM = `Você é um professor particular e assistente de estudos dentro do app "Caderno de Estudos", usado por um estudante brasileiro num tablet.
 As anotações do estudante chegam como imagens de páginas de caderno, quase sempre escritas à mão (às vezes com textos digitados, fotos de livros ou PDFs importados). Leia com atenção a escrita, as contas, os desenhos e os destaques do marca-texto.
 
@@ -54,7 +67,10 @@ export const ACTIONS = {
   },
 };
 
-export function aiConfigured() { return !!(settings.aiKey && settings.aiKey.trim()); }
+export function aiConfigured() {
+  const k = provider() === 'groq' ? settings.groqKey : settings.aiKey;
+  return !!(k && k.trim());
+}
 
 let client = null, clientKey = '';
 function getClient() {
@@ -72,19 +88,22 @@ const canvasToB64 = c => c.toDataURL('image/jpeg', 0.82).split(',')[1];
 async function renderToImage(page, bg, region) {
   await loadPageImages(page);
   const r = region || { x: 0, y: 0, w: PAGE_W, h: PAGE_H };
-  const k = Math.min(3, 1100 / Math.max(r.w, r.h * 0.75));
+  const groq = provider() === 'groq';
+  const k = Math.min(3, (groq ? 900 : 1100) / Math.max(r.w, r.h * 0.75));
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(r.w * k));
   c.height = Math.max(1, Math.round(r.h * k));
   const ctx = c.getContext('2d');
   ctx.setTransform(k, 0, 0, k, -r.x * k, -r.y * k);
   renderPage(ctx, page, bg);
-  return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: canvasToB64(c) } };
+  const data = groq ? c.toDataURL('image/jpeg', 0.72).split(',')[1] : canvasToB64(c);
+  return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } };
 }
 
 // Monta o conteúdo da primeira mensagem: imagens das páginas + pedido
 export async function buildContent({ pages, bg, region, title, folder, prompt }) {
-  const list = pages.slice(0, MAX_PAGES);
+  const MAX = maxPages();
+  const list = pages.slice(0, MAX);
   const blocks = [];
   for (let i = 0; i < list.length; i++) {
     if (list.length > 1) blocks.push({ type: 'text', text: `Página ${i + 1}${list[i]._title ? ` — anotação "${list[i]._title}"` : ''}:` });
@@ -93,7 +112,7 @@ export async function buildContent({ pages, bg, region, title, folder, prompt })
   const ctx = [`Título: ${title || 'sem título'}`];
   if (folder) ctx.push(`Matéria/pasta: ${folder}`);
   if (region) ctx.push('As imagens mostram só o trecho que o estudante selecionou.');
-  if (pages.length > MAX_PAGES) ctx.push(`(Só as primeiras ${MAX_PAGES} de ${pages.length} páginas foram enviadas.)`);
+  if (pages.length > MAX) ctx.push(`(Só as primeiras ${MAX} de ${pages.length} páginas foram enviadas.)`);
   blocks.push({ type: 'text', text: `${ctx.join('\n')}\n\n${prompt}` });
   return blocks;
 }
@@ -122,6 +141,7 @@ function friendlyError(e) {
 export function streamChat(messages, onText) {
   if (!aiConfigured()) throw new AIError('Configure sua chave da API em Ajustes → Inteligência artificial.');
   if (!navigator.onLine) throw new AIError('Sem internet: o assistente de IA precisa de conexão.');
+  if (provider() === 'groq') return streamGroq(messages, onText);
   const model = AI_MODELS[settings.aiModel] ? settings.aiModel : DEFAULT_MODEL;
   const params = {
     model,
@@ -180,4 +200,87 @@ export function parseFlashcards(text) {
   }
   if (cur && cur.back) out.push(cur);
   return out.filter(c => c.front && c.back);
+}
+
+// ======================= Groq =======================
+// Converte a conversa (formato do Claude) para o formato da Groq (compatível com OpenAI).
+// As instruções vão no início da primeira mensagem, porque alguns modelos de visão não aceitam
+// mensagem de sistema junto com imagens.
+export function toGroqMessages(messages) {
+  const out = [];
+  messages.forEach((m, i) => {
+    const sys = i === 0 ? `${SYSTEM}\n\n` : '';
+    if (typeof m.content === 'string') { out.push({ role: m.role, content: sys + m.content }); return; }
+    if (m.role === 'assistant') { out.push({ role: 'assistant', content: m.content.filter(b => b.type === 'text').map(b => b.text).join('') }); return; }
+    const parts = m.content.map(b => (b.type === 'image'
+      ? { type: 'image_url', image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+      : { type: 'text', text: b.text }));
+    if (sys) parts.unshift({ type: 'text', text: sys.trim() });
+    out.push({ role: 'user', content: parts });
+  });
+  return out;
+}
+
+function groqError(status, msg) {
+  const m = String(msg || '');
+  if (status === 401) return new AIError('Chave da Groq inválida. Confira a chave em Ajustes → Inteligência artificial.');
+  if (status === 429) return new AIError('Limite da Groq atingido (o plano gratuito tem limite por minuto e por dia). Espere um pouco e tente de novo.');
+  if (status === 413 || /too large|payload/i.test(m)) return new AIError('Pedido grande demais para a Groq. Use “Esta página” ou selecione um trecho com o laço.');
+  if (status === 404 || /model.*(not found|does not exist|decommissioned)/i.test(m)) return new AIError('Modelo não encontrado na Groq. Confira o nome do modelo em Ajustes → Inteligência artificial.');
+  if (/image|vision|content must be a string/i.test(m)) return new AIError('Este modelo da Groq não lê imagens. Escolha um modelo com visão, como ' + GROQ_DEFAULT_MODEL + '.');
+  if (status >= 500) return new AIError('A Groq está instável agora. Tente de novo em instantes.');
+  return new AIError('Erro da Groq: ' + (m || 'código ' + status).slice(0, 200));
+}
+
+function streamGroq(messages, onText) {
+  const ctrl = new AbortController();
+  const model = (settings.groqModel || '').trim() || GROQ_DEFAULT_MODEL;
+  const done = (async () => {
+    let res;
+    try {
+      res = await fetch(GROQ_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.groqKey.trim()}` },
+        body: JSON.stringify({ model, messages: toGroqMessages(messages), stream: true, max_completion_tokens: 8192, temperature: 0.4 }),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      throw new AIError('Sem conexão com a Groq. Verifique a internet.');
+    }
+    if (!res.ok) {
+      let msg = '';
+      try { const j = await res.json(); msg = j.error && j.error.message; } catch { /* sem corpo */ }
+      throw groqError(res.status, msg);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', text = '', finish = null;
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+        let j;
+        try { j = JSON.parse(data); } catch { continue; }
+        if (j.error) throw groqError(0, j.error.message);
+        const ch = j.choices && j.choices[0];
+        const t = ch && ch.delta && ch.delta.content;
+        if (t) { text += t; onText(t); }
+        if (ch && ch.finish_reason) finish = ch.finish_reason;
+      }
+    }
+    if (!text) throw new AIError('A Groq não devolveu resposta. Tente de novo.');
+    return { text, truncated: finish === 'length', message: { content: [{ type: 'text', text }] } };
+  })().catch(e => {
+    if (e.name === 'AbortError') { const a = new AIError('Cancelado'); a.aborted = true; throw a; }
+    throw e instanceof AIError ? e : new AIError(String(e && e.message || e));
+  });
+  return { done, abort: () => ctrl.abort() };
 }

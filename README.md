@@ -48,6 +48,15 @@ O resultado pode ser **escrito na folha**, alinhado às pautas (numa página nov
 
 **Como ativar:** crie uma chave em **platform.claude.com → API Keys**, depois cole em **Ajustes → Inteligência artificial** e toque em **Testar**. Você pode escolher o modelo: Opus 5.5 (melhor qualidade, padrão), Sonnet 5.5 ou Haiku 5.5 (o mais barato).
 
+### Usar a Groq (tem plano gratuito)
+
+1. Entre em **console.groq.com** e crie uma conta grátis (dá para entrar com o Google).
+2. Vá em **API Keys → Create API Key**, dê um nome (ex.: Caderno) e copie a chave. Ela começa com `gsk_`.
+3. No app, abra **Ajustes → Inteligência artificial** e toque em **Groq**.
+4. Cole a chave e toque em **Testar**. Tem que aparecer "✓ Groq funcionando".
+
+O modelo padrão é `meta-llama/llama-4-scout-17b-16e-instruct`, que **lê imagens** e por isso entende a sua letra. Se a Groq trocar o nome dos modelos, edite o campo "Modelo da Groq". Com a Groq, cada pedido envia **no máximo 5 páginas**, e o plano gratuito tem limite de pedidos por minuto e por dia. A qualidade das respostas costuma ser menor que a do Claude, principalmente para ler letra cursiva.
+
 ## ✨ O que ele faz
 
 | Recurso | Como usar |

@@ -64,6 +64,9 @@ const DEFAULTS = {
   sort: 'updated',
   aiKey: '',
   aiModel: 'claude-opus-5-5',
+  aiProvider: 'anthropic', // anthropic | groq
+  groqKey: '',
+  groqModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
 };
 export const settings = (() => {
   let v = {};

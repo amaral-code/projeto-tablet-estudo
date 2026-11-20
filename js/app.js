@@ -3,7 +3,7 @@ import { db, settings, saveSettings } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
 import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
-import { AI_MODELS, DEFAULT_MODEL, streamChat } from './ai.js';
+import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFAULT_MODEL } from './ai.js';
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
 import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette } from './perf.js';
@@ -807,11 +807,27 @@ async function settingsDialog() {
       <option value="math" ${settings.autoMode === 'math' ? 'selected' : ''}>Conferir contas (✓ / ✗) ao terminar de escrever</option>
     </select>
     <hr>
-    <label class="lbl">Inteligência artificial (Claude)</label>
-    <p class="muted small">Resumos, melhoria da escrita, explicações, perguntas, flashcards e plano de estudo. Crie uma chave em <b>platform.claude.com</b> → API Keys e cole aqui. A chave fica salva só neste tablet e o uso é cobrado na sua conta da Anthropic.</p>
-    <input class="input" id="s-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(settings.aiKey || '')}">
+    <label class="lbl">Inteligência artificial</label>
+    <p class="muted small">Resumos, melhoria da escrita, explicações, perguntas, flashcards, plano de estudo e análise da semana. As chaves ficam salvas só neste tablet.</p>
+    <div class="seg full-seg" id="s-provider">${Object.entries(PROVIDERS).map(([k, v]) => `<button type="button" data-p="${k}" class="${(settings.aiProvider || 'anthropic') === k ? 'active' : ''}">${esc(v)}</button>`).join('')}</div>
+    <div class="prov-box" data-box="anthropic">
+      <p class="muted small">Crie a chave em <b>platform.claude.com</b> → API Keys. O uso é cobrado na sua conta da Anthropic.</p>
+      <input class="input" id="s-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(settings.aiKey || '')}">
+      <select class="select full" id="s-aimodel" style="margin-top:8px">${Object.entries(AI_MODELS).map(([k, v]) => `<option value="${k}" ${(settings.aiModel || DEFAULT_MODEL) === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+    </div>
+    <div class="prov-box" data-box="groq">
+      <ol class="help small">
+        <li>Entre em <b>console.groq.com</b> e crie uma conta grátis (dá para entrar com o Google).</li>
+        <li>Vá em <b>API Keys</b> → <b>Create API Key</b>, dê um nome (ex.: Caderno) e copie a chave (começa com <b>gsk_</b>).</li>
+        <li>Cole a chave abaixo e toque em <b>Testar</b>.</li>
+      </ol>
+      <input class="input" id="s-groqkey" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…" value="${esc(settings.groqKey || '')}">
+      <label class="lbl">Modelo da Groq</label>
+      <input class="input" id="s-groqmodel" list="groq-models" autocomplete="off" spellcheck="false" value="${esc(settings.groqModel || GROQ_DEFAULT_MODEL)}">
+      <datalist id="groq-models">${GROQ_MODELS.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</datalist>
+      <p class="muted small">Use um modelo que <b>lê imagens</b> para a IA entender a sua letra. Na Groq, cada pedido envia no máximo 5 páginas. O plano gratuito tem limite de pedidos por minuto e por dia.</p>
+    </div>
     <div class="row wrap" style="margin-top:8px">
-      <select class="select grow" id="s-aimodel">${Object.entries(AI_MODELS).map(([k, v]) => `<option value="${k}" ${(settings.aiModel || DEFAULT_MODEL) === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
       <button class="btn" id="s-aitest" type="button">${ic('check')}<span>Testar</span></button>
     </div>
     <p class="muted small" id="s-aistatus"></p>
@@ -841,17 +857,34 @@ async function settingsDialog() {
     </details>
   </div>`);
   body.querySelector('#s-export').onclick = exportBackup;
-  body.querySelector('#s-aitest').onclick = async () => {
-    const st = body.querySelector('#s-aistatus');
+  const readAI = () => {
     settings.aiKey = body.querySelector('#s-aikey').value.trim();
     settings.aiModel = body.querySelector('#s-aimodel').value;
+    settings.groqKey = body.querySelector('#s-groqkey').value.trim();
+    settings.groqModel = body.querySelector('#s-groqmodel').value.trim() || GROQ_DEFAULT_MODEL;
+    settings.aiProvider = body.querySelector('#s-provider .active')?.dataset.p || 'anthropic';
+  };
+  const showProv = () => {
+    const p = body.querySelector('#s-provider .active')?.dataset.p || 'anthropic';
+    body.querySelectorAll('.prov-box').forEach(b => { b.hidden = b.dataset.box !== p; });
+  };
+  showProv();
+  body.querySelector('#s-provider').onclick = e => {
+    const b = e.target.closest('[data-p]'); if (!b) return;
+    body.querySelectorAll('#s-provider button').forEach(x => x.classList.toggle('active', x === b));
+    body.querySelector('#s-aistatus').textContent = '';
+    showProv();
+  };
+  body.querySelector('#s-aitest').onclick = async () => {
+    const st = body.querySelector('#s-aistatus');
+    readAI();
     saveSettings();
     st.textContent = 'Testando…';
     try {
       let txt = '';
       const r = streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; });
       await r.done;
-      st.textContent = '✓ IA funcionando: ' + txt.trim().slice(0, 60);
+      st.textContent = `✓ ${settings.aiProvider === 'groq' ? 'Groq' : 'Claude'} funcionando: ` + txt.trim().slice(0, 60);
     } catch (e) { st.textContent = '✗ ' + e.message; }
   };
   body.querySelector('#s-import').onclick = () => $('backup-input').click();
@@ -860,8 +893,7 @@ async function settingsDialog() {
   settings.shapes = body.querySelector('#s-shapes').checked;
   settings.lang = body.querySelector('#s-lang').value;
   settings.autoMode = body.querySelector('#s-auto').value;
-  settings.aiKey = body.querySelector('#s-aikey').value.trim();
-  settings.aiModel = body.querySelector('#s-aimodel').value;
+  readAI();
   saveSettings();
   syncToggles();
 }

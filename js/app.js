@@ -165,6 +165,7 @@ function fillIcons() {
   $('btn-new').innerHTML = `${ic('plus')}<span>Nova anotação</span>`;
   $('btn-import').innerHTML = `${ic('upload')}<span>Importar PDF</span>`;
   $('ed-ai').innerHTML = `${ic('magic')}<span>IA</span>`;
+  $('ed-imgsearch').innerHTML = `${ic('image')}<span>Imagem</span>`;
   $('ed-import').innerHTML = ic('upload');
   $('ed-rec').innerHTML = ic('mic');
   $('ed-recs').innerHTML = ic('play');

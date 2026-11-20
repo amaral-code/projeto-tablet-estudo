@@ -40,6 +40,7 @@ No fim do menu ficam **Tudo e ajuda**, **Dados e backup** e **Ajustes e IA**.
 
 | Recurso | O que faz |
 |---|---|
+| 🖼️ **Imagem (busca na internet)** | No editor, toque em **Imagem**, escreva o que quer (“Bhaskara”, “Pedro Álvares Cabral”, “célula animal”, “fórmula de Bhaskara”…) ou fale no 🎙️. Aparecem várias imagens da **Wikipédia** e do **Wikimedia Commons** (livres para estudar); toque na que quiser e ela vai para a folha com o **nome em cima** e o **crédito embaixo** (dá para desligar), já selecionada para mover ou aumentar. A imagem fica salva em **Minhas imagens** e funciona até sem internet |
 | ∑ **Fórmulas** | Em **Estudar → Fórmulas**: 68 fórmulas de matemática (áreas, perímetros, volumes, Pitágoras, Bhaskara, PA/PG, porcentagem, juros, média…) e física (velocidade, MUV, Torricelli, força, peso, energia, pressão, calor, ondas, Ohm…). Busque pelo nome ou por uma pergunta (“qual a fórmula da força?”, “área da circunferência”), inclusive falando no 🎙️. Preencha os números e deixe em branco o que quer descobrir: o app **calcula na hora** (descobre qualquer letra da fórmula, não só a da esquerda) |
 | ✍️ **Escrita organizada** | No editor, em **Ao escrever → Organizar nas linhas**: escreva em qualquer parte da folha e, ao parar, sua letra vira texto em **fonte manuscrita** nas linhas, emendado no fim da linha. Cada **ponto final** começa um parágrafo novo na linha de baixo. No menu ao lado você escolhe a **letra** — **“Igual à minha letra”** (se você escreve em cursiva sai cursiva, se escreve em letra de forma sai de forma) ou uma das 6 manuscritas (Caveat, Patrick Hand, Indie Flower, Kalam, Shadows Into Light, Dancing Script) ou digitada —, o **tamanho** (de Pequena a Enorme, que ocupa duas linhas) e o **recuo do parágrafo**. O texto sempre senta encostado na linha; a **cor** é a da caneta escolhida em cima. Se a folha encher, o texto continua na página seguinte. Funciona sem internet só para as fontes: o reconhecimento da letra precisa de internet |
 | ☰ **Menu lateral retrátil** | Recolhe para só ícones e deixa mais espaço para estudar; com o tablet em pé, abre arrastando da borda |
@@ -208,6 +209,7 @@ js/data.js            Dados e backup: contagens, cópias automáticas, exportar/
 js/nav.js             navegação: menu em 3 áreas (retrátil), barra de baixo, botão +, tela Tudo, dicas e tour
 js/sound.js           sons de foco (ruídos gerados no tablet)
 js/store.js           banco de dados local (IndexedDB) e configurações
+js/imagesearch.js     botão Imagem: busca na Wikipédia/Commons, baixa e salva em "Minhas imagens"
 js/formulas.js        tabela de fórmulas de matemática e física com calculadora
 js/flow.js            escrita organizada (texto nas pautas, parágrafos e continuação na página seguinte)
 js/events.js          eventos da agenda, prioridade e avisos

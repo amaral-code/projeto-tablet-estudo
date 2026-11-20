@@ -7,6 +7,7 @@ import {
 } from './ink.js';
 import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine, layoutFlow } from './flow.js';
 import { snapShape } from './shapes.js';
+import { openImageSearch } from './imagesearch.js';
 import { groupLines, recognizeStrokes, checkMath, fmtNum } from './recognize.js';
 import { settings, saveSettings } from './store.js';
 import { ic, esc, h, toast, modal, confirmBox } from './ui.js';
@@ -77,6 +78,7 @@ export function initEditor(callbacks) {
   $('pg-zoom').onclick = () => { fitWidth(); redraw(); };
   $('pg-label').onclick = openPageOverview;
   $('ed-ai').onclick = () => cb.onAI();
+  $('ed-imgsearch').onclick = () => openImageSearch({ onPick: insertPicture });
   $('ed-rec').onclick = () => cb.onRecord(E.meta);
   $('ed-recs').onclick = () => cb.onRecordings(E.meta);
   $('ed-import').onclick = () => cb.onImport();
@@ -928,6 +930,40 @@ async function onImageFile(e) {
   } catch {
     toast('Não foi possível abrir a imagem');
   }
+}
+
+// Coloca na folha uma imagem da busca: com o nome em cima e o crédito embaixo, tudo selecionado
+// (dá para arrastar, aumentar pelo canto ou apagar de uma vez)
+export function insertPicture({ src, w: nw, h: nh, title, credit, withName = true, withCredit = true }) {
+  if (!E) return;
+  const v = V();
+  // largura de até 320; retratos em pé ficam com no máximo 380 de altura
+  let w = Math.min(320, PAGE_W - 80), hh = (w * nh) / nw;
+  if (hh > 380) { w = (w * 380) / hh; hh = 380; }
+  const nameSize = Math.max(24, +settings.flowSize || 30);
+  const font = HAND_FONTS[settings.handFont] ? settings.handFont : settings.handFont === 'auto' ? 'patrick' : undefined;
+  const top = withName ? nameSize * 1.4 : 0, bottom = withCredit && credit ? 26 : 0;
+  const cx = (W / 2 - v.ox) / v.s, cy = (H / 2 - v.oy) / v.s;
+  const x = Math.max(20, Math.min(PAGE_W - w - 20, cx - w / 2));
+  const y = Math.max(20 + top, Math.min(PAGE_H - hh - 20 - bottom, cy - hh / 2));
+  const img = { id: uid(), src, w, h: hh, x, y };
+  const added = { strokes: new Set(), texts: new Set(), images: new Set([img.id]) };
+  pushUndo();
+  const pg = page();
+  pg.images.push(img);
+  if (withName && title) {
+    const t = { id: uid(), x, y: y - top, text: title, size: nameSize, color: '#1d1d1f', font, bold: !font };
+    pg.texts.push(t); added.texts.add(t.id);
+  }
+  if (withCredit && credit) {
+    const t = { id: uid(), x, y: y + hh + 6, text: credit.slice(0, 70), size: 13, color: '#8a8f98', credit: true };
+    pg.texts.push(t); added.texts.add(t.id);
+  }
+  markDirty();
+  selectTool('lasso');
+  E.sel = added;
+  computeSelBBox();
+  redraw();
 }
 
 // =================== Correção de escrita e contas ===================

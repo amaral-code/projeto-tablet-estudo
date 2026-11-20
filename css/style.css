@@ -1108,3 +1108,23 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 .fm-res { font-family: "Cambria Math", Georgia, serif; font-size: 17px; }
 .fm-res.big { font-size: 22px; font-weight: 800; color: var(--ok); font-family: var(--font); }
 .fm-none { text-align: center; }
+
+/* ======================= BOTÃO IMAGEM (busca na internet) ======================= */
+.img-btn { min-height: 40px; padding: 0 12px; margin-right: 4px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.img-btn .ic { width: 19px; height: 19px; color: #0a8f6a; }
+@media (max-width: 900px) { .img-btn span { display: none; } .img-btn { padding: 0 9px; } }
+.is-wrap { display: flex; flex-direction: column; gap: 10px; }
+.is-form input { font-size: 17px; }
+.is-tabs { align-items: center; }
+.is-tabs .check { margin: 0; }
+.is-status { min-height: 20px; line-height: 1.4; }
+.is-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 58vh; overflow-y: auto; padding: 2px; }
+.is-item { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 12px; border: 2px solid var(--line); background: var(--panel); cursor: pointer; min-width: 0; }
+.is-item:hover, .is-item:focus { border-color: var(--accent); outline: none; }
+.is-item.loading { opacity: .5; pointer-events: none; }
+.is-item.broken { display: none; }
+.is-img { aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center; }
+.is-img img { width: 100%; height: 100%; object-fit: contain; }
+.is-item b { font-size: 13px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.is-item small { font-size: 11.5px; color: var(--muted); line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.is-del { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,.9); color: var(--danger); }

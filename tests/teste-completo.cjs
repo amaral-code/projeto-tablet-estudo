@@ -143,6 +143,31 @@ async function geminiMock(c) {
   });
 }
 
+// Wikipédia e Wikimedia Commons simulados (mesmo formato das respostas de verdade)
+let wikiMode = 'ok';
+async function wikiMock(c) {
+  const cors = { 'access-control-allow-origin': '*' };
+  const png = fs.readFileSync(path.join(ROOT, 'icons', 'icon-192.png'));
+  await c.route('https://upload.wikimedia.org/**', r => r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'image/png' }, body: png }));
+  // o endereço novo das miniaturas recusa: o app tem que baixar a mesma imagem pelo upload.wikimedia.org
+  await c.route('https://thumb.wikimedia.org/**', r => r.fulfill({ status: 403, body: 'forbidden' }));
+  await c.route(/https:\/\/(pt|en)\.wikipedia\.org\/w\/api\.php.*/, r => {
+    if (wikiMode === '429') return r.fulfill({ status: 429, headers: cors, body: 'You are making too many requests' });
+    if (wikiMode === '429once') { wikiMode = 'ok'; return r.fulfill({ status: 429, headers: cors, body: 'You are making too many requests' }); }
+    const pages = { 101: { pageid: 101, index: 1, title: 'Bhaskara II', description: 'matemático indiano do século XII', thumbnail: { source: 'https://thumb.wikimedia.org/x/Bhaskara.png', width: 400, height: 400 }, pageimage: 'Bhaskara.png' },
+      102: { pageid: 102, index: 2, title: 'Fórmula de Bhaskara', description: 'fórmula da equação do segundo grau', thumbnail: { source: 'https://upload.wikimedia.org/x/Formula.png', width: 400, height: 200 }, pageimage: 'Formula.png' },
+      103: { pageid: 103, index: 3, title: 'Equação quadrática' } };
+    return r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ query: { pages } }) });
+  });
+  await c.route(/https:\/\/commons\.wikimedia\.org\/w\/api\.php.*/, r => {
+    if (wikiMode === '429') return r.fulfill({ status: 429, headers: cors, body: 'You are making too many requests' });
+    const u = r.request().url();
+    if (u.includes('titles=')) return r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ query: { pages: { '-1': { imageinfo: [{ extmetadata: { Artist: { value: '<a href="x">Autor do retrato</a>' }, LicenseShortName: { value: 'Domínio público' } } }] } } } }) });
+    const ii = (n, mime) => ({ pageid: 200 + n, index: n, title: `File:Imagem ${n}.png`, imageinfo: [{ mime, thumburl: `https://upload.wikimedia.org/x/img${n}.png`, descriptionurl: 'https://commons.wikimedia.org/wiki/File:x', extmetadata: { Artist: { value: '<b>Fulano</b>' }, LicenseShortName: { value: 'CC BY-SA 4.0' }, ObjectName: { value: `Desenho ${n}` } } }] });
+    return r.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ query: { pages: { 201: ii(1, 'image/png'), 202: ii(2, 'image/svg+xml'), 203: ii(3, 'application/pdf') } } }) });
+  });
+}
+
 function watch(p) {
   p.on('pageerror', e => errors.push('ERRO DE PÁGINA: ' + e.message));
   p.on('console', m => { if (m.type() === 'error' && !/favicon|net::ERR_INTERNET_DISCONNECTED|Failed to load resource/.test(m.text())) errors.push('CONSOLE: ' + m.text()); });
@@ -156,6 +181,7 @@ function watch(p) {
   await mocks(ctx);
   await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
   await geminiMock(ctx);
+  await wikiMock(ctx);
   page = await ctx.newPage();
   watch(page);
   console.log(`\nCaderno de Estudos — teste completo (${base})\n`);
@@ -1214,10 +1240,10 @@ function watch(p) {
 
   // ================= BANCO DE DADOS E BACKUP =================
   console.log('Banco de dados, cópias e backup');
-  const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings', 'events'];
+  const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings', 'events', 'images'];
   await step('Dados e backup: a tela mostra o que está salvo no banco', async () => {
     await page.click('#btn-data'); await page.waitForSelector('.db-counts');
-    assert(await page.locator('.db-counts div').count() === 18, 'caixas: ' + await page.locator('.db-counts div').count());
+    assert(await page.locator('.db-counts div').count() === 19, 'caixas: ' + await page.locator('.db-counts div').count());
     const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.db-counts div')].map(d => [d.querySelector('span').textContent, +d.querySelector('b').textContent])));
     const real = { 'Anotações': 'notes', 'Tarefas': 'tasks', 'Notas rápidas': 'quicknotes', 'Gravações de aula': 'recordings', 'Conversas com o tutor': 'chats', 'Flashcards': 'cards', 'Pastas': 'folders' };
     for (const [label, s] of Object.entries(real)) { const n = (await idb(s)).length; assert(shown[label] === n, `${label}: tela ${shown[label]} ≠ banco ${n}`); }
@@ -1427,6 +1453,51 @@ function watch(p) {
       return bad;
     });
     assert(!r.length, 'fora da linha: ' + r.join(', '));
+  });
+
+  // ================= BOTÃO IMAGEM =================
+  console.log('Botão Imagem (busca na internet, simulada)');
+  await step('Imagem: escreve o nome, aparecem várias, a escolhida vai para a folha com o nome em cima e fica salva', async () => {
+    await nav('all'); await page.click('#btn-new'); await page.fill('#n-title', 'Matemáticos'); await page.click('.modal-actions .btn.primary'); await wait(1000);
+    assert(await page.locator('#ed-imgsearch').isVisible(), 'botão Imagem no editor');
+    await page.click('#ed-imgsearch'); await page.fill('#is-q', 'Bhaskara'); await page.click('.is-form button[type=submit]');
+    await page.waitForSelector('.is-item', { timeout: 8000 });
+    const titles = await page.locator('.is-item b').allTextContents();
+    assert(titles[0] === 'Bhaskara II' && titles.includes('Fórmula de Bhaskara') && titles.includes('Desenho 1') && titles.includes('Desenho 2') && !titles.includes('Desenho 3'), 'resultados: ' + titles.join(' | '));
+    assert((await page.textContent('#is-status')).includes('4 imagens'), 'contagem');
+    await page.click('.is-item >> nth=0'); await wait(1200); await saved();
+    const pg = (await contentOf('Matemáticos')).pages[0];
+    assert(pg.images.length === 1 && pg.images[0].src.startsWith('data:image/png'), 'imagem não foi para a folha');
+    const name = pg.texts.find(t => t.text === 'Bhaskara II'), credit = pg.texts.find(t => t.credit);
+    assert(name && name.y < pg.images[0].y, 'nome em cima da imagem');
+    assert(credit && credit.text.includes('Autor do retrato') && credit.text.includes('Domínio público') && credit.y > pg.images[0].y, 'crédito embaixo: ' + (credit && credit.text));
+    const imgs = await idb('images');
+    assert(imgs.length === 1 && imgs[0].title === 'Bhaskara II' && imgs[0].src.startsWith('data:image/'), 'imagem não ficou salva no app');
+    assert(await page.locator('.selbox').count() === 1, 'imagem e nome deviam ficar selecionados para mover');
+  });
+  await step('Imagem: "Minhas imagens" funciona sem buscar de novo; sem o nome; apagar das salvas', async () => {
+    await page.click('#ed-imgsearch'); await page.click('.is-tabs [data-tab=saved]'); await wait(200);
+    assert(await page.locator('.is-item').count() === 1 && (await page.textContent('#is-n')) === '1', 'imagens salvas');
+    await page.uncheck('#is-name');
+    await page.click('.is-item >> nth=0'); await wait(600); await saved();
+    const pg = (await contentOf('Matemáticos')).pages[0];
+    assert(pg.images.length === 2 && pg.texts.filter(t => t.text === 'Bhaskara II').length === 1, 'sem o nome desta vez');
+    await page.click('#ed-imgsearch'); await page.check('#is-name'); await page.click('.is-tabs [data-tab=saved]');
+    await page.click('.is-item [data-del]'); await page.click('.modal-back >> nth=-1 >> .modal-actions .btn.danger'); await wait(300);
+    assert((await idb('images')).length === 0 && await page.locator('.is-item').count() === 0, 'não apagou das salvas');
+    assert((await contentOf('Matemáticos')).pages[0].images.length === 2, 'apagar da galeria não pode tirar da folha');
+    await closeModals();
+  });
+  await step('Imagem: limite de buscas mostra aviso claro', async () => {
+    wikiMode = '429';
+    await page.click('#ed-imgsearch'); await page.fill('#is-q', 'Pedro Álvares Cabral'); await page.click('.is-form button[type=submit]');
+    await page.waitForFunction(() => /Muitas buscas/.test(document.getElementById('is-status').textContent), null, { timeout: 15000 });
+    // se o limite passar logo, o app tenta de novo sozinho e mostra as imagens
+    wikiMode = '429once';
+    await page.click('.is-form button[type=submit]');
+    await page.waitForSelector('.is-item', { timeout: 15000 });
+    wikiMode = 'ok';
+    await closeModals(); await page.click('#ed-back'); await wait(900);
   });
 
   // ================= FÓRMULAS =================

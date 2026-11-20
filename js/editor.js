@@ -3,8 +3,9 @@
 import {
   PAGE_W, PAGE_H, PAPER_COLORS, PAPER_TYPES, uid, renderPage, drawStroke, makeStroke, strokeHit,
   eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit,
-  setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine,
+  setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine, HAND_FONTS, loadHandFonts, LINE0,
 } from './ink.js';
+import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine } from './flow.js';
 import { snapShape } from './shapes.js';
 import { groupLines, recognizeStrokes, checkMath, fmtNum } from './recognize.js';
 import { settings, saveSettings } from './store.js';
@@ -54,6 +55,8 @@ export function initEditor(callbacks) {
   ctxB = base.getContext('2d'); ctxL = live.getContext('2d');
   buildToolbar();
   setImageLoadHandler(() => requestRedraw());
+  // fontes manuscritas: quando terminarem de carregar, redesenha a folha
+  loadHandFonts().then(() => { if (E) redraw(); });
 
   $('ed-back').onclick = () => cb.onClose();
   $('ed-undo').onclick = undo;
@@ -148,16 +151,76 @@ function buildToolbar() {
     settings.autoMode = e.target.value; saveSettings();
     toast({
       off: 'Correção automática desligada',
-      text: 'Automático: sua escrita vira texto digitado ao parar de escrever',
+      text: 'Automático: sua escrita vira texto ao parar de escrever, no mesmo lugar',
       math: 'Automático: contas com "=" são conferidas ao parar de escrever',
-    }[settings.autoMode]);
+      flow: 'Escrita organizada: escreva em qualquer lugar e o texto vai para as linhas. Ponto final = novo parágrafo.',
+    }[settings.autoMode], 4000);
+    syncToggles();
   };
+  // fonte, tamanho e parágrafo da escrita convertida
+  $('ed-font').innerHTML = Object.entries(HAND_FONTS).map(([k, f]) => `<option value="${k}" style="font-family:${f.family}">${f.name} (${f.desc})</option>`).join('') + '<option value="normal">Digitada (normal)</option>';
+  $('ed-fsize').innerHTML = Object.entries(FLOW_SIZES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  $('ed-para').innerHTML = Object.entries(FLOW_INDENTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+  $('ed-font').onchange = e => { settings.handFont = e.target.value; saveSettings(); restyleFlow(); };
+  $('ed-fsize').onchange = e => { settings.flowSize = +e.target.value; saveSettings(); restyleFlow(); };
+  $('ed-para').onchange = e => { settings.flowIndent = +e.target.value; saveSettings(); restyleFlow(); };
   syncToggles();
 }
 
 export function syncToggles() {
   $('ed-shapes').classList.toggle('on', settings.shapes);
   $('ed-auto').value = settings.autoMode;
+  const conv = settings.autoMode === 'flow' || settings.autoMode === 'text';
+  $('ed-flowopts').hidden = !conv;
+  $('ed-para-box').hidden = settings.autoMode !== 'flow';
+  $('ed-font').value = HAND_FONTS[settings.handFont] ? settings.handFont : 'normal';
+  $('ed-fsize').value = String(settings.flowSize);
+  $('ed-para').value = String(settings.flowIndent);
+}
+const convFont = () => (HAND_FONTS[settings.handFont] ? settings.handFont : undefined);
+const flowOpts = () => ({ font: convFont(), size: +settings.flowSize || 30, indent: +settings.flowIndent || 0, geom: paperGeom(E && E.content.bg) });
+
+// ----- escrita organizada -----
+// Onde o texto organizado começa numa página: na primeira pauta livre abaixo do que já existe
+function flowStartY(pg) {
+  const others = { ...pg, texts: pg.texts.filter(t => !t.flow) };
+  const g = paperGeom(E.content.bg);
+  const empty = !others.strokes.length && !others.texts.length && !others.images.some(i => !i.locked);
+  return empty ? g.first : snapLine(nextFreeLine(others), g);
+}
+function flowRelayout(startIdx, paras) {
+  const pages = E.content.pages;
+  const { s } = chainOf(pages, startIdx);
+  const last = relayout(pages, s, paras, flowOpts(), {
+    newPage: () => ({ id: uid(), strokes: [], texts: [], images: [] }),
+    startYFor: pg => flowStartY(pg),
+  });
+  return last;
+}
+// Acrescenta textos reconhecidos ao texto organizado da página atual
+function flowAppend(pieces) {
+  const pages = E.content.pages;
+  const { s, e } = chainOf(pages, E.pageIndex);
+  const paras = readParas(pages.slice(s, e + 1));
+  for (const p of pieces) appendText(paras, p.text, p.color);
+  const n0 = pages.length;
+  const last = flowRelayout(E.pageIndex, paras);
+  if (last !== E.pageIndex) {
+    gotoPage(last);
+    toast(pages.length > n0 ? `A folha encheu: o texto continuou na página ${last + 1} (nova)` : `O texto continuou na página ${last + 1}`, 3500);
+  }
+}
+// Mudou a fonte, o tamanho ou o parágrafo: reorganiza o texto desta página
+function restyleFlow() {
+  if (!E) { syncToggles(); return; }
+  const pages = E.content.pages;
+  if (pages[E.pageIndex].texts.some(t => t.flow)) {
+    pushUndo();
+    const { s, e } = chainOf(pages, E.pageIndex);
+    flowRelayout(E.pageIndex, readParas(pages.slice(s, e + 1)));
+    markDirty(); redraw();
+  }
+  loadHandFonts().then(() => E && redraw());
 }
 
 function selectTool(t) {
@@ -870,7 +933,7 @@ function lineToText(pg, line, text) {
   pg.strokes = pg.strokes.filter(s => !ids.has(s.id));
   pg.texts.push({
     id: uid(), x: line.x, y: line.y + line.h / 2 - (size * 1.25) / 2, text,
-    color: mainColor(line.strokes), size,
+    color: mainColor(line.strokes), size, font: convFont(),
   });
 }
 
@@ -987,6 +1050,7 @@ async function runAuto() {
   if (!strokes.length) return;
   const mode = settings.autoMode;
   let lines = groupLines(strokes);
+  if (mode === 'flow') return runFlow(pg, lines.filter(l => l.strokes.some(s => s.tool !== 'marker')));
   if (mode === 'math') lines = lines.map(l => expandLine(pg, l));
   for (const l of lines) {
     let cands;
@@ -1009,6 +1073,28 @@ async function runAuto() {
     markDirty(); redraw();
   }
 }
+// Escrita organizada: reconhece as linhas (em ordem de leitura) e manda o texto para as pautas
+async function runFlow(pg, lines) {
+  lines.sort((a, b) => (Math.abs(a.y - b.y) < Math.min(a.h, b.h) * 0.5 ? a.x - b.x : a.y - b.y));
+  let cands;
+  try { cands = await Promise.all(lines.map(l => recognizeStrokes(l.strokes, settings.lang))); }
+  catch (e) { recogError(e); return; }
+  if (!E || page() !== pg) return;
+  const alive = new Set(pg.strokes.map(s => s.id));
+  const pieces = [], remove = new Set();
+  lines.forEach((l, i) => {
+    const text = (cands[i] && cands[i][0] || '').trim();
+    if (!text || !l.strokes.every(s => alive.has(s.id))) return;
+    pieces.push({ text, color: mainColor(l.strokes) });
+    l.strokes.forEach(s => remove.add(s.id));
+  });
+  if (!pieces.length) return;
+  pushUndo();
+  pg.strokes = pg.strokes.filter(s => !remove.has(s.id));
+  flowAppend(pieces);
+  markDirty(); redraw();
+}
+
 // Junta à linha os traços vizinhos na mesma altura (ex.: "2+3=" escrito antes do "5")
 function expandLine(pg, line) {
   const set = new Set(line.strokes.map(s => s.id));
@@ -1086,7 +1172,10 @@ async function paperDialog() {
   });
   const ok = await modal({ title: 'Papel', body, actions: [{ label: 'Cancelar', value: false }, { label: 'Aplicar', value: true, primary: true }] });
   if (!ok || !E) return;
+  const had = E.content.bg && E.content.bg.type;
   E.content.bg = choice;
+  // trocou o tipo de folha: o texto organizado se ajusta às pautas novas
+  if (had !== choice.type) { for (const pg of E.content.pages) if (pg.texts.some(t => t.flow)) delete pg.flowY; restyleFlow(); }
   markDirty(); redraw();
 }
 

@@ -40,6 +40,7 @@ No fim do menu ficam **Tudo e ajuda**, **Dados e backup** e **Ajustes e IA**.
 
 | Recurso | O que faz |
 |---|---|
+| ✍️ **Escrita organizada** | No editor, em **Auto → Escrita organizada**: escreva em qualquer parte da folha e, ao parar, sua letra vira texto em **fonte manuscrita** nas linhas, emendado no fim da linha. Cada **ponto final** começa um parágrafo novo na linha de baixo. No menu ao lado você escolhe a **fonte** (6 manuscritas: Caveat, Patrick Hand, Indie Flower, Kalam, Shadows Into Light e Dancing Script, ou digitada), o **tamanho** e o **recuo do parágrafo**; a **cor** é a da caneta escolhida em cima. Se a folha encher, o texto continua na página seguinte. Funciona sem internet só para as fontes: o reconhecimento da letra precisa de internet |
 | ☰ **Menu lateral retrátil** | Recolhe para só ícones e deixa mais espaço para estudar; com o tablet em pé, abre arrastando da borda |
 | ⚡ **IA só com o Gemini rapidão** | Uma chave só, sem escolher provedor. Usa o **Gemini Flash-Lite**, o mais rápido do Google: **0,8 s** para responder um texto e **2 s** para ler uma página do caderno nos testes de verdade |
 | 💬 **Tutor IA** | Converse com a IA como com um professor particular. Mande a **foto de um exercício** (câmera do tablet) e ela resolve passo a passo. Fale em vez de digitar (🎙️ ditado) e ouça a resposta (🔊). As conversas ficam salvas e aparecem na busca |
@@ -206,6 +207,10 @@ js/data.js            Dados e backup: contagens, cópias automáticas, exportar/
 js/nav.js             navegação: menu em 3 áreas (retrátil), barra de baixo, botão +, tela Tudo, dicas e tour
 js/sound.js           sons de foco (ruídos gerados no tablet)
 js/store.js           banco de dados local (IndexedDB) e configurações
+js/flow.js            escrita organizada (texto nas pautas, parágrafos e continuação na página seguinte)
+js/events.js          eventos da agenda, prioridade e avisos
+js/chave.js           lugar da chave do Gemini embutida (opcional)
+fonts/                fontes manuscritas (SIL Open Font License, ver fonts/LICENSE-OFL.txt)
 js/vendor/            pdf.js 6.5.438, embutido
 sw.js                 funcionamento offline
 tests/                teste completo automatizado e teste real do Gemini

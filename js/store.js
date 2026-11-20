@@ -85,7 +85,10 @@ const DEFAULTS = {
   fingerDraw: true,
   penSeen: false,
   lang: 'pt_BR',
-  autoMode: 'off', // off | text | math
+  autoMode: 'off', // off | text | math | flow (escrita organizada)
+  handFont: 'caveat', // fonte da escrita convertida em texto (ou 'normal')
+  flowSize: 30,
+  flowIndent: 80,
   shapes: true,
   eraserMode: 'partial',
   sort: 'updated',

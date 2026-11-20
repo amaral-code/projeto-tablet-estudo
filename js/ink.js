@@ -172,9 +172,37 @@ export function makeStroke(base, points) {
   return s;
 }
 
+// ---------- Fontes manuscritas (embutidas em fonts/, funcionam sem internet) ----------
+export const HAND_FONTS = {
+  caveat: { name: 'Caveat', desc: 'manuscrita', family: '"Caveat"' },
+  patrick: { name: 'Patrick Hand', desc: 'letra de forma', family: '"Patrick Hand"' },
+  indie: { name: 'Indie Flower', desc: 'redondinha', family: '"Indie Flower"' },
+  kalam: { name: 'Kalam', desc: 'de caneta', family: '"Kalam"' },
+  shadows: { name: 'Shadows Into Light', desc: 'fininha', family: '"Shadows Into Light Two"' },
+  dancing: { name: 'Dancing Script', desc: 'cursiva', family: '"Dancing Script"' },
+};
+export const fontFamily = id => (HAND_FONTS[id] ? `${HAND_FONTS[id].family}, ${FONT}` : FONT);
+let fontsP = null;
+// Carrega as fontes antes de desenhar no canvas (o canvas não espera a fonte sozinho)
+export function loadHandFonts() {
+  if (!fontsP) fontsP = document.fonts ? Promise.all(Object.values(HAND_FONTS).map(f => document.fonts.load(`32px ${f.family}`, 'Aaçã').catch(() => null))) : Promise.resolve();
+  return fontsP;
+}
+
 // ---------- Texto ----------
 let measureCtx;
-export function textFont(t) { return `${t.bold ? '700 ' : ''}${t.size}px ${FONT}`; }
+export function textFont(t) { return `${t.bold ? '700 ' : ''}${t.size}px ${fontFamily(t.font)}`; }
+// distância do topo do texto até a linha de base (para o texto "sentar" na pauta)
+export function baselineOffset(font, size) {
+  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+  measureCtx.font = textFont({ size, font });
+  measureCtx.textBaseline = 'top';
+  const m = measureCtx.measureText('Hg');
+  measureCtx.textBaseline = 'alphabetic';
+  const v = m.alphabeticBaseline;
+  return isFinite(v) && v !== 0 ? Math.abs(v) : size * 0.8;
+}
+export const textWidth = (text, size, font) => { if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d'); measureCtx.font = textFont({ size, font }); return measureCtx.measureText(text).width; };
 export function textBBox(t) {
   if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
   measureCtx.font = textFont(t);
@@ -325,7 +353,7 @@ export function transformItem(kind, it, k, ox, oy, dx, dy) {
 
 // ---------- Diagramação de textos longos (respostas da IA) ----------
 export const LINE0 = 120, LINE_STEP = 40;
-const MARGIN_L = 110, MARGIN_R = 50, BOTTOM = PAGE_H - 50;
+export const MARGIN_L = 110, MARGIN_R = 50, BOTTOM = PAGE_H - 50;
 
 function wrapLine(text, size, bold, maxW) {
   const words = text.split(/(\s+)/);

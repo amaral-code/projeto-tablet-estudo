@@ -1024,6 +1024,7 @@ async function settingsDialog() {
       <option value="off" ${settings.autoMode === 'off' ? 'selected' : ''}>Desligada</option>
       <option value="text" ${settings.autoMode === 'text' ? 'selected' : ''}>Transformar escrita em texto digitado</option>
       <option value="math" ${settings.autoMode === 'math' ? 'selected' : ''}>Conferir contas (✓ / ✗) ao terminar de escrever</option>
+      <option value="flow" ${settings.autoMode === 'flow' ? 'selected' : ''}>Escrita organizada: vira texto nas linhas, ponto final = novo parágrafo</option>
     </select>
     <hr>
     <label class="lbl">Inteligência artificial — Gemini (versão rápida)</label>
@@ -1054,6 +1055,7 @@ async function settingsDialog() {
         <li><b>Borracha:</b> “Parcial” apaga só onde passa; “Traço inteiro” apaga o risco todo. O botão da caneta também apaga.</li>
         <li><b>Laço:</b> circule algo para mover, aumentar (bolinha no canto), mudar cor, duplicar, apagar, <b>Corrigir escrita</b> ou <b>Verificar conta</b>.</li>
         <li><b>Corrigir escrita:</b> transforma letras e números escritos à mão em texto digitado, com sugestões para escolher.</li>
+        <li><b>Escrita organizada:</b> em “Auto”, escolha <b>Escrita organizada</b>. Escreva em qualquer lugar da folha: ao parar, sua letra vira texto em <b>fonte manuscrita</b> nas linhas, emendado no fim da linha. Cada <b>ponto final</b> abre um parágrafo novo. A fonte, o tamanho e o recuo do parágrafo ficam no menu ao lado; a cor é a da caneta escolhida em cima.</li>
         <li><b>Verificar conta:</b> escreva “12 + 8 = 20” e o app marca ✓ ou ✗ mostrando o resultado certo. Aceita + − × ÷ : x / ^ √ % e vírgula decimal.</li>
         <li><b>Gestos:</b> pinça com 2 dedos = zoom; arrastar com 2 dedos = mover; toque com 2 dedos = desfazer; 3 dedos = refazer.</li>
         <li><b>Compartilhar:</b> envia PDF ou imagem pelo WhatsApp, Gmail, Drive, Classroom…</li>

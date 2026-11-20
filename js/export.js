@@ -1,5 +1,5 @@
 // Exportação em PNG/PDF e compartilhamento (WhatsApp, e-mail, Drive, etc.)
-import { renderPageToCanvas, loadPageImages } from './ink.js';
+import { renderPageToCanvas, loadPageImages, loadHandFonts } from './ink.js';
 
 const canvasToBlob = (c, type, q) => new Promise(res => c.toBlob(res, type, q));
 
@@ -9,6 +9,7 @@ export function safeName(s) {
 }
 
 export async function pageToPNG(page, bg, title) {
+  await loadHandFonts();
   await loadPageImages(page);
   const c = renderPageToCanvas(page, bg, 1600);
   const blob = await canvasToBlob(c, 'image/png');
@@ -17,6 +18,7 @@ export async function pageToPNG(page, bg, title) {
 
 // Gerador de PDF minimalista: cada página vira uma imagem JPEG em A4.
 export async function pagesToPDF(pages, bg, title) {
+  await loadHandFonts();
   const enc = new TextEncoder();
   const parts = [];
   let offset = 0;

@@ -1,9 +1,9 @@
 // Service worker: deixa o app funcionando offline.
-const CACHE = 'caderno-v11';
+const CACHE = 'caderno-v12';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/editor.js', 'js/ink.js', 'js/shapes.js', 'js/recognize.js', 'js/store.js', 'js/export.js', 'js/ui.js',
-  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/plus.js', 'js/sound.js', 'js/nav.js', 'js/goals.js', 'js/quiz.js', 'js/data.js', 'js/voice.js', 'js/quicknotes.js', 'js/tutor.js', 'js/recorder.js', 'js/suggest.js', 'js/events.js', 'js/chave.js', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
+  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/plus.js', 'js/sound.js', 'js/nav.js', 'js/goals.js', 'js/quiz.js', 'js/data.js', 'js/voice.js', 'js/quicknotes.js', 'js/tutor.js', 'js/recorder.js', 'js/suggest.js', 'js/events.js', 'js/chave.js', 'js/flow.js', 'fonts/caveat.woff2', 'fonts/patrick-hand.woff2', 'fonts/indie-flower.woff2', 'fonts/kalam.woff2', 'fonts/shadows-into-light-two.woff2', 'fonts/dancing-script.woff2', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 self.addEventListener('install', e => {

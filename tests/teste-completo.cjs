@@ -84,10 +84,11 @@ function serve() {
 }
 
 // ---------- serviços simulados ----------
+const recogQueue = []; // respostas do reconhecimento de escrita para os próximos pedidos (escrita organizada)
 async function mocks(c) {
   await c.route('https://inputtools.google.com/**', async r => {
     const n = JSON.parse(r.request().postData()).requests[0].ink.length;
-    const ans = n >= 5 ? ['2+3=6', '2+3=b'] : ['casa', 'Casa', 'cara'];
+    const ans = recogQueue.length ? [recogQueue.shift()] : n >= 5 ? ['2+3=6', '2+3=b'] : ['casa', 'Casa', 'cara'];
     await r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(['SUCCESS', [['x', ans, [], {}]]]) });
   });
 }
@@ -1317,6 +1318,69 @@ function watch(p) {
     await page.click('#btn-settings'); await page.click('#s-theme [data-t=auto]'); await page.click('.modal-actions .btn.primary'); await wait(200);
     assert(!bad.length, 'estouram a largura: ' + bad.join(', '));
     assert(qbg && qbg !== 'rgb(255, 244, 184)', 'nota rápida continua clara no tema escuro: ' + qbg);
+  });
+
+  // ================= ESCRITA ORGANIZADA =================
+  console.log('Escrita organizada com fontes manuscritas');
+  const scribble = async (x, y) => {
+    const b = await stageBox();
+    await page.mouse.move(b.x + x, b.y + y); await page.mouse.down();
+    for (let i = 1; i < 12; i++) await page.mouse.move(b.x + x + i * 12, b.y + y + (i % 2 ? 12 : -12), { steps: 2 });
+    await page.mouse.up(); await wait(2300);
+  };
+  const flowTexts = async (pi = 0) => (await contentOf('Redação')).pages[pi].texts.filter(t => t.flow).sort((a, b) => a.para - b.para || a.ord - b.ord);
+  await step('Escrita organizada: escreve em qualquer lugar e vira texto manuscrito nas linhas; ponto final abre parágrafo', async () => {
+    await nav('all'); await page.click('#btn-new'); await page.fill('#n-title', 'Redação'); await page.click('.paper-opts[data-g=type] [data-v=lines]'); await page.click('.modal-actions .btn.primary'); await wait(1000);
+    await page.selectOption('#ed-auto', 'flow'); await wait(200);
+    assert(await page.locator('#ed-flowopts').isVisible() && await page.locator('#ed-para-box').isVisible(), 'menu de fonte/tamanho/parágrafo');
+    await page.selectOption('#ed-font', 'caveat'); await page.selectOption('#ed-fsize', '30'); await page.selectOption('#ed-para', '80');
+    recogQueue.push('Hoje estudei a fotossíntese', 'nas plantas.', 'Elas produzem glicose');
+    await scribble(600, 150); await scribble(150, 300); await scribble(500, 420); await saved();
+    const c = await contentOf('Redação');
+    assert(c.pages[0].strokes.length === 0, 'a escrita à mão devia sumir depois de virar texto');
+    const t = await flowTexts();
+    assert(t.length === 2 && t[0].text === 'Hoje estudei a fotossíntese nas plantas.' && t[1].text === 'Elas produzem glicose', 'texto: ' + t.map(x => x.text).join(' | '));
+    assert(t[0].para === 0 && t[1].para === 1 && t[1].y - t[0].y === 40, 'o ponto final devia abrir parágrafo na linha de baixo');
+    assert(t[0].x === 190 && t[1].x === 190, 'recuo de parágrafo médio (80): ' + t.map(x => x.x));
+    assert(t.every(x => x.font === 'caveat' && x.size === 30), 'fonte manuscrita');
+    assert(await page.evaluate(() => document.fonts.check('30px "Caveat"')), 'fonte não carregou');
+  });
+  await step('Escrita organizada: cor da caneta, recuo e fonte mudam pelo menu; desfazer funciona', async () => {
+    await page.click('#tool-opts [data-c="#e5352b"]').catch(() => {});
+    recogQueue.push('usando luz do sol.');
+    await scribble(300, 250); await saved();
+    let t = await flowTexts();
+    assert(t.length === 3 && t[2].text === 'usando luz do sol.' && t[2].color === '#e5352b' && t[2].para === 1, 'cor/emenda: ' + JSON.stringify(t.map(x => [x.text, x.color, x.para])));
+    await page.selectOption('#ed-para', '0'); await saved();
+    t = await flowTexts();
+    assert(t[0].x === 110 && t[1].x === 110, 'sem recuo: ' + t.map(x => x.x));
+    await page.selectOption('#ed-font', 'dancing'); await saved();
+    assert((await flowTexts()).every(x => x.font === 'dancing'), 'trocar fonte');
+    await page.screenshot({ path: path.join(OUT, 'escrita-organizada.png') });
+    await page.click('#ed-undo'); await saved();
+    assert((await flowTexts()).every(x => x.font === 'caveat'), 'desfazer');
+    await page.click('#tool-opts [data-c="#1d1d1f"]').catch(() => {});
+  });
+  await step('Escrita organizada: quando a folha enche, o texto continua na página seguinte', async () => {
+    recogQueue.push(Array.from({ length: 70 }, (_, i) => `Frase número ${i + 1} sobre o ciclo da água e da fotossíntese`).join(', ') + '.');
+    await scribble(400, 200); await saved();
+    const c = await contentOf('Redação');
+    assert(c.pages.length === 2 && c.pages[0].flowFull && c.pages[1].texts.some(t => t.flow), 'não continuou na página 2');
+    assert((await page.textContent('#pg-label')).trim().startsWith('2 '), 'devia ir para a página 2');
+    const all = [...c.pages[0].texts, ...c.pages[1].texts].filter(t => t.flow).map(t => t.text).join(' ');
+    assert(all.includes('Frase número 1 ') && all.includes('Frase número 70 '), 'texto perdido na troca de página');
+    assert(c.pages[0].texts.filter(t => t.flow).every(t => t.y < 1414 - 40), 'texto passou do fim da folha');
+    await page.selectOption('#ed-auto', 'off');
+    await page.click('#ed-back'); await wait(900);
+  });
+  await step('Escrita organizada: na folha Cornell o texto vai para a coluna de anotações, nas pautas dela', async () => {
+    const r = await page.evaluate(async () => {
+      const f = await import('./js/flow.js');
+      const g = f.paperGeom({ type: 'cornell' });
+      const out = f.layoutFlow([{ runs: [{ text: 'Mitose é a divisão celular.', color: '#1d1d1f' }] }], { size: 30, indent: 0, startY: f.snapLine(150, g), geom: g });
+      return { x: out.items[0].x, start: f.snapLine(150, g), g };
+    });
+    assert(r.x === 300 && r.start === 220, 'Cornell: ' + JSON.stringify(r));
   });
 
   await step('nenhum erro de JavaScript em todo o teste', async () => {

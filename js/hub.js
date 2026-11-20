@@ -58,9 +58,13 @@ const T = (() => {
   try { const v = JSON.parse(localStorage.getItem(FKEY)); return v ? { ...def, ...v, cfg: { ...def.cfg, ...v.cfg } } : def; } catch { return def; }
 })();
 const saveT = () => { try { localStorage.setItem(FKEY, JSON.stringify(T)); } catch { /* */ } };
-const dur = m => T.cfg[m === 'focus' ? 'focus' : m === 'short' ? 'short' : 'long'] * 60;
+const dur = m => (m === 'free' ? 3600 : T.cfg[m === 'focus' ? 'focus' : m === 'short' ? 'short' : 'long'] * 60);
 const left = () => (T.running ? Math.max(0, Math.round((T.endAt - Date.now()) / 1000)) : T.remaining);
-const MODE_LABEL = { focus: 'Foco', short: 'Pausa curta', long: 'Pausa longa' };
+// cronômetro livre: tempo já estudado
+const elapsed = () => Math.round((T.freeAcc || 0) + (T.running ? (Date.now() - T.freeStart) / 1000 : 0));
+const isFree = () => T.mode === 'free';
+const shown = () => (isFree() ? elapsed() : left());
+const MODE_LABEL = { focus: 'Foco', short: 'Pausa curta', long: 'Pausa longa', free: 'Cronômetro' };
 let wakeLock = null, pill;
 
 function initTimer() {
@@ -70,9 +74,9 @@ function initTimer() {
   const zx = h(`<button id="zen-exit">${ic('close')}<span>Sair</span></button>`);
   zx.onclick = toggleZen;
   document.body.appendChild(zx);
-  setInterval(() => { if (T.running && left() <= 0) completePhase(); tickUI(); }, 500);
+  setInterval(() => { if (T.running && !isFree() && left() <= 0) completePhase(); tickUI(); }, 500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && T.running) requestWake(); });
-  if (T.running && left() <= 0) completePhase(true);
+  if (T.running && !isFree() && left() <= 0) completePhase(true);
   else if (T.running) requestWake();
   tickUI();
 }
@@ -109,17 +113,18 @@ function notify(msg) {
 
 // som de fundo só durante o foco (as pausas ficam em silêncio)
 function syncSound() {
-  if (T.running && T.mode === 'focus' && T.cfg.sound !== 'none') playSound(T.cfg.sound, T.cfg.vol);
+  if (T.running && (T.mode === 'focus' || isFree()) && T.cfg.sound !== 'none') playSound(T.cfg.sound, T.cfg.vol);
   else stopSound();
 }
 function startT() {
   if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
   if (!T.startedAt) T.startedAt = Date.now();
-  T.running = true; T.endAt = Date.now() + T.remaining * 1000;
+  T.running = true;
+  if (isFree()) T.freeStart = Date.now(); else T.endAt = Date.now() + T.remaining * 1000;
   saveT(); requestWake(); syncSound(); tickUI(); rerenderIf('focus');
 }
-function pauseT() { T.remaining = left(); T.running = false; saveT(); releaseWake(); syncSound(); tickUI(); rerenderIf('focus'); }
-function resetT(mode = T.mode) { T.mode = mode; T.running = false; T.remaining = dur(mode); T.startedAt = 0; saveT(); releaseWake(); syncSound(); tickUI(); rerenderIf('focus'); }
+function pauseT() { if (isFree()) T.freeAcc = elapsed(); else T.remaining = left(); T.running = false; saveT(); releaseWake(); syncSound(); tickUI(); rerenderIf('focus'); }
+function resetT(mode = T.mode) { T.mode = mode; T.running = false; T.remaining = dur(mode); T.startedAt = 0; T.freeAcc = 0; saveT(); releaseWake(); syncSound(); tickUI(); rerenderIf('focus'); }
 
 async function recordSession(minutes) {
   if (minutes < 1) return;
@@ -147,6 +152,13 @@ async function completePhase(silent) {
   A.onChange();
 }
 async function stopAndSave() {
+  if (isFree()) {
+    const min = Math.floor(elapsed() / 60);
+    await recordSession(min);
+    toast(min >= 1 ? `${fmtMin(min)} de estudo registrados ✓` : 'Menos de 1 minuto: nada foi registrado');
+    resetT('free'); A.onChange();
+    return;
+  }
   if (T.mode === 'focus') {
     const elapsed = Math.floor((dur('focus') - left()) / 60);
     await recordSession(elapsed);
@@ -156,20 +168,24 @@ async function stopAndSave() {
   A.onChange();
 }
 
-function mmss(sec) { return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`; }
+function mmss(sec) {
+  const hh = Math.floor(sec / 3600), mm = Math.floor((sec % 3600) / 60), ss = sec % 60;
+  return `${hh ? hh + ':' : ''}${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
 function tickUI() {
-  const sec = left();
-  const active = T.running || sec < dur(T.mode);
+  const sec = shown();
+  const active = T.running || (isFree() ? sec > 0 : sec < dur(T.mode));
   if (pill) {
     pill.hidden = !active || currentKind === 'focus' && !document.body.classList.contains('editing');
     pill.className = `mode-${T.mode} ${T.running ? 'running' : 'paused'}`;
     pill.innerHTML = `${ic(T.running ? 'timer' : 'pause')}<span>${mmss(sec)}</span>`;
+    pill.classList.toggle('free', isFree());
   }
   const clock = document.getElementById('fc-time');
   if (clock) {
     clock.textContent = mmss(sec);
     const ring = document.getElementById('fc-ring');
-    const frac = 1 - sec / dur(T.mode);
+    const frac = isFree() ? (sec % 3600) / 3600 : 1 - sec / dur(T.mode);
     if (ring) ring.style.strokeDashoffset = String(2 * Math.PI * 120 * (1 - frac));
   }
   document.title = T.running ? `${mmss(sec)} · ${MODE_LABEL[T.mode]} — Caderno` : 'Caderno de Estudos';
@@ -201,22 +217,24 @@ function weekChart(week) {
 
 function renderFocus(el) {
   const st = focusStats();
-  const sec = left();
+  const sec = shown();
   const R = 120, C = 2 * Math.PI * R;
+  const free = isFree();
+  const off = free ? C * (1 - (sec % 3600) / 3600) : C * (sec / dur(T.mode));
   const tasks = A.state.tasks.filter(t => !t.done);
   el.innerHTML = `<div class="focus-wrap">
     <div class="panel focus-main mode-${T.mode}">
       <div class="seg" id="fc-mode">${Object.entries(MODE_LABEL).map(([k, v]) => `<button data-m="${k}" class="${T.mode === k ? 'active' : ''}">${v}</button>`).join('')}</div>
       <div class="ring-box">
         <svg viewBox="0 0 280 280" class="ring"><circle cx="140" cy="140" r="${R}" class="ring-bg"/>
-          <circle id="fc-ring" cx="140" cy="140" r="${R}" class="ring-fg" stroke-dasharray="${C}" stroke-dashoffset="${C * (sec / dur(T.mode))}"/></svg>
-        <div class="ring-text"><div id="fc-time">${mmss(sec)}</div><div class="muted">${MODE_LABEL[T.mode]} · ciclo ${(T.cycle % T.cfg.every) + 1} de ${T.cfg.every}</div></div>
+          <circle id="fc-ring" cx="140" cy="140" r="${R}" class="ring-fg" stroke-dasharray="${C}" stroke-dashoffset="${off}"/></svg>
+        <div class="ring-text"><div id="fc-time">${mmss(sec)}</div><div class="muted">${free ? 'Cronômetro · no seu ritmo' : `${MODE_LABEL[T.mode]} · ciclo ${(T.cycle % T.cfg.every) + 1} de ${T.cfg.every}`}</div></div>
       </div>
       <div class="row center wrap">
-        <button class="btn primary big" id="fc-start">${ic(T.running ? 'pause' : 'timer')}<span>${T.running ? 'Pausar' : sec < dur(T.mode) ? 'Continuar' : 'Começar'}</span></button>
-        <button class="btn" id="fc-reset" title="Reiniciar">${ic('undo')}<span>Reiniciar</span></button>
-        <button class="btn" id="fc-skip" title="Pular para a próxima fase">${ic('right')}<span>Pular</span></button>
-        ${T.mode === 'focus' && sec < dur('focus') ? `<button class="btn" id="fc-stop">${ic('check')}<span>Encerrar e salvar</span></button>` : ''}
+        <button class="btn primary big" id="fc-start">${ic(T.running ? 'pause' : 'timer')}<span>${T.running ? 'Pausar' : (free ? sec > 0 : sec < dur(T.mode)) ? 'Continuar' : 'Começar'}</span></button>
+        <button class="btn" id="fc-reset" title="${free ? 'Zerar' : 'Reiniciar'}">${ic('undo')}<span>${free ? 'Zerar' : 'Reiniciar'}</span></button>
+        ${free ? '' : `<button class="btn" id="fc-skip" title="Pular para a próxima fase">${ic('right')}<span>Pular</span></button>`}
+        ${(T.mode === 'focus' && sec < dur('focus')) || (free && sec > 0) ? `<button class="btn" id="fc-stop">${ic('check')}<span>Encerrar e salvar</span></button>` : ''}
       </div>
       <div class="row wrap focus-ctx">
         <div class="grow"><label class="lbl">Matéria</label><select class="select full" id="fc-folder">${A.folderOptions(T.folderId, 'Geral')}</select></div>
@@ -254,10 +272,14 @@ function renderFocus(el) {
   </div>`;
   el.querySelector('#fc-start').onclick = () => (T.running ? pauseT() : startT());
   el.querySelector('#fc-reset').onclick = () => resetT();
-  el.querySelector('#fc-skip').onclick = () => completePhase(true).then(() => toast(`Agora: ${MODE_LABEL[T.mode]}`));
+  el.querySelector('#fc-skip')?.addEventListener('click', () => completePhase(true).then(() => toast(`Agora: ${MODE_LABEL[T.mode]}`)));
   const stop = el.querySelector('#fc-stop');
   if (stop) stop.onclick = stopAndSave;
-  el.querySelector('#fc-mode').onclick = e => { const b = e.target.closest('[data-m]'); if (b) resetT(b.dataset.m); };
+  el.querySelector('#fc-mode').onclick = e => {
+    const b = e.target.closest('[data-m]'); if (!b || b.dataset.m === T.mode) return;
+    if (T.running || (isFree() && elapsed() > 59)) { toast('Encerre ou pause o tempo atual antes de trocar'); return; }
+    resetT(b.dataset.m);
+  };
   el.querySelector('#fc-folder').onchange = e => { T.folderId = e.target.value; saveT(); };
   el.querySelector('#fc-task').onchange = e => {
     T.taskId = e.target.value;
@@ -664,11 +686,27 @@ function miniTask(t, showDue) {
   const dueTxt = showDue && t.due ? ` <span class="muted small">· ${WD[parseDay(t.due).getDay()]} ${parseDay(t.due).getDate()}</span>` : '';
   return `<div class="mini-task ${t.done ? 'done' : ''}"><button class="task-check" data-check="${t.id}" aria-label="Concluir">${ic('check')}</button>
     <span class="grow" data-edit="${t.id}">${esc(t.title)}${t.repeat ? ` <span class="muted small">↻</span>` : ''}${late ? ` <span class="late small">· atrasada</span>` : ''}${dueTxt}</span>
-    ${t.folderId ? `<span class="dot" style="background:${A.folderColor(t.folderId)}"></span>` : ''}</div>`;
+    ${t.folderId ? `<span class="dot" style="background:${A.folderColor(t.folderId)}"></span>` : ''}
+    ${t.done ? '' : `<button class="star-btn ${t.top === dayStr() ? 'on' : ''}" data-top="${t.id}" aria-label="${t.top === dayStr() ? 'Tirar das prioridades de hoje' : 'Prioridade de hoje'}">${ic('star')}</button>`}</div>`;
 }
 function bindMiniTasks(el) {
   el.querySelectorAll('[data-check]').forEach(b => b.onclick = () => A.toggleTask(b.dataset.check));
   el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => A.taskDialog(A.state.tasks.find(t => t.id === b.dataset.edit)));
+  el.querySelectorAll('[data-top]').forEach(b => b.onclick = () => setTop(b.dataset.top));
+}
+// As 3 tarefas mais importantes do dia
+async function setTop(id) {
+  const t = A.state.tasks.find(x => x.id === id);
+  if (!t) return;
+  const today = dayStr();
+  if (t.top === today) t.top = '';
+  else {
+    if (A.state.tasks.filter(x => !x.done && x.top === today).length >= 3) { toast('Escolha no máximo 3 prioridades por dia. Tire uma antes.'); return; }
+    t.top = today;
+    toast('⭐ Prioridade de hoje');
+  }
+  await A.db.put('tasks', t);
+  A.onChange();
 }
 
 // ======================= HOJE =======================
@@ -678,9 +716,12 @@ function renderToday(el) {
   const hello = hr < 12 ? 'Bom dia' : hr < 18 ? 'Boa tarde' : 'Boa noite';
   const st = focusStats();
   const pend = A.state.tasks.filter(t => !t.done);
-  const todayTasks = pend.filter(t => t.due && t.due <= today).sort((a, b) => (a.due < b.due ? -1 : 1) || b.prio - a.prio);
-  const noDate = pend.filter(t => !t.due).sort((a, b) => b.prio - a.prio).slice(0, 3);
-  const upcoming = pend.filter(t => t.due && t.due > today && t.due <= addDays(today, 7)).sort((a, b) => (a.due < b.due ? -1 : 1));
+  const tops = pend.filter(t => t.top === today);
+  const notTop = pend.filter(t => t.top !== today);
+  const todayTasks = notTop.filter(t => t.due && t.due <= today).sort((a, b) => (a.due < b.due ? -1 : 1) || b.prio - a.prio);
+  const noDate = notTop.filter(t => !t.due).sort((a, b) => b.prio - a.prio).slice(0, 3);
+  const upcoming = notTop.filter(t => t.due && t.due > today && t.due <= addDays(today, 7)).sort((a, b) => (a.due < b.due ? -1 : 1));
+  const doneTops = A.state.tasks.filter(t => t.done && t.top === today).length;
   const due = dueCards().length;
   const recent = [...A.state.notes].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 4);
   const streak = studyStreak();
@@ -691,8 +732,10 @@ function renderToday(el) {
     </div>
     <div class="today-grid">
       <div class="panel t-tasks"><div class="p-head"><h3>${ic('tasks')}Tarefas de hoje</h3><button class="icon-btn small" id="td-add" aria-label="Nova tarefa">${ic('plus')}</button></div>
-        <div class="mini-tasks">${todayTasks.map(miniTask).join('') || '<p class="muted small">Nada com prazo para hoje. 🎉</p>'}</div>
-        ${noDate.length ? `<h4>Sem prazo</h4><div class="mini-tasks">${noDate.map(miniTask).join('')}</div>` : ''}
+        <div class="top3 ${tops.length ? '' : 'empty'}"><h4>⭐ Prioridades de hoje <span class="muted">${tops.length + doneTops ? `${doneTops} de ${tops.length + doneTops} feitas` : ''}</span></h4>
+          ${tops.length ? `<div class="mini-tasks">${tops.map(t => miniTask(t)).join('')}</div>` : '<p class="muted small">Toque na ⭐ de até 3 tarefas para focar no que mais importa hoje.</p>'}</div>
+        <div class="mini-tasks">${todayTasks.map(t => miniTask(t)).join('') || (tops.length ? '' : '<p class="muted small">Nada com prazo para hoje. 🎉</p>')}</div>
+        ${noDate.length ? `<h4>Sem prazo</h4><div class="mini-tasks">${noDate.map(t => miniTask(t)).join('')}</div>` : ''}
         ${upcoming.length ? `<h4>Próximos 7 dias</h4><div class="mini-tasks">${upcoming.slice(0, 5).map(t => miniTask(t, true)).join('')}</div>` : ''}
       </div>
       <div class="panel t-focus"><div class="p-head"><h3>${ic('timer')}Foco</h3></div>

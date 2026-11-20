@@ -7,18 +7,29 @@ import { AI_MODELS, DEFAULT_MODEL, streamChat, PROVIDERS, GROQ_MODELS, GROQ_DEFA
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
 import { initPlus, reloadPlus, PLUS_VIEWS, PLUS_NEW_LABEL, renderPlus, plusNewAction, plusToday, plusCounts, newReview, toggleReview, renderBoard, renderMatrix } from './plus.js';
-import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette } from './perf.js';
+import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette, openBookOrNew, newGrade } from './perf.js';
+import { initGoals, reloadGoals, GOAL_VIEWS, renderGoals, goalsToday, goalsCount, newGoal } from './goals.js';
+import { initQuiz, reloadQuiz, QUIZ_VIEWS, renderQuiz, leaveQuiz } from './quiz.js';
+import { initNav, SECTIONS, sectionOf, sidebarHTML, updateBottomBar, renderMap, quickAdd, addTip, tour } from './nav.js';
 
-// Todas as telas da central de produtividade
-const HUB_VIEWS = { ...HUB_ONLY, ...PLUS_VIEWS, ...PERF_VIEWS };
-const HUB_NEW_LABEL = { ...HUB_LABELS, ...PLUS_NEW_LABEL, ...PERF_NEW_LABEL };
-const renderHub = (kind, el) => (PERF_VIEWS[kind] ? (leaveHub(), renderPerf(kind, el))
-  : PLUS_VIEWS[kind] ? (leaveHub(), renderPlus(kind, el)) : renderHubView(kind, el));
-const hubNewAction = kind => (PERF_VIEWS[kind] ? perfNewAction(kind) : PLUS_VIEWS[kind] ? plusNewAction(kind) : hubNew(kind));
-// cartões extras do painel Hoje (aulas, revisões, diário, provas, leitura, atalhos)
+// Registro único de todas as telas da central: título, ícone, como desenhar e o botão "novo"
+const VIEW_REG = {};
+const reg = (views, render, labels = {}, action = () => {}, isHub = false) => {
+  for (const [k, v] of Object.entries(views)) VIEW_REG[k] = { ...v, render: el => render(k, el), newLabel: labels[k], newAction: () => action(k), isHub };
+};
+reg(HUB_ONLY, (k, el) => renderHubView(k, el), HUB_LABELS, k => hubNew(k), true);
+reg(PLUS_VIEWS, (k, el) => renderPlus(k, el), PLUS_NEW_LABEL, k => plusNewAction(k));
+reg(PERF_VIEWS, (k, el) => renderPerf(k, el), PERF_NEW_LABEL, k => perfNewAction(k));
+reg(GOAL_VIEWS, (k, el) => renderGoals(el), { goals: 'Nova meta' }, () => newGoal());
+reg(QUIZ_VIEWS, (k, el) => renderQuiz(el), {}, () => {});
+reg({ map: { title: 'Tudo', icon: 'grid' } }, (k, el) => renderMap(el));
+const HUB_VIEWS = VIEW_REG;
+const renderHub = (kind, el) => { if (!VIEW_REG[kind].isHub) leaveHub(); if (kind !== 'quiz') leaveQuiz(); VIEW_REG[kind].render(el); };
+const hubNewAction = kind => VIEW_REG[kind].newAction();
+// cartões extras do painel Hoje (aulas, revisões, metas, diário, provas, leitura, atalhos)
 const todayCards = {
-  html: () => plusToday.html() + extraToday.html(),
-  bind: el => { plusToday.bind(el); extraToday.bind(el); },
+  html: () => plusToday.html() + goalsToday.html() + extraToday.html(),
+  bind: el => { plusToday.bind(el); goalsToday.bind(el); extraToday.bind(el); },
 };
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
 import { LANGS } from './recognize.js';
@@ -35,7 +46,16 @@ const state = {
 
 // =================== Inicialização ===================
 let appReady = false;
+// Aparência: tema e tamanho do texto
+function applyLook() {
+  const r = document.documentElement;
+  if (settings.theme === 'light' || settings.theme === 'dark') r.dataset.theme = settings.theme; else delete r.dataset.theme;
+  r.style.setProperty('--ui-zoom', String(settings.uiScale || 1));
+  const dark = settings.theme === 'dark' || (settings.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', dark ? '#1e2126' : '#1f6feb');
+}
 async function init() {
+  applyLook();
   fillIcons();
   initEditor({
     onClose: () => history.state && history.state.editor ? history.back() : closeNote(),
@@ -69,13 +89,28 @@ async function init() {
     importPdf: () => pickImport('library'),
     settings: settingsDialog,
     extraToday: todayCards, levelBadge, examsOn, createNote,
+    // navegação
+    go: k => { if (editorIsOpen()) history.back(); setView(k === 'notes' ? { kind: 'notes', filter: 'all' } : { kind: k }); },
+    counts: navCounts,
+    quick: quickAction,
+    contextNew: () => {
+      const k = state.view.kind;
+      const label = HUB_VIEWS[k] ? HUB_VIEWS[k].newLabel : k === 'tasks' ? 'Nova tarefa' : 'Nova anotação';
+      if (!label || k === 'focus' || k === 'today') return null;
+      return { label, where: viewTitle(), run: () => $('btn-new').click() };
+    },
+    afterTour: () => { if (!aiReadyAny()) toast('Dica: ligue a IA em Ajustes → Inteligência artificial', 4000); },
   };
+  initNav(api);
   await initHub(api);
   await initPerf(api);
   await initPlus(api);
+  await initGoals(api);
+  await initQuiz(api);
   appReady = true;
   routeFromURL();
   render();
+  setTimeout(() => tour(false), 600);
   $('btn-palette').onclick = openPalette;
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
@@ -87,7 +122,8 @@ async function init() {
 
 function fillIcons() {
   $('btn-new-folder').innerHTML = ic('plus');
-  $('btn-settings').innerHTML = `${ic('settings')}<span>Ajustes e backup</span>`;
+  $('btn-settings').innerHTML = `${ic('settings')}<span>Ajustes, IA e backup</span>`;
+  $('btn-map').innerHTML = `${ic('grid')}<span>Tudo e ajuda</span>`;
   $('btn-menu').innerHTML = ic('menu');
   $('btn-palette').innerHTML = ic('search');
   $('btn-new').innerHTML = `${ic('plus')}<span>Nova anotação</span>`;
@@ -153,6 +189,7 @@ function bindLibrary() {
   $('btn-new').onclick = () => (HUB_VIEWS[state.view.kind] ? hubNewAction(state.view.kind) : state.view.kind === 'tasks' ? taskDialog({}) : newNoteDialog());
   $('btn-new-folder').onclick = newFolder;
   $('btn-settings').onclick = settingsDialog;
+  $('btn-map').onclick = () => setView({ kind: 'map' });
   $('btn-menu').onclick = () => document.body.classList.toggle('side-open');
   $('scrim').onclick = () => document.body.classList.remove('side-open');
   $('search').oninput = e => { state.search = e.target.value.trim().toLowerCase(); renderMain(); };
@@ -279,8 +316,35 @@ async function createTasksFromAI(titles, meta) {
   return n;
 }
 
+// números que aparecem ao lado de cada item do menu
+function navCounts() {
+  const hc = hubCounts(), pc = perfCounts(), xc = plusCounts();
+  return {
+    tasks: state.tasks.filter(t => !t.done).length, cards: hc.cards, habits: hc.habits, grades: pc.exams,
+    notes: state.notes.length, goals: goalsCount(), running: hc.running, today: xc.review,
+  };
+}
+const aiReadyAny = () => !!(settings.geminiKey || settings.aiKey || settings.groqKey);
+
+// Botão + : cria qualquer coisa
+async function quickAction(k) {
+  const go = kind => { if (state.view.kind !== kind) setView({ kind }); };
+  if (k === 'note') newNoteDialog();
+  else if (k === 'task') taskDialog({});
+  else if (k === 'focus') { startFocus(); go('focus'); }
+  else if (k === 'card') { go('cards'); setTimeout(() => toast('Escolha um baralho em “Ver cartas” e adicione a carta', 3500), 300); }
+  else if (k === 'quiz') go('quiz');
+  else if (k === 'reading') openBookOrNew();
+  else if (k === 'grade') newGrade();
+  else if (k === 'journal') { go('journal'); setTimeout(() => document.getElementById('jr-learned')?.focus(), 300); }
+  else if (k === 'goal') newGoal();
+  else if (k === 'class') { go('schedule'); hubNewAction('schedule'); }
+  else if (k === 'pdf') pickImport('library');
+  else if (k === 'search') openPalette();
+}
+
 function setView(v) {
-  if (!HUB_VIEWS[v.kind]) leaveHub();
+  if (!HUB_VIEWS[v.kind]) { leaveHub(); leaveQuiz(); }
   state.view = v;
   document.body.classList.remove('side-open');
   render();
@@ -293,31 +357,18 @@ function render() { renderSidebar(); renderMain(); }
 
 function renderSidebar() {
   const v = state.view;
-  const pending = state.tasks.filter(t => !t.done).length;
   const count = f => state.notes.filter(f).length;
   const item = (key, icon, label, n, active) =>
     `<button class="nav-item ${active ? 'active' : ''}" data-k="${key}">${ic(icon)}<span>${esc(label)}</span>${n ? `<em>${n}</em>` : ''}</button>`;
-  const hc = hubCounts(), pc = perfCounts(), xc = plusCounts();
-  $('nav-main').innerHTML =
-    item('today', 'home', 'Hoje', 0, v.kind === 'today') +
-    item('calendar', 'calendar', 'Agenda', 0, v.kind === 'calendar') +
-    item('schedule', 'clock', 'Horário de aulas', 0, v.kind === 'schedule') +
-    item('tasks', 'tasks', 'Tarefas', pending, v.kind === 'tasks') +
-    item('focus', 'timer', hc.running ? 'Foco (rodando)' : 'Foco', 0, v.kind === 'focus') +
-    item('cards', 'cards', 'Flashcards', hc.cards, v.kind === 'cards') +
-    item('habits', 'flame', 'Hábitos', hc.habits, v.kind === 'habits') +
-    item('journal', 'journal', 'Diário', 0, v.kind === 'journal') +
-    item('reading', 'bookOpen', 'Leitura', 0, v.kind === 'reading') +
-    item('grades', 'award', 'Notas e provas', pc.exams, v.kind === 'grades') +
-    item('report', 'chart', 'Relatório', 0, v.kind === 'report') +
-    '<div class="nav-title"><span>Caderno</span></div>' +
-    item('all', 'book', 'Todas as anotações', state.notes.length, v.kind === 'notes' && v.filter === 'all') +
-    (xc.review ? item('today', 'repeat', `Revisar hoje (${xc.review})`, 0, false) : '') +
+  const xc = plusCounts();
+  $('nav-main').innerHTML = sidebarHTML(v.kind === 'notes' ? (v.filter === 'all' ? 'notes' : '') : v.kind, navCounts(),
     item('fav', 'star', 'Favoritas', count(n => n.fav), v.kind === 'notes' && v.filter === 'fav') +
-    item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none');
+    item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none') +
+    (xc.review ? item('review', 'repeat', `Revisar hoje (${xc.review})`, 0, false) : ''));
   $('nav-main').onclick = e => {
     const b = e.target.closest('[data-k]'); if (!b) return;
-    if (b.dataset.k === 'tasks' || HUB_VIEWS[b.dataset.k]) setView({ kind: b.dataset.k });
+    if (b.dataset.k === 'review') setView({ kind: 'today' });
+    else if (b.dataset.k === 'tasks' || HUB_VIEWS[b.dataset.k]) setView({ kind: b.dataset.k });
     else setView({ kind: 'notes', filter: b.dataset.k });
   };
   $('nav-folders').innerHTML = state.folders.map(f => `
@@ -338,7 +389,7 @@ function viewTitle() {
   const v = state.view;
   if (v.kind === 'tasks') return 'Tarefas';
   if (HUB_VIEWS[v.kind]) return HUB_VIEWS[v.kind].title;
-  if (v.filter === 'all') return 'Todas as anotações';
+  if (v.filter === 'all') return 'Caderno';
   if (v.filter === 'fav') return 'Favoritas';
   if (v.filter === 'none') return 'Sem pasta';
   return folderName(v.filter) || 'Pasta';
@@ -348,16 +399,24 @@ function renderMain() {
   const kind = state.view.kind;
   const isTasks = kind === 'tasks', isHub = !!HUB_VIEWS[kind];
   $('view-title').textContent = viewTitle();
+  // nome da área (Planejar / Estudar / Acompanhar) acima do título, para saber onde está
+  const sec = sectionOf(kind === 'notes' ? 'notes' : kind);
+  $('view-section').textContent = sec ? `${sec.emoji} ${sec.title}` : kind === 'notes' ? '📚 Estudar · Caderno' : '';
+  updateBottomBar(kind);
   $('view-notes').hidden = isTasks || isHub;
   $('view-tasks').hidden = !isTasks;
   $('view-hub').hidden = !isHub;
   $('sort').hidden = isTasks || isHub;
   document.querySelector('.search').hidden = isHub;
-  $('btn-import').hidden = isHub;
-  $('btn-new').hidden = kind === 'focus';
-  $('btn-new').querySelector('span').textContent = isHub ? HUB_NEW_LABEL[kind] : isTasks ? 'Nova tarefa' : 'Nova anotação';
-  if (isHub) renderHub(kind, $('view-hub'));
+  $('btn-import').hidden = isHub || isTasks;
+  const label = isHub ? VIEW_REG[kind].newLabel : isTasks ? 'Nova tarefa' : 'Nova anotação';
+  $('btn-new').hidden = !label || kind === 'focus';
+  if (label) $('btn-new').querySelector('span').textContent = label;
+  const el = isHub ? $('view-hub') : isTasks ? $('view-tasks') : $('view-notes');
+  el.querySelector(':scope > .view-tip')?.remove();
+  if (isHub) renderHub(kind, el);
   else if (isTasks) renderTasks(); else renderNotes();
+  addTip(el, kind === 'notes' && state.view.filter !== 'all' ? '' : kind);
 }
 
 function fmtDate(ts) {
@@ -863,6 +922,12 @@ async function settingsDialog() {
   const est = await navigator.storage?.estimate?.().catch(() => null);
   const persisted = await navigator.storage?.persisted?.().catch(() => false);
   const body = h(`<div class="settings">
+    <label class="lbl">Aparência</label>
+    <div class="row wrap">
+      <div class="seg" id="s-theme">${[['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Escuro']].map(([k, l]) => `<button type="button" data-t="${k}" class="${(settings.theme || 'auto') === k ? 'active' : ''}">${l}</button>`).join('')}</div>
+      <div class="seg" id="s-scale">${[[1, 'Texto normal'], [1.1, 'Grande'], [1.2, 'Maior']].map(([k, l]) => `<button type="button" data-z="${k}" class="${(settings.uiScale || 1) === k ? 'active' : ''}">${l}</button>`).join('')}</div>
+    </div>
+    <hr>
     <label class="switch"><input type="checkbox" id="s-finger" ${settings.fingerDraw ? 'checked' : ''}>
       <span><b>Desenhar com o dedo</b><small>Desligue ao usar a Redmi Smart Pen: o dedo passa a só mover e dar zoom (evita marcas da mão).</small></span></label>
     <label class="switch"><input type="checkbox" id="s-shapes" ${settings.shapes ? 'checked' : ''}>
@@ -938,6 +1003,16 @@ async function settingsDialog() {
     </details>
   </div>`);
   body.querySelector('#s-export').onclick = exportBackup;
+  body.querySelector('#s-theme').onclick = e => {
+    const b = e.target.closest('[data-t]'); if (!b) return;
+    settings.theme = b.dataset.t; saveSettings(); applyLook();
+    body.querySelectorAll('#s-theme button').forEach(x => x.classList.toggle('active', x === b));
+  };
+  body.querySelector('#s-scale').onclick = e => {
+    const b = e.target.closest('[data-z]'); if (!b) return;
+    settings.uiScale = +b.dataset.z; saveSettings(); applyLook();
+    body.querySelectorAll('#s-scale button').forEach(x => x.classList.toggle('active', x === b));
+  };
   const readAI = () => {
     settings.aiKey = body.querySelector('#s-aikey').value.trim();
     settings.aiModel = body.querySelector('#s-aimodel').value;
@@ -1005,6 +1080,8 @@ $('backup-input').addEventListener('change', async e => {
     await reloadHub();
     await reloadPerf();
     await reloadPlus();
+    await reloadGoals();
+    await reloadQuiz();
     document.querySelector('.modal-back')?._close?.(true);
     render();
     toast('Backup restaurado ✓');

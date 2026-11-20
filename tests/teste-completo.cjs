@@ -99,6 +99,11 @@ async function mocks(c) {
     const txt = typeof last.content === 'string' ? last.content : last.content.filter(b => b.type === 'text').map(b => b.text).join(' ');
     let reply;
     if (/Responda apenas/.test(txt)) reply = 'Tudo certo!';
+    else if (/simulado com/i.test(txt)) reply = '```json\n' + JSON.stringify([
+      { pergunta: 'Quanto é 1/2 + 1/2?', alternativas: ['1/4', '1', '2', '1/2'], correta: 1, explicacao: 'Meio mais meio dá um inteiro.' },
+      { pergunta: 'O que o denominador indica?', alternativas: ['Partes pegas', 'Partes do inteiro', 'O resultado', 'Nada'], correta: 1, explicacao: 'Em quantas partes o inteiro foi dividido.' },
+      { pergunta: '3/4 é maior que 1/2?', alternativas: ['Sim', 'Não', 'São iguais', 'Depende'], correta: 0, explicacao: '3/4 = 0,75 e 1/2 = 0,5.' },
+    ]) + '\n```';
     else if (/plano de estudo|Analise minha semana/i.test(txt)) reply = '# Análise\n- Você estudou bem.\n\n# Tarefas\n- Revisar frações\n- Fazer simulado de matemática\n';
     else if (/flashcards/i.test(txt)) reply = 'P: Quanto é 3/4 + 1/4?\nR: 1\n\nP: O que é o denominador?\nR: O número de baixo da fração.\n\nP: 1/2 equivale a quantos quartos?\nR: 2/4';
     else if (/plano de estudo|Analise minha semana/i.test(txt)) reply = '# Análise\n- Você estudou bem.\n\n# Tarefas\n- Revisar frações\n- Fazer simulado de matemática\n';
@@ -147,7 +152,11 @@ async function geminiMock(c) {
     if (/models\/gemini-modelo-desligado:/.test(r.request().url())) return r.fulfill({ status: 404, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 404, message: 'This model is no longer available to new users.', status: 'NOT_FOUND' } }) });
     if (gemMode === '429') return r.fulfill({ status: 429, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED' } }) });
     const first = body.contents[0].parts.filter(p => p.text).map(p => p.text).join(' ');
-    const reply = /Responda apenas/.test(first) ? 'Tudo certo!' : '# Resumo pelo Gemini\n- Frações são partes de um inteiro.';
+    const reply = /Responda apenas/.test(first) ? 'Tudo certo!' : /simulado com/i.test(first) ? JSON.stringify([
+      { pergunta: 'Quanto é 1/2 + 1/2?', alternativas: ['1/4', '1', '2', '1/2'], correta: 1, explicacao: 'Meio mais meio dá um inteiro.' },
+      { pergunta: 'O que o denominador indica?', alternativas: ['Partes pegas', 'Partes do inteiro', 'O resultado', 'Nada'], correta: 1, explicacao: 'Em quantas partes o inteiro foi dividido.' },
+      { pergunta: '3/4 é maior que 1/2?', alternativas: ['Sim', 'Não', 'São iguais', 'Depende'], correta: 0, explicacao: '3/4 = 0,75 e 1/2 = 0,5.' },
+    ]) : '# Resumo pelo Gemini\n- Frações são partes de um inteiro.';
     let sse = `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'pensando…', thought: true }] } }] })}\r\n\r\n`;
     for (const ch of reply.match(/[\s\S]{1,10}/g)) sse += `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: ch }] } }], modelVersion: 'gemini-x' })}\r\n\r\n`;
     sse += `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: '' }] }, finishReason: 'STOP' }] })}\r\n\r\n`;
@@ -166,6 +175,7 @@ function watch(p) {
   browser = await chromium.launch();
   ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write'] });
   await mocks(ctx);
+  await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
   await groqMock(ctx);
   await geminiMock(ctx);
   page = await ctx.newPage();
@@ -541,11 +551,12 @@ function watch(p) {
     await page.click('#s-export'); const d = await dl; backupFile = path.join(OUT, 'backup.json'); await d.saveAs(backupFile);
     await closeModals();
     const data = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
-    for (const s of ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal']) assert(Array.isArray(data[s]), 'faltou ' + s);
+    for (const s of ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes']) assert(Array.isArray(data[s]), 'faltou ' + s);
     assert(data.books.length === 1 && data.grades.length === 2, 'dados incompletos');
   });
   await step('restaura backup num tablet "novo"', async () => {
     const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
     const p2 = await c2.newPage(); watch(p2);
     await p2.goto(base); await p2.waitForTimeout(1200);
     await p2.click('#btn-settings'); await p2.waitForSelector('.modal h2:has-text("Ajustes")'); await p2.setInputFiles('#backup-input', backupFile); await p2.waitForSelector('.modal h2:has-text("Restaurar backup")');
@@ -569,7 +580,7 @@ function watch(p) {
   await step('nenhuma tela passa da largura no tablet em pé (800px)', async () => {
     await page.setViewportSize({ width: 800, height: 1280 });
     const bad = [];
-    for (const k of ['today', 'calendar', 'schedule', 'tasks', 'focus', 'cards', 'habits', 'journal', 'reading', 'grades', 'report', 'all']) {
+    for (const k of ['today', 'calendar', 'schedule', 'goals', 'tasks', 'focus', 'cards', 'quiz', 'habits', 'journal', 'reading', 'grades', 'report', 'all']) {
       await page.evaluate(k => { document.body.classList.remove('side-open'); document.querySelector(`#nav-main [data-k=${k}]`).click(); }, k); await wait(250);
       const over = await page.evaluate(() => Math.max(...[...document.querySelectorAll('#main *')].map(e => e.getBoundingClientRect().right)) - window.innerWidth);
       if (over > 2) bad.push(`${k} (+${Math.round(over)}px)`);
@@ -660,6 +671,141 @@ function watch(p) {
     await page.click('#jr-task'); await wait(400);
     assert((await idb('tasks')).some(t => t.title === 'Revisar: Divisão de frações'), 'tarefa de revisão não criada');
     await page.click('#jr-ai'); await page.waitForFunction(() => /Resumo/.test(document.getElementById('jr-out')?.textContent || ''), null, { timeout: 8000 });
+  });
+
+  // ================= NAVEGAÇÃO E NOVIDADES =================
+  console.log('Navegação clara, prioridades, cronômetro, metas, simulado e aparência');
+  await step('Tour de boas-vindas aparece na primeira visita e pode ser concluído', async () => {
+    const c3 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const p3 = await c3.newPage(); watch(p3);
+    await p3.goto(base); await p3.waitForSelector('.tour', { timeout: 5000 });
+    for (let i = 0; i < 4; i++) { await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(150); }
+    assert(await p3.textContent('.modal-actions .btn.primary') === 'Começar', 'último passo');
+    await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(400);
+    assert(await p3.locator('.tour').count() === 0, 'tour não fechou');
+    await p3.reload(); await p3.waitForTimeout(1500);
+    assert(await p3.locator('.tour').count() === 0, 'tour apareceu de novo');
+    await c3.close();
+  });
+  await step('Menu lateral em 3 áreas com todos os recursos', async () => {
+    await nav('today');
+    const secs = await page.locator('#nav-main .nav-sec-h').allTextContents();
+    assert(['Planejar', 'Estudar', 'Acompanhar', 'Caderno'].every(x => secs.includes(x)), 'áreas: ' + secs.join(','));
+    for (const k of ['today', 'tasks', 'calendar', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
+    assert((await page.textContent('#view-section')).includes('Planejar'), 'nome da área no topo');
+  });
+  await step('Tela "Tudo" mostra cada recurso e abre ao tocar', async () => {
+    await page.click('#btn-map'); await wait(300);
+    assert(await page.locator('.map-card').count() === 14, 'cartões: ' + await page.locator('.map-card').count());
+    await page.click('.map-card[data-go=goals]'); await wait(300);
+    assert(await page.textContent('#view-title') === 'Metas', 'não abriu Metas');
+  });
+  await step('Dica do topo some ao tocar em "Entendi" e não volta', async () => {
+    await nav('habits');
+    assert(await page.locator('#view-hub > .view-tip').count() === 1, 'dica não apareceu');
+    await page.click('#view-hub > .view-tip button'); await wait(200);
+    await nav('today'); await nav('habits');
+    assert(await page.locator('#view-hub > .view-tip').count() === 0, 'dica voltou');
+  });
+  await step('Botão + cria qualquer coisa e mostra a ação da tela atual', async () => {
+    await nav('goals');
+    await page.click('#fab'); await wait(300);
+    assert(await page.locator('.quick').count() === 12, 'ações rápidas');
+    assert((await page.textContent('.quick-ctx')).includes('Nova meta'), 'ação da tela');
+    await page.click('.quick[data-q=task]'); await wait(300);
+    assert(await page.locator('#t-title').count() === 1, 'não abriu nova tarefa');
+    await closeModals();
+  });
+  await step('Tablet em pé: barra de baixo e "Mais" com todas as partes', async () => {
+    await page.setViewportSize({ width: 800, height: 1280 });
+    assert(await page.locator('#bottom-bar').isVisible(), 'barra de baixo invisível');
+    await page.click('#bottom-bar [data-bk=tasks]'); await wait(300);
+    assert(await page.textContent('#view-title') === 'Tarefas', 'barra não navegou');
+    await page.click('#bottom-bar [data-bk=more]'); await wait(300);
+    assert(await page.locator('.more-sheet .map-card').count() === 14, 'Mais incompleto');
+    await page.click('.more-sheet .map-card[data-go=report]'); await wait(400);
+    assert(await page.textContent('#view-title') === 'Relatório', 'Mais não navegou');
+    assert(!(await page.locator('#btn-new').isVisible()), 'botão + duplicado no topo');
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
+  await step('Prioridades de hoje: estrela, limite de 3 e lista no topo', async () => {
+    for (const t of ['P1', 'P2', 'P3', 'P4']) await page.evaluate(async t => {
+      const st = await import('./js/store.js');
+      await st.db.put('tasks', { id: 'top-' + t, title: t, done: false, due: new Date().toISOString().slice(0, 10), prio: 2, createdAt: Date.now() });
+    }, t);
+    await page.reload(); await wait(1500);
+    for (const t of ['P1', 'P2', 'P3', 'P4']) { await page.click(`.t-tasks [data-top="top-${t}"]`); await wait(250); }
+    await toastHas('no máximo 3');
+    const tops = (await idb('tasks')).filter(t => t.top === new Date().toISOString().slice(0, 10)).map(t => t.title).sort();
+    assert(JSON.stringify(tops) === '["P1","P2","P3"]', 'prioridades: ' + tops);
+    assert((await page.textContent('.top3')).includes('0 de 3 feitas'), 'contador das prioridades');
+  });
+  await step('Cronômetro livre: conta, pausa e salva o tempo estudado', async () => {
+    await nav('focus');
+    await page.click('#fc-mode [data-m=free]'); await wait(200);
+    await page.click('#fc-start'); await wait(2200);
+    const t1 = await page.textContent('#fc-time');
+    assert(/00:0[1-3]/.test(t1), 'não contou: ' + t1);
+    await page.click('#fc-start'); await wait(200);
+    const s0 = (await idb('sessions')).length;
+    await page.evaluate(() => { const t = JSON.parse(localStorage.getItem('caderno-foco')); t.freeAcc = 125; localStorage.setItem('caderno-foco', JSON.stringify(t)); });
+    await page.reload(); await wait(1300); await nav('focus');
+    assert((await page.textContent('#fc-time')) === '02:05', 'tempo não continuou após reabrir');
+    await page.click('#fc-stop'); await wait(400);
+    const ss = await idb('sessions');
+    assert(ss.length === s0 + 1 && ss[ss.length - 1].minutes === 2, 'sessão do cronômetro');
+    await page.click('#fc-mode [data-m=focus]');
+  });
+  await step('Metas: progresso automático (foco) e contador manual', async () => {
+    await nav('goals');
+    await page.click('#btn-new'); await page.selectOption('#gl-type', 'focus'); await page.fill('#gl-title', 'Estudar 10 horas'); await page.fill('#gl-target', '10'); await page.check('#gl-past');
+    await page.click('.modal .btn.primary'); await wait(400);
+    const focusMin = (await idb('sessions')).reduce((a, x) => a + x.minutes, 0);
+    const txt = await page.textContent('.goal-card:has-text("Estudar 10 horas")');
+    const expect = (Math.round(focusMin / 60 * 10) / 10).toLocaleString('pt-BR');
+    assert(txt.includes(expect) && txt.includes('de 10 h'), `progresso: ${txt.slice(0, 80)} (esperado ${expect})`);
+    await page.click('#btn-new'); await page.selectOption('#gl-type', 'manual'); await page.fill('#gl-title', 'Fazer 2 simulados'); await page.fill('#gl-target', '2');
+    await page.click('.modal .btn.primary'); await wait(300);
+    await page.click('.goal-card:has-text("Fazer 2 simulados") [data-inc]'); await wait(300);
+    await page.click('.goal-card:has-text("Fazer 2 simulados") [data-inc]'); await wait(300);
+    await toastHas('Meta concluída');
+    assert((await idb('goals')).find(g => g.title === 'Fazer 2 simulados').count === 2, 'contador manual');
+    await nav('today');
+    assert(await page.locator('.t-goals').count() === 1, 'metas não aparecem no Hoje');
+  });
+  await step('Simulado: IA cria a prova, responde, corrige, lança nota e cria flashcards dos erros', async () => {
+    await nav('quiz');
+    await page.selectOption('#qz-src', { label: 'Frações e decimais' });
+    await page.click('#qz-go');
+    await page.waitForSelector('.qz-opt', { timeout: 10000 });
+    assert((await page.textContent('.qz-q h2')).includes('1/2 + 1/2'), 'pergunta');
+    await page.click('.qz-opt[data-o="1"]'); await wait(150);
+    assert(await page.locator('.qz-opt.right').count() === 1 && (await page.textContent('.qz-ex')).includes('Certo'), 'correção');
+    await page.click('#qz-next'); await page.click('.qz-opt[data-o="0"]'); await page.click('#qz-next');
+    await page.click('.qz-opt[data-o="0"]'); await page.click('#qz-next'); await wait(400);
+    assert((await page.textContent('.qz-score')).trim() === '67%', 'nota: ' + await page.textContent('.qz-score'));
+    await page.click('#qz-grade'); await wait(300);
+    assert((await idb('grades')).some(g => g.title === 'Simulado — Frações e decimais' && Math.abs(g.score - 6.7) < 0.01), 'nota não lançada');
+    await page.click('#qz-cards'); await wait(300);
+    assert((await idb('decks')).some(d => d.name === 'Erros — Frações e decimais'), 'flashcards dos erros');
+    assert((await idb('quizzes')).length === 1, 'histórico');
+    await page.click('#qz-new'); await wait(300);
+    assert((await page.textContent('.qz-hist')).includes('2/3'), 'histórico na tela');
+  });
+  await step('Aparência: tema escuro e texto maior', async () => {
+    await page.click('#btn-settings'); await page.click('#s-theme [data-t=dark]'); await page.click('#s-scale [data-z="1.2"]');
+    await page.click('.modal-actions .btn.primary'); await wait(300);
+    const st = await page.evaluate(() => ({ t: document.documentElement.dataset.theme, z: getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom').trim(), bg: getComputedStyle(document.body).backgroundColor }));
+    assert(st.t === 'dark' && st.z === '1.2' && st.bg === 'rgb(21, 23, 27)', JSON.stringify(st));
+    await page.setViewportSize({ width: 800, height: 1280 });
+    for (const k of ['today', 'goals', 'quiz', 'report']) {
+      await page.evaluate(k => { document.body.classList.remove('side-open'); document.querySelector(`#nav-main [data-k=${k}]`).click(); }, k); await wait(250);
+      const over = await page.evaluate(() => document.querySelector('#main').scrollWidth - document.querySelector('#main').clientWidth);
+      assert(over <= 2, `${k} estoura com texto maior (+${over}px)`);
+      await page.screenshot({ path: path.join(OUT, `escuro-grande-${k}.png`) });
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.click('#btn-settings'); await page.click('#s-theme [data-t=auto]'); await page.click('#s-scale [data-z="1"]'); await page.click('.modal-actions .btn.primary'); await wait(200);
   });
 
   // ================= GROQ =================

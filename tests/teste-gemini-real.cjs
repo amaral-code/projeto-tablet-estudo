@@ -122,6 +122,27 @@ function readSSE(raw) {
     ok(`app no navegador com ${label}: resposta em streaming`, r.ok && r.chunks >= 1, r.ok ? `${r.chunks} pedaços, ${r.secs}s` : `${r.err} (${r.secs}s)`);
     if (r.ok) ok(`app no navegador com ${label}: corrigiu "I is" → "I am" e "She are" → "She is"`, /I am/.test(r.text) && /She is/i.test(r.text));
   }
+  // Simulado: a IA precisa devolver as perguntas no formato certo (JSON)
+  const qz = await p2.evaluate(async key => {
+    const ai = await import('./js/ai.js');
+    const st = await import('./js/store.js');
+    const quiz = await import('./js/quiz.js');
+    Object.assign(st.settings, { aiProvider: 'gemini', geminiKey: key, geminiModel: '' });
+    const T = (y, text) => ({ id: 't' + y, x: 110, y, text, size: 30, color: '#1d1d1f' });
+    const pg = { id: 'p', strokes: [], images: [], texts: [T(100, 'Fotossíntese'), T(160, 'Plantas produzem glicose usando luz,'), T(200, 'água e gás carbônico. Libera oxigênio.'), T(260, 'Acontece nos cloroplastos (clorofila).')] };
+    const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Ciências', prompt: quiz.quizPrompt(5, 'medio') });
+    const t0 = performance.now();
+    try {
+      const r = await ai.streamChat([{ role: 'user', content }], () => {}).done;
+      const qs = quiz.parseQuiz(r.text);
+      return { ok: true, n: qs.length, first: qs[0], secs: ((performance.now() - t0) / 1000).toFixed(1) };
+    } catch (e) { return { ok: false, err: e.message }; }
+  }, KEY);
+  ok('simulado: a IA devolveu perguntas válidas', qz.ok && qz.n >= 4, qz.ok ? `${qz.n} perguntas em ${qz.secs}s` : qz.err);
+  if (qz.ok && qz.first) {
+    ok('simulado: pergunta sobre o conteúdo da página', /fotoss|glicose|clorof|oxig|luz|cloroplast/i.test(qz.first.q + qz.first.opts.join(' ')));
+    console.log(`     exemplo: ${qz.first.q}\n       ${qz.first.opts.map((o, i) => (i === qz.first.c ? '✓ ' : '  ') + o).join('\n       ')}`);
+  }
   await b2.close(); srv2.close();
   finish(results);
 })().catch(e => { console.error(e); process.exit(2); });

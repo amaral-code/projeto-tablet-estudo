@@ -4,6 +4,46 @@ Caderno digital para estudar no **REDMI Pad 2** com a Redmi Smart Pen (ou com o 
 
 Funciona como aplicativo instalado (PWA): abre em tela cheia, funciona **sem internet** e guarda tudo no próprio tablet.
 
+## 📲 Abrir e instalar no tablet (sem computador)
+
+Tudo pelo **Google Chrome do tablet**, uma vez só:
+
+1. Abra **github.com/amaral-code/projeto-tablet-estudo** (entre na sua conta do GitHub).
+2. Toque na aba **Settings** (Configurações). Se ela não aparecer, toque em **⋮ → Site para computador** no Chrome.
+3. No menu da esquerda, toque em **Pages**.
+4. Em *Build and deployment*, deixe **Source: Deploy from a branch**. Em **Branch**, escolha **`claude/beautiful-hypatia-qivm75`** e a pasta **`/ (root)`**. Toque em **Save**.
+5. Espere 1 ou 2 minutos e abra **https://amaral-code.github.io/projeto-tablet-estudo/**
+6. No Chrome, toque em **⋮ → Instalar app** (ou **Adicionar à tela inicial**).
+
+Pronto: o ícone **Caderno** aparece na tela inicial e abre em tela cheia. As próximas melhorias enviadas para esse branch entram sozinhas, basta abrir o app com internet.
+
+> Na primeira vez, abra o app com internet para ele ficar guardado e funcionar offline depois. Segure o ícone do app para ver os atalhos: Hoje, Começar foco, Nova anotação e Leitura.
+
+## 🧭 Onde fica cada coisa
+
+O app tem **3 áreas**, sempre no menu da esquerda (tablet deitado) ou em **Mais** na barra de baixo (tablet em pé):
+
+| Área | Telas |
+|---|---|
+| 🗓️ **Planejar** | **Hoje** (seu dia em uma tela) · **Tarefas** (lista, quadro e matriz) · **Agenda** (mês) · **Horário de aulas** · **Metas** |
+| 📚 **Estudar** | **Caderno** (anotações à mão + IA) · **Foco** (Pomodoro e cronômetro) · **Flashcards** · **Simulado** (prova feita pela IA) · **Leitura** (com Kindle) |
+| 📈 **Acompanhar** | **Hábitos** · **Diário** · **Notas e provas** · **Relatório** (semana, conquistas e análise da IA) |
+
+- O botão azul **+** no canto cria qualquer coisa de qualquer tela, e no topo da lista aparece a ação da tela em que você está.
+- A tela **Tudo e ajuda** (no fim do menu) mostra cada recurso com uma frase dizendo para que serve, e tem o **tour** de boas-vindas.
+- Cada tela mostra uma **dica curta** no topo até você tocar em "Entendi".
+- O nome da área aparece acima do título de cada tela, então você sempre sabe onde está.
+
+## 🆕 Novidades desta versão
+
+| Recurso | O que faz |
+|---|---|
+| ⭐ **Prioridades de hoje** | Toque na estrela de até 3 tarefas: elas ficam no topo do painel Hoje, com a contagem de quantas já foram feitas |
+| 🎯 **Metas** | Horas de foco, páginas, livros, flashcards, tarefas, dias de um hábito, média numa matéria ou um contador seu. O progresso é **calculado sozinho**, com o prazo e o ritmo necessário ("44 min por dia", "1 livro a cada 25 dias") |
+| 📝 **Simulado com IA** | Escolha uma anotação ou uma pasta, o número de perguntas e o nível. A IA monta uma prova de múltipla escolha, você responde no app e vê a correção com explicação. A nota pode ir para **Notas e provas**, e os erros viram **flashcards**. **Testado com o Gemini de verdade** |
+| ⏱️ **Cronômetro livre** | No Foco, além do Pomodoro: conte o tempo no seu ritmo e salve quando terminar |
+| 🌗 **Aparência** | Em Ajustes: tema Automático, Claro ou Escuro, e texto Normal, Grande ou Maior |
+
 ## 🚀 Tudo em um: central de produtividade
 
 O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos apps de produtividade:
@@ -17,7 +57,7 @@ O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos 
 | 🔥 **Hábitos** | Marque o que fez em cada dia da semana e acompanhe a sequência de cada hábito |
 | ✅ **Tarefas** | Agora com **repetição** (todo dia, toda semana ou todo mês): ao concluir uma, a próxima é criada sozinha |
 
-## ⚡ Mais produtividade (novo)
+## ⚡ Mais produtividade
 
 | Recurso | O que faz |
 |---|---|
@@ -110,21 +150,6 @@ O modelo padrão é `qwen/qwen3.8-27b`, que **lê imagens** e por isso entende a
 
 **Palma da mão:** quando o app detecta a caneta, o dedo passa a só mover e dar zoom. Assim a mão apoiada na tela não risca. Isso pode ser mudado em *Ajustes*.
 
-## 📲 Como instalar no REDMI Pad 2
-
-O app precisa estar num endereço `https://`. O jeito mais fácil e gratuito é o **GitHub Pages**:
-
-1. No GitHub, junte este branch ao `main` (crie um Pull Request e faça o merge).
-2. Vá em **Settings → Pages**.
-3. Em *Build and deployment*, escolha **Source: Deploy from a branch**, depois **Branch: `main`** e a pasta **`/ (root)`**. Clique em **Save**.
-4. Espere 1 ou 2 minutos. O endereço será algo como `https://SEU-USUARIO.github.io/projeto-tablet-estudo/`.
-5. No tablet, abra esse endereço no **Google Chrome**.
-6. Toque em **⋮ → Adicionar à tela inicial → Instalar**.
-
-Pronto: o ícone **Caderno** aparece na tela inicial e abre em tela cheia, como um app normal.
-
-> Dica: na primeira vez, abra o app com internet para ele ficar guardado e funcionar offline depois.
-
 ## ⚠️ Bom saber
 
 - **A IA precisa de internet e de uma chave da Anthropic.** O uso é cobrado na sua conta da Anthropic, por tamanho de pedido e resposta. Enviar muitas páginas de uma vez custa mais. A chave fica salva só neste tablet e é enviada apenas para a Anthropic. Não use a sua chave num tablet de outra pessoa.
@@ -169,6 +194,9 @@ js/hub.js             Hoje, Foco (Pomodoro), Agenda, Flashcards (repetição esp
 js/perf.js            Leitura/Kindle, Notas e provas, Relatório, Conquistas, Atalhos e Busca rápida
 js/plus.js            Horário de aulas, Diário, Revisão espaçada, Quadro e Matriz de tarefas
 js/sound.js           sons de foco (ruídos gerados no tablet)
+js/nav.js             navegação: menu em 3 áreas, barra de baixo, botão +, tela Tudo, dicas e tour
+js/goals.js           Metas com progresso automático
+js/quiz.js            Simulado com IA (perguntas em JSON, correção e histórico)
 tests/                teste completo automatizado e teste real da Groq
 js/vendor/            SDK oficial da Anthropic (@anthropic-ai/sdk 1.11.0) e pdf.js 6.5.438, embutidos
 js/store.js           banco local (IndexedDB) e configurações

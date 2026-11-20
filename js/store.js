@@ -1,7 +1,7 @@
 // Armazenamento local (IndexedDB) — tudo fica salvo no próprio tablet.
 const DB_NAME = 'caderno-estudos';
-const VERSION = 4;
-const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal'];
+const VERSION = 5;
+const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes'];
 let dbp;
 
 function open() {
@@ -69,6 +69,8 @@ const DEFAULTS = {
   groqModel: 'qwen/qwen3.8-27b',
   geminiKey: '',
   geminiModel: 'gemini-flash-lite-latest',
+  theme: 'auto', // auto | light | dark
+  uiScale: 1, // tamanho do texto da biblioteca
 };
 export const settings = (() => {
   let v = {};

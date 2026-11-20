@@ -667,5 +667,17 @@ export function perfNewAction(kind) {
   if (kind === 'grades') return gradeDialog();
   if (kind === 'report') { const el = document.getElementById('view-hub'); const r = weekRange(reportWeek); return analyzeWeek(el, metrics(r), metrics(weekRange(reportWeek + 1))); }
 }
+// ----- dados para Metas e Simulado -----
+export const perfData = () => P;
+export const subjectAverage = f => subjectStats(f).avg;
+export async function saveGrade(g) {
+  const item = { id: A.uid(), folderId: '', title: '', date: dayStr(), score: null, max: 10, weight: 1, createdAt: Date.now(), ...g };
+  await A.db.put('grades', item);
+  P.grades.push(item);
+  return item;
+}
+export function openBookOrNew() { const b = P.books.find(x => !x.finishedAt); return b ? logReading(b) : bookDialog(); }
+export const newGrade = () => gradeDialog();
+
 // Provas futuras aparecem na Agenda
 export function examsOn(day) { return P.grades.filter(g => g.date === day); }

@@ -65,6 +65,10 @@ export function suggestions(now = new Date()) {
   }
   // diário no fim do dia
   if (hour >= 18 && A.journalMissing && A.journalMissing()) add(32, 'journal', 'Escrever no diário', 'Leva 1 minuto: o que aprendeu e o que foi difícil', 'Escrever', () => A.go('journal'));
+  // proteção dos dados: lembrar de fazer backup (nunca fez, ou o último tem mais de 30 dias)
+  const lastBk = +localStorage.getItem('caderno-ultimo-backup') || 0;
+  const hasData = A.state.notes.length + A.state.tasks.length >= 8;
+  if (hasData && Date.now() - lastBk > 30 * 86400000) add(lastBk ? 34 : 26, 'database', lastBk ? 'Fazer um backup novo' : 'Fazer o primeiro backup', lastBk ? `O último foi há ${Math.floor((Date.now() - lastBk) / 86400000)} dias · guarde no Google Drive` : 'Guarde uma cópia no Google Drive: se o tablet der problema, nada se perde', 'Fazer backup', () => A.go('data'));
   out.sort((a, b) => b.score - a.score);
   if (!out.length) add(1, 'quiz', 'Tudo em dia! 🎉', 'Que tal um simulado rápido para testar o que você sabe?', 'Fazer simulado', () => A.go('quiz'), 'green');
   return out.slice(0, 4);

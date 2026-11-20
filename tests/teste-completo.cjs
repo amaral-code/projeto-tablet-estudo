@@ -1340,7 +1340,7 @@ function watch(p) {
     let qbg = '';
     for (const [w, hh] of [[800, 1280], [1280, 800]]) {
       await page.setViewportSize({ width: w, height: hh }); await wait(250);
-      for (const k of ['today', 'quick', 'tutor', 'data', 'report']) {
+      for (const k of ['today', 'quick', 'tutor', 'data', 'report', 'avisos', 'formulas', 'calendar', 'goals']) {
         await page.evaluate(k => { document.body.classList.remove('side-open'); (k === 'data' ? document.getElementById('btn-data') : document.querySelector(`#nav-main [data-k=${k}]`)).click(); }, k); await wait(400);
         const over = await page.evaluate(() => document.querySelector('#main').scrollWidth - document.querySelector('#main').clientWidth);
         if (over > 2) bad.push(`${k} ${w}px (+${over})`);
@@ -1592,6 +1592,62 @@ function watch(p) {
     await page.keyboard.press('Control+k'); await page.fill('.pal-in input', 'lei de ohm'); await wait(200);
     await page.click('.pal-item:has-text("Fórmula") >> nth=0'); await wait(400);
     assert(await page.textContent('#view-title') === 'Fórmulas' && await page.locator('.fm-card.open[data-fid="ohm"]').count() === 1, 'não abriu a lei de Ohm');
+  });
+
+  // ================= CONFIABILIDADE =================
+  console.log('Confiabilidade: atualização, offline e listas grandes');
+  await step('Offline: todos os arquivos do app (inclusive fontes e telas novas) ficam guardados', async () => {
+    const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+    const listed = new Set([...sw.matchAll(/'((?:js|fonts|icons|css)\/[^']+)'/g)].map(m => m[1]));
+    const missing = [];
+    for (const d of ['js', 'js/vendor', 'fonts', 'css', 'icons']) for (const f of fs.readdirSync(path.join(ROOT, d))) {
+      const rel = `${d}/${f}`;
+      if (fs.statSync(path.join(ROOT, rel)).isFile() && !f.endsWith('.txt') && !listed.has(rel)) missing.push(rel);
+    }
+    assert(!missing.length, 'fora do cache offline: ' + missing.join(', '));
+  });
+  await step('Atualização: quem tinha uma versão antiga do app não perde nada', async () => {
+    const c4 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const p4 = await c4.newPage(); watch(p4);
+    await p4.goto(base + 'icons/icon.svg');
+    await p4.evaluate(() => new Promise((res, rej) => {
+      const old = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings', 'snapshots'];
+      const r = indexedDB.open('caderno-estudos', 6);
+      r.onupgradeneeded = () => { for (const st of old) r.result.createObjectStore(st, { keyPath: 'id' }); };
+      r.onsuccess = () => {
+        const db = r.result, tx = db.transaction(['notes', 'pages', 'tasks', 'cards', 'decks'], 'readwrite');
+        tx.objectStore('notes').put({ id: 'n1', title: 'Anotação antiga', folderId: '', fav: false, createdAt: 1, updatedAt: 2, pageCount: 1, thumb: '' });
+        tx.objectStore('pages').put({ id: 'n1', bg: { type: 'lines', color: 'white' }, pages: [{ id: 'p1', strokes: [], texts: [{ id: 't1', x: 110, y: 100, text: 'Texto antigo', size: 28, color: '#000' }], images: [] }] });
+        for (let i = 0; i < 9; i++) tx.objectStore('tasks').put({ id: 'k' + i, title: 'Tarefa antiga ' + i, done: false, due: '', prio: 2, createdAt: i });
+        tx.objectStore('decks').put({ id: 'd1', name: 'Baralho antigo', createdAt: 1 });
+        tx.objectStore('cards').put({ id: 'c1', deckId: 'd1', front: 'Pergunta', back: 'Resposta', due: '2000-01-01', interval: 0, ease: 2.5, reps: 0, lapses: 0 });
+        tx.oncomplete = () => { db.close(); res(); }; tx.onerror = () => rej(tx.error);
+      };
+    }));
+    await p4.evaluate(() => { localStorage.setItem('caderno-config', JSON.stringify({ aiProvider: 'groq', groqKey: 'x', handFont: 'caveat', geminiKey: 'minha-chave' })); localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-seeded', '1'); localStorage.setItem('caderno-hub-seeded', '1'); });
+    await p4.goto(base); await p4.waitForTimeout(2500);
+    const r = await p4.evaluate(async () => {
+      const st = await import('./js/store.js');
+      const o = {}; for (const x of ['notes', 'pages', 'tasks', 'cards', 'events', 'images']) o[x] = (await st.db.all(x)).length;
+      return { o, cfg: JSON.parse(localStorage.getItem('caderno-config')) };
+    });
+    assert(r.o.notes === 1 && r.o.pages === 1 && r.o.tasks === 9 && r.o.cards === 1 && r.o.events === 0 && r.o.images === 0, 'dados depois de atualizar: ' + JSON.stringify(r.o));
+    assert(r.cfg.geminiKey === 'minha-chave' && !('groqKey' in r.cfg) && r.cfg.handFont === 'auto', 'configuração: ' + JSON.stringify(r.cfg));
+    assert(await p4.locator('.sg:has-text("primeiro backup")').count() === 1, '"O que fazer agora" devia lembrar do backup');
+    await p4.click('#nav-main [data-k=all]'); await p4.click('.card:has-text("Anotação antiga")'); await p4.waitForTimeout(800);
+    assert(await p4.locator('#editor:not([hidden])').count() === 1, 'a anotação antiga não abriu');
+    await c4.close();
+  });
+  await step('Listas grandes: 300 tarefas aparecem em blocos de 200 com "Mostrar mais"', async () => {
+    await page.evaluate(async () => { const st = await import('./js/store.js'); await st.db.bulkPut('tasks', Array.from({ length: 300 }, (_, i) => ({ id: 'muitas-' + i, title: 'Tarefa em massa ' + i, done: false, due: '', prio: 1, createdAt: Date.now() + i }))); });
+    await page.reload(); await wait(1300);
+    await nav('tasks'); await page.click('#task-mode [data-m=list]'); await page.click('#task-filter [data-f=pending]'); await wait(200);
+    const n0 = await page.locator('#task-list .task').count();
+    assert(n0 === 200 && await page.locator('#task-more').isVisible(), 'primeiro bloco: ' + n0);
+    await page.click('#task-more'); await wait(200);
+    assert(await page.locator('#task-list .task').count() > 300, 'Mostrar mais');
+    await page.evaluate(async () => { const st = await import('./js/store.js'); for (let i = 0; i < 300; i++) await st.db.del('tasks', 'muitas-' + i); });
+    await page.reload(); await wait(1200);
   });
 
   await step('nenhum erro de JavaScript em todo o teste', async () => {

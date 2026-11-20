@@ -266,7 +266,7 @@ function bindLibrary() {
   };
   $('task-filter').onclick = e => {
     const b = e.target.closest('[data-f]'); if (!b) return;
-    state.taskFilter = b.dataset.f;
+    state.taskFilter = b.dataset.f; state.taskLimit = 200;
     [...$('task-filter').children].forEach(x => x.classList.toggle('active', x === b));
     renderTasks();
   };
@@ -875,7 +875,9 @@ function renderTasks() {
     return;
   }
   const list = visibleTasks(), t = todayStr();
-  $('task-list').innerHTML = list.map(x => {
+  // listas enormes: mostra em blocos de 200 (a tela continua rápida)
+  const shownN = Math.min(list.length, state.taskLimit || 200);
+  $('task-list').innerHTML = list.slice(0, shownN).map(x => {
     const late = !x.done && x.due && x.due < t;
     const note = x.noteId && noteById(x.noteId);
     return `<div class="task prio-${x.prio} ${x.done ? 'done' : ''}" data-id="${x.id}">
@@ -894,7 +896,8 @@ function renderTasks() {
       </div>
       <button class="icon-btn small" data-del="${x.id}" aria-label="Excluir">${ic('trash')}</button>
     </div>`;
-  }).join('');
+  }).join('') + (list.length > shownN ? `<button class="btn full task-more" id="task-more"><span>Mostrar mais ${Math.min(200, list.length - shownN)} (de ${list.length - shownN} restantes)</span></button>` : '');
+  $('task-more')?.addEventListener('click', () => { state.taskLimit = shownN + 200; renderTasks(); });
   $('tasks-empty').hidden = list.length > 0;
   $('tasks-empty').innerHTML = `${ic('tasks')}<p>${state.taskFilter === 'done' ? 'Nenhuma tarefa concluída.' : 'Nenhuma tarefa aqui. 🎉'}</p>`;
   $('task-list').onclick = async e => {

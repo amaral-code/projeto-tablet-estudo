@@ -1164,3 +1164,5 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 .av-row .switch input { width: 24px; height: 24px; margin-top: 2px; accent-color: var(--ok); flex: none; }
 .av-row .switch small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; line-height: 1.35; }
 .av-row .switch b { font-size: 15px; }
+/* provas no calendário: mesmo formato dos outros itens do dia */
+.cal-cell .cal-t.exam { display: block; border: 0; border-left: 3px solid #7c3aed; border-radius: 4px; padding: 1px 4px; margin: 0; background: rgba(124, 58, 237, .12); box-shadow: none; min-height: 0; font-size: 11px; font-weight: 700; }

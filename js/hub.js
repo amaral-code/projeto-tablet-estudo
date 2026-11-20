@@ -675,9 +675,8 @@ function renderCalendar(el) {
     <div class="cal-side">
     <div class="panel cal-day">
       <h3>${esc(longDate(sel))}</h3>
-      ${A.ev ? `<h4>Eventos</h4><div class="ev-list">${A.ev.eventsOn(sel).map(e => A.ev.eventRow(e)).join('') || '<p class="muted small">Nenhum evento neste dia.</p>'}</div>
-      <button class="btn primary" id="cal-addev">${ic('plus')}<span>Evento neste dia</span></button><h4>Tarefas</h4>` : ''}
-      ${(A.examsOn ? A.examsOn(sel) : []).map(g => `<div class="exam-mini soon"><b>📝</b><span class="grow">${esc(g.title)} <span class="muted small">· ${esc(A.folderName(g.folderId) || 'Geral')}${g.score != null ? ` · nota ${g.score}` : ''}</span></span></div>`).join('')}
+      ${A.ev ? `<h4>Eventos e provas</h4><div class="ev-list">${A.ev.eventsOn(sel).map(e => A.ev.eventRow(e)).join('')}${(A.examsOn ? A.examsOn(sel) : []).map(g => `<div class="exam-mini soon"><b>📝</b><span class="grow">${esc(g.title)} <span class="muted small">· ${esc(A.folderName(g.folderId) || 'Geral')}${g.score != null ? ` · nota ${g.score}` : ''}</span></span></div>`).join('')}${A.ev.eventsOn(sel).length || (A.examsOn ? A.examsOn(sel) : []).length ? '' : '<p class="muted small">Nenhum evento neste dia.</p>'}</div>
+      <button class="btn primary" id="cal-addev">${ic('plus')}<span>Evento neste dia</span></button><h4>Tarefas</h4>` : (A.examsOn ? A.examsOn(sel) : []).map(g => `<div class="exam-mini soon"><b>📝</b><span class="grow">${esc(g.title)}</span></div>`).join('')}
       <div class="mini-tasks">${dayTasks.map(t => miniTask(t)).join('') || '<p class="muted small">Nenhuma tarefa neste dia.</p>'}</div>
       <button class="btn" id="cal-add">${ic('plus')}<span>Tarefa neste dia</span></button>
       ${daySessions.length ? `<h4>Foco</h4>${daySessions.map(s => `<div class="subj-row"><span class="dot" style="background:${s.folderId ? A.folderColor(s.folderId) : '#9aa0a6'}"></span><span class="grow">${esc(s.folderId ? A.folderName(s.folderId) : 'Geral')}</span><b>${fmtMin(s.minutes)}</b></div>`).join('')}` : ''}

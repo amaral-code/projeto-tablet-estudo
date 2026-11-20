@@ -107,7 +107,7 @@ function notify(msg) {
   // No Android, notificações só funcionam pelo service worker
   try {
     if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-      const opts = { body: msg, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'caderno-foco', renotify: true };
+      const opts = { body: msg, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', tag: 'caderno-foco', renotify: true };
       if (navigator.serviceWorker) navigator.serviceWorker.ready.then(r => r.showNotification('Caderno de Estudos', opts)).catch(() => {});
       else new Notification('Caderno de Estudos', opts);
     }

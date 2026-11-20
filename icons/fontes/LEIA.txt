@@ -1,0 +1,3 @@
+Desenhos originais (SVG) dos ícones. Os PNG da pasta icons/ são gerados a partir deles.
+icon.svg (na pasta icons/) é o logo principal; icon-maskable.svg é a versão para o Android recortar em círculo;
+badge.svg é o ícone branco das notificações; sc-*.svg são os ícones dos atalhos (segurar o ícone do app).

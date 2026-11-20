@@ -6,8 +6,8 @@
 // editar, apagar ou mover pelo laço, e a organização é refeita a partir do que sobrou.
 import { uid, textWidth, baselineOffset, LINE0, LINE_STEP, PAGE_W, PAGE_H, MARGIN_L, MARGIN_R, BOTTOM } from './ink.js';
 
-export const FLOW_SIZES = { 24: 'Pequena', 30: 'Média', 36: 'Grande', 44: 'Muito grande (2 linhas)', 60: 'Enorme (2 linhas)' };
-// letras muito grandes ocupam duas pautas, para não atravessar a linha de cima
+export const FLOW_SIZES = { 24: 'Pequena', 30: 'Média', 36: 'Grande', 44: 'Muito grande', 60: 'Enorme' };
+// letras muito grandes (Muito grande e Enorme) ocupam duas pautas, para não atravessar a linha de cima
 export const lineStepFor = size => (size >= 40 ? LINE_STEP * 2 : LINE_STEP);
 export const FLOW_INDENTS = { 0: 'Sem recuo', 40: 'Pequeno', 80: 'Médio', 130: 'Grande' };
 const END = /\.["'”’)]*$/; // ponto final (também ". " seguido de aspas/parênteses)

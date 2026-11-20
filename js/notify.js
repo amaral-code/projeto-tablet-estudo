@@ -38,7 +38,7 @@ async function show(r) {
   if (perm() !== 'granted') return false;
   try {
     const reg = await navigator.serviceWorker?.ready;
-    const opts = { body: r.body, tag: r.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: r.url }, vibrate: [200, 100, 200] };
+    const opts = { body: r.body, tag: r.id, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { url: r.url }, vibrate: [200, 100, 200] };
     if (reg) await reg.showNotification(r.title, opts); else new Notification(r.title, opts);
     return true;
   } catch { return false; }

@@ -1,6 +1,7 @@
 // Navegação: o "mapa" único do app. Menu lateral agrupado, barra inferior (tablet em pé),
 // tela "Tudo", botão + de criação rápida, dicas de cada tela e tour de boas-vindas.
 import { ic, esc, h, modal } from './ui.js';
+import { aiConfigured } from './ai.js';
 
 let A;
 export const SECTIONS = [
@@ -225,11 +226,12 @@ export function addTip(el, kind) {
 
 // Tour de boas-vindas (primeira vez e pela tela Tudo)
 const TOUR = [
-  ['👋', 'Bem-vindo ao seu Caderno de Estudos', 'Tudo para estudar num app só: caderno à mão, tarefas, foco, flashcards, leitura, notas e IA. Funciona sem internet, e tudo fica salvo no tablet.'],
-  ['🗂️', '3 áreas, fácil de achar', '<b>Planejar</b>: Hoje, Tarefas, Agenda, Horário e Metas.<br><b>Estudar</b>: Caderno, Foco, Flashcards, Simulado e Leitura.<br><b>Acompanhar</b>: Hábitos, Diário, Notas e Relatório.'],
-  ['➕', 'O botão + cria qualquer coisa', 'Fica no canto de qualquer tela: anotação, tarefa, foco, flashcard, simulado, nota… Com o tablet em pé, a barra de baixo leva às partes principais, e “Mais” mostra todas.'],
-  ['✍️', 'No caderno', 'Escreva com a caneta. Circule com o laço para <b>corrigir a escrita</b> ou <b>verificar contas</b>. O botão roxo <b>IA</b> resume, explica, cria perguntas e flashcards.'],
-  ['✨', 'Ligue a IA (grátis)', 'Em <b>Ajustes → Inteligência artificial</b>, escolha <b>Gemini</b>, cole a chave criada em aistudio.google.com/apikey e toque em <b>Testar</b>.'],
+  ['logo', 'Bem-vindo ao seu Caderno de Estudos', 'Tudo para estudar num app só: caderno à mão, tarefas, agenda, foco, flashcards, fórmulas e IA. Funciona sem internet, e tudo fica salvo no tablet.'],
+  ['🗂️', '3 áreas, fácil de achar', '<b>Planejar</b>: Hoje, Tarefas, Notas rápidas, Agenda, Avisos, Horário e Metas.<br><b>Estudar</b>: Caderno, Foco, Flashcards, Simulado, Fórmulas, Tutor IA e Leitura.<br><b>Acompanhar</b>: Hábitos, Diário, Notas e provas e Relatório.'],
+  ['➕', 'O botão + cria qualquer coisa', 'Fica no canto de qualquer tela: anotação, tarefa, evento, foco, flashcard, nota… Com o tablet em pé, a barra de baixo leva às partes principais, e “Mais” mostra todas. A 🔍 lá em cima acha qualquer coisa.'],
+  ['✍️', 'No caderno', 'Escreva com a caneta. Em <b>Ao escrever → Organizar nas linhas</b>, sua letra vira texto certinho na pauta (o ponto final começa outro parágrafo). O botão <b>Imagem</b> busca fotos na internet e o roxo <b>IA</b> explica, resume e cria flashcards.'],
+  ['🔔', 'Avisos na hora certa', 'Provas, eventos da agenda, tarefas, aulas e flashcards avisam no tablet, até com o app fechado. Em <b>Avisos</b> você escolhe o que avisar e a que horas.'],
+  ['ai', '', ''],
 ];
 const TOUR_KEY = 'caderno-tour-visto';
 export function tour(force) {
@@ -238,8 +240,11 @@ export function tour(force) {
   let i = 0;
   const body = h('<div class="tour"></div>');
   const draw = () => {
-    const [e, t, d] = TOUR[i];
-    body.innerHTML = `<div class="tour-emoji">${e}</div><h3>${t}</h3><p>${d}</p>
+    let [e, t, d] = TOUR[i];
+    if (e === 'ai') [e, t, d] = aiConfigured()
+      ? ['✨', 'A IA já está ligada', 'Use o <b>Tutor IA</b> para tirar dúvidas (até por foto ou voz) e o botão roxo <b>IA</b> no caderno. Bons estudos!']
+      : ['✨', 'Ligue a IA (grátis)', 'Em <b>Ajustes → Inteligência artificial</b>, cole a chave do Gemini criada em aistudio.google.com/apikey e toque em <b>Testar</b>.'];
+    body.innerHTML = `<div class="tour-emoji">${e === 'logo' ? '<img class="tour-logo" src="icons/icon.svg" alt="">' : e}</div><h3>${t}</h3><p>${d}</p>
       <div class="tour-dots">${TOUR.map((_, j) => `<span class="${j === i ? 'on' : ''}"></span>`).join('')}</div>`;
     const acts = body.closest('.modal')?.querySelectorAll('.modal-actions .btn');
     if (acts) { acts[0].textContent = i ? 'Voltar' : 'Pular'; acts[1].textContent = i === TOUR.length - 1 ? 'Começar' : 'Próximo'; }

@@ -161,7 +161,7 @@ function buildToolbar() {
   };
   // fonte, tamanho e parágrafo da escrita convertida
   $('ed-font').innerHTML = '<option value="auto">✨ Igual à minha</option>'
-    + Object.entries(HAND_FONTS).map(([k, f]) => `<option value="${k}" style="font-family:${f.family}">${f.name} · ${f.desc}</option>`).join('') + '<option value="normal">Digitada</option>';
+    + Object.entries(HAND_FONTS).map(([k, f]) => `<option value="${k}" style="font-family:${f.family}" title="${f.name}">${f.desc[0].toUpperCase() + f.desc.slice(1)}</option>`).join('') + '<option value="normal">Digitada</option>';
   $('ed-fsize').innerHTML = Object.entries(FLOW_SIZES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
   $('ed-para').innerHTML = Object.entries(FLOW_INDENTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
   $('ed-font').onchange = e => { settings.handFont = e.target.value; settings.fontChosen = true; saveSettings(); restyleFlow(true); };

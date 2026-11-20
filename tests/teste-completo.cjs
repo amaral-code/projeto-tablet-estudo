@@ -748,8 +748,10 @@ function watch(p) {
     const c3 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const p3 = await c3.newPage(); watch(p3);
     await p3.goto(base); await p3.waitForSelector('.tour', { timeout: 5000 });
-    for (let i = 0; i < 4; i++) { await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(150); }
+    assert(await p3.locator('.tour .tour-logo').count() === 1, 'o primeiro passo mostra o logo');
+    for (let i = 0; i < 5; i++) { await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(150); }
     assert(await p3.textContent('.modal-actions .btn.primary') === 'Começar', 'último passo');
+    assert(/IA/.test(await p3.textContent('.tour h3')), 'o último passo fala da IA');
     await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(400);
     assert(await p3.locator('.tour').count() === 0, 'tour não fechou');
     await p3.reload(); await p3.waitForTimeout(1500);
@@ -1605,6 +1607,28 @@ function watch(p) {
       if (fs.statSync(path.join(ROOT, rel)).isFile() && !f.endsWith('.txt') && !listed.has(rel)) missing.push(rel);
     }
     assert(!missing.length, 'fora do cache offline: ' + missing.join(', '));
+  });
+  await step('Logo: ícones do app, do Android (recorte redondo), das notificações e dos atalhos', async () => {
+    const man = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.webmanifest'), 'utf8'));
+    const pngSize = f => { const b = fs.readFileSync(path.join(ROOT, f)); return [b.readUInt32BE(16), b.readUInt32BE(20)]; };
+    for (const ic of man.icons) {
+      assert(fs.existsSync(path.join(ROOT, ic.src)), 'falta ' + ic.src);
+      if (ic.type === 'image/png') { const [w, hh] = pngSize(ic.src); assert(ic.sizes === `${w}x${hh}`, `${ic.src} tem ${w}x${hh}, o manifesto diz ${ic.sizes}`); }
+    }
+    for (const pur of ['any', 'maskable', 'monochrome']) assert(man.icons.some(i => i.purpose === pur), 'sem ícone ' + pur);
+    for (const sc of man.shortcuts) assert(sc.icons.every(i => fs.existsSync(path.join(ROOT, i.src))), 'atalho sem ícone: ' + sc.name);
+    // o ícone das notificações tem que ser branco com fundo transparente (o Android pinta só a silhueta)
+    const c5 = await browser.newContext(); const p5 = await c5.newPage();
+    await p5.goto(base + 'icons/badge-96.png');
+    const px = await p5.evaluate(async () => { const im = document.querySelector('img'); await im.decode(); const c = document.createElement('canvas'); c.width = c.height = 96; const x = c.getContext('2d'); x.drawImage(im, 0, 0); const d = x.getImageData(0, 0, 96, 96).data; let clear = 0, white = 0, other = 0; for (let i = 0; i < d.length; i += 4) { if (d[i + 3] < 10) clear++; else if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240) white++; else if (d[i + 3] > 200) other++; } return { clear, white, other }; });
+    assert(px.clear > 2000 && px.white > 1000 && px.other < 50, 'badge não é silhueta branca: ' + JSON.stringify(px));
+    // o recorte redondo do Android não corta o desenho: nada fora do círculo seguro (raio 40%) diferente do fundo
+    await p5.goto(base + 'icons/icon-maskable-512.png');
+    const out = await p5.evaluate(async () => { const im = document.querySelector('img'); await im.decode(); const c = document.createElement('canvas'); c.width = c.height = 512; const x = c.getContext('2d'); x.drawImage(im, 0, 0); const d = x.getImageData(0, 0, 512, 512).data; let bad = 0; for (let y = 0; y < 512; y += 4) for (let xx = 0; xx < 512; xx += 4) { if (Math.hypot(xx - 256, y - 256) < 210) continue; const i = (y * 512 + xx) * 4; if (d[i] > 200 && d[i + 1] > 200) bad++; } return bad; });
+    assert(out === 0, `${out} pontos claros fora da área segura do ícone redondo`);
+    await c5.close();
+    // a tela de abertura some sozinha e nunca bloqueia toques
+    assert(await page.locator('#boot').count() === 0, 'a tela de abertura ficou na frente');
   });
   await step('Atualização: quem tinha uma versão antiga do app não perde nada', async () => {
     const c4 = await browser.newContext({ viewport: { width: 1280, height: 800 } });

@@ -1,10 +1,10 @@
 // Service worker: deixa o app funcionando offline.
-const CACHE = 'caderno-v17';
+const CACHE = 'caderno-v18';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/editor.js', 'js/ink.js', 'js/shapes.js', 'js/recognize.js', 'js/store.js', 'js/export.js', 'js/ui.js',
   'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/plus.js', 'js/sound.js', 'js/nav.js', 'js/goals.js', 'js/quiz.js', 'js/data.js', 'js/voice.js', 'js/quicknotes.js', 'js/tutor.js', 'js/recorder.js', 'js/suggest.js', 'js/events.js', 'js/chave.js', 'js/flow.js', 'js/formulas.js', 'js/imagesearch.js', 'js/notify.js', 'js/avisos-core.js', 'fonts/caveat.woff2', 'fonts/patrick-hand.woff2', 'fonts/indie-flower.woff2', 'fonts/kalam.woff2', 'fonts/shadows-into-light-two.woff2', 'fonts/dancing-script.woff2', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
-  'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
+  'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-192.png', 'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png', 'icons/badge-96.png', 'icons/sc-hoje.png', 'icons/sc-foco.png', 'icons/sc-anotar.png', 'icons/sc-leitura.png',
 ];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
@@ -55,7 +55,7 @@ function lembretes(now = Date.now()) {
         kv.fired = kv.fired || {};
         for (const a of due) {
           try {
-            await self.registration.showNotification(a.title, { body: a.body, tag: a.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: a.url } });
+            await self.registration.showNotification(a.title, { body: a.body, tag: a.id, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { url: a.url } });
             kv.fired[a.id] = now;
           } catch { /* sem permissão */ }
         }

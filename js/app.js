@@ -153,6 +153,7 @@ async function init() {
   appReady = true;
   routeFromURL();
   render();
+  hideBoot();
   setTimeout(() => tour(false), 600);
   $('btn-palette').onclick = openPalette;
   document.addEventListener('keydown', e => {
@@ -1164,7 +1165,10 @@ window.addEventListener('error', e => reportError(e.error || e.message));
 window.addEventListener('unhandledrejection', e => reportError(e.reason));
 document.addEventListener('caderno-db-blocked', () => toast('Feche as outras abas do Caderno para concluir a atualização.', 6000));
 
+function hideBoot() { const b = document.getElementById('boot'); if (!b) return; b.classList.add('gone'); setTimeout(() => b.remove(), 400); }
+
 init().catch(err => {
+  hideBoot();
   reportError(err);
   document.body.insertAdjacentHTML('beforeend', '<div class="fatal"><h2>Não foi possível abrir o Caderno</h2><p>Recarregue a página. Se continuar, verifique se o navegador não está em modo anônimo e se há espaço livre no tablet.</p><button class="btn primary" onclick="location.reload()">Recarregar</button></div>');
 });

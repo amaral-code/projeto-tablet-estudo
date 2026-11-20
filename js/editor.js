@@ -3,9 +3,9 @@
 import {
   PAGE_W, PAGE_H, PAPER_COLORS, PAPER_TYPES, uid, renderPage, drawStroke, makeStroke, strokeHit,
   eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit,
-  setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine, HAND_FONTS, loadHandFonts, LINE0,
+  setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine, HAND_FONTS, loadHandFonts, LINE0, LINE_STEP,
 } from './ink.js';
-import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine } from './flow.js';
+import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine, layoutFlow } from './flow.js';
 import { snapShape } from './shapes.js';
 import { groupLines, recognizeStrokes, checkMath, fmtNum } from './recognize.js';
 import { settings, saveSettings } from './store.js';
@@ -170,7 +170,7 @@ function buildToolbar() {
 export function syncToggles() {
   $('ed-shapes').classList.toggle('on', settings.shapes);
   $('ed-auto').value = settings.autoMode;
-  const conv = settings.autoMode === 'flow' || settings.autoMode === 'text';
+  const conv = settings.autoMode !== 'math'; // fonte e tamanho valem também para o "Corrigir escrita"
   $('ed-flowopts').hidden = !conv;
   $('ed-para-box').hidden = settings.autoMode !== 'flow';
   $('ed-font').value = HAND_FONTS[settings.handFont] ? settings.handFont : 'normal';
@@ -927,14 +927,21 @@ function mainColor(strokes) {
   return [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '#1d1d1f';
 }
 
+// A escrita vira texto do tamanho escolhido no menu, sentado na pauta mais próxima de onde você escreveu
+// (mesmo que a letra à mão tenha saído grande). Se não couber na linha, continua nas pautas de baixo.
 function lineToText(pg, line, text) {
   const ids = new Set(line.strokes.map(s => s.id));
-  const size = Math.round(Math.max(22, Math.min(140, line.h * 0.8)));
   pg.strokes = pg.strokes.filter(s => !ids.has(s.id));
-  pg.texts.push({
-    id: uid(), x: line.x, y: line.y + line.h / 2 - (size * 1.25) / 2, text,
-    color: mainColor(line.strokes), size, font: convFont(),
+  const g = paperGeom(E.content.bg);
+  const base = line.y + line.h * 0.8; // onde fica a "linha de base" da letra à mão
+  const ruleY = Math.max(g.first, g.first + Math.round((base - g.first) / LINE_STEP) * LINE_STEP);
+  const x = Math.max(20, Math.min(line.x, PAGE_W - 200));
+  const { items } = layoutFlow([{ runs: [{ text, color: mainColor(line.strokes) }] }], {
+    font: convFont(), size: +settings.flowSize || 30, indent: Math.max(0, x - g.left), startY: ruleY,
+    geom: { ...g, left: Math.min(g.left, x), bottom: PAGE_H - 30 },
   });
+  // vira texto comum (não entra na escrita organizada)
+  pg.texts.push(...items.map(({ flow, para, ord, ...t }) => t));
 }
 
 async function convertSelection() {

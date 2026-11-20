@@ -1083,3 +1083,27 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 @font-face { font-family: "Dancing Script"; src: url("../fonts/dancing-script.woff2") format("woff2"); font-display: swap; }
 .flow-opts { display: flex; gap: 8px; flex-wrap: wrap; }
 .flow-opts select { max-width: 210px; }
+
+/* ======================= FÓRMULAS ======================= */
+.fm-search { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.fm-search input { font-size: 17px; }
+.fm-areas .chip { flex: none; }
+.fm-list { display: flex; flex-direction: column; gap: 10px; }
+.fm-card { padding: 0; overflow: hidden; }
+.fm-card.open { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.fm-head { display: flex; align-items: center; gap: 14px; width: 100%; border: 0; background: transparent; text-align: left; padding: 14px 16px; flex-wrap: wrap; }
+.fm-head b { display: block; font-size: 16px; }
+.fm-head small { color: var(--muted); font-size: 12.5px; }
+.fm-expr { font-family: "Cambria Math", "STIX Two Math", Georgia, serif; font-size: 20px; font-weight: 600; color: var(--accent); white-space: nowrap; background: var(--accent-soft); padding: 6px 12px; border-radius: 10px; max-width: 100%; overflow-x: auto; }
+.fm-calc { border-top: 1px solid var(--line); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.fm-calc p { margin: 0; }
+.fm-vars { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.fm-var { display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 600; }
+.fm-var em { font-style: normal; font-weight: 500; color: var(--muted); }
+.fm-var input { font-size: 18px; font-variant-numeric: tabular-nums; }
+.fm-var input.fm-auto { border-color: var(--ok); background: rgba(31, 157, 74, .1); font-weight: 800; color: var(--ok); }
+.fm-var input.fm-bad { border-color: var(--danger); }
+.fm-out { background: var(--panel-2); border-radius: 12px; padding: 12px; font-size: 15px; line-height: 1.45; }
+.fm-res { font-family: "Cambria Math", Georgia, serif; font-size: 17px; }
+.fm-res.big { font-size: 22px; font-weight: 800; color: var(--ok); font-family: var(--font); }
+.fm-none { text-align: center; }

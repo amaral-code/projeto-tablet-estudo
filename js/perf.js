@@ -6,6 +6,7 @@ import { dayStr, addDays, hubData, reviewsByDay, studyStreak, markHabitToday, st
 import { aiConfigured, streamChat, cleanText, extractTasks } from './ai.js';
 import { quickData } from './quicknotes.js';
 import { chatsData, openChat } from './tutor.js';
+import { FORMULAS, openFormula } from './formulas.js';
 
 let A;
 const P = { books: [], reads: [], grades: [] };
@@ -710,9 +711,10 @@ export async function openPalette() {
     const cards = hubData().cards.map(c => ({ label: c.front.slice(0, 70), text: c.back, icon: 'cards', kind: 'Flashcard', run: () => A.goTo({ kind: 'cards' }) }));
     const decks = hubData().decks.map(d => ({ label: d.name, icon: 'cards', kind: 'Baralho', run: () => A.goTo({ kind: 'cards' }) }));
     const books = P.books.map(b => ({ label: b.title, icon: 'bookOpen', kind: 'Livro', run: () => logReading(b) }));
+    const formulas = FORMULAS.map(F => ({ label: F.name, text: `${F.expr} ${F.alias || ''}`, icon: 'sigma', kind: 'Fórmula', run: () => openFormula(F.id) }));
     const events = (A.ev ? A.ev.eventsData() : []).map(e => ({ label: e.title, text: `${e.notes || ''} ${e.date.split('-').reverse().join('/')}`, icon: 'calendar', kind: 'Evento', run: () => calendarOn(e.date) }));
     const folders = A.state.folders.map(f => ({ label: f.name, icon: 'folder', kind: 'Pasta', run: () => A.goTo({ kind: 'notes', filter: f.id }) }));
-    return [...acts, ...events, ...notes, ...tasks, ...quick, ...folders, ...decks, ...books, ...chats, ...cards];
+    return [...acts, ...events, ...formulas, ...notes, ...tasks, ...quick, ...folders, ...decks, ...books, ...chats, ...cards];
   };
   const all = items();
   const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

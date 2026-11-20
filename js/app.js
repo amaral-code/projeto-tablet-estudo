@@ -17,6 +17,7 @@ import { initTutor, reloadTutor, TUTOR_VIEWS, renderTutor, leaveTutor } from './
 import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording } from './recorder.js';
 import { initSuggest, suggestToday } from './suggest.js';
 import * as EVM from './events.js';
+import { initFormulas, FORMULA_VIEWS, renderFormulas } from './formulas.js';
 
 // Registro único de todas as telas da central: título, ícone, como desenhar e o botão "novo"
 const VIEW_REG = {};
@@ -32,6 +33,7 @@ reg({ map: { title: 'Tudo', icon: 'grid' } }, (k, el) => renderMap(el));
 reg(DATA_VIEWS, (k, el) => renderData(el));
 reg(QUICK_VIEWS, (k, el) => renderQuick(el), { quick: 'Nova nota' }, () => newQuick());
 reg(TUTOR_VIEWS, (k, el) => renderTutor(el), { tutor: '' });
+reg(FORMULA_VIEWS, (k, el) => renderFormulas(el), { formulas: '' });
 const HUB_VIEWS = VIEW_REG;
 const renderHub = (kind, el) => {
   if (!VIEW_REG[kind].isHub) leaveHub();
@@ -136,6 +138,7 @@ async function init() {
   await initTutor(api);
   await initRecorder(api);
   await EVM.initEvents(api);
+  initFormulas(api);
   initSuggest(api);
   EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder, EVM.reloadEvents);
   initData(api);

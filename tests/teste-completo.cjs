@@ -283,7 +283,9 @@ function watch(p) {
     await draw([[150, 520], [165, 500], [180, 520], [195, 500]]);
     await page.click('#ed-convert'); await draw([[130, 480], [230, 480], [230, 540], [130, 540], [130, 481]]); await wait(800);
     await page.click('.modal .btn.primary'); await saved();
-    assert((await contentOf('Frações e decimais')).pages[1].texts.some(t => t.text === 'casa'), 'não converteu');
+    const casa = (await contentOf('Frações e decimais')).pages[1].texts.find(t => t.text === 'casa');
+    assert(casa, 'não converteu');
+    assert(casa.size === 30 && casa.font === 'caveat', 'o texto convertido devia ficar do tamanho da linha, em fonte manuscrita: ' + JSON.stringify(casa));
   });
   await step('verificar conta marca ✗ com resposta certa', async () => {
     await page.click('[data-tool=pen]');
@@ -611,7 +613,7 @@ function watch(p) {
   await step('nenhuma tela passa da largura no tablet em pé (800px)', async () => {
     await page.setViewportSize({ width: 800, height: 1280 });
     const bad = [];
-    for (const k of ['today', 'calendar', 'schedule', 'goals', 'tasks', 'quick', 'focus', 'cards', 'quiz', 'tutor', 'habits', 'journal', 'reading', 'grades', 'report', 'all', 'data']) {
+    for (const k of ['today', 'calendar', 'schedule', 'goals', 'tasks', 'quick', 'focus', 'cards', 'quiz', 'formulas', 'tutor', 'habits', 'journal', 'reading', 'grades', 'report', 'all', 'data']) {
       await page.evaluate(k => { document.body.classList.remove('side-open'); (k === 'data' ? document.getElementById('btn-data') : document.querySelector(`#nav-main [data-k=${k}]`)).click(); }, k); await wait(300);
       // conta só o que fica visível (o que está dentro de uma área com rolagem própria, como o mapa do ano, não estoura a tela)
       const over = await page.evaluate(() => {
@@ -727,12 +729,12 @@ function watch(p) {
     await nav('today');
     const secs = await page.locator('#nav-main .nav-sec-h').allTextContents();
     assert(['Planejar', 'Estudar', 'Acompanhar', 'Caderno'].every(x => secs.includes(x)), 'áreas: ' + secs.join(','));
-    for (const k of ['today', 'tasks', 'quick', 'calendar', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'tutor', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
+    for (const k of ['today', 'tasks', 'quick', 'calendar', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'formulas', 'tutor', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
     assert((await page.textContent('#view-section')).includes('Planejar'), 'nome da área no topo');
   });
   await step('Tela "Tudo" mostra cada recurso e abre ao tocar', async () => {
     await page.click('#btn-map'); await wait(300);
-    assert(await page.locator('.map-card').count() === 16, 'cartões: ' + await page.locator('.map-card').count());
+    assert(await page.locator('.map-card').count() === 17, 'cartões: ' + await page.locator('.map-card').count());
     await page.click('.map-card[data-go=goals]'); await wait(300);
     assert(await page.textContent('#view-title') === 'Metas', 'não abriu Metas');
   });
@@ -758,7 +760,7 @@ function watch(p) {
     await page.click('#bottom-bar [data-bk=tasks]'); await wait(300);
     assert(await page.textContent('#view-title') === 'Tarefas', 'barra não navegou');
     await page.click('#bottom-bar [data-bk=more]'); await wait(300);
-    assert(await page.locator('.more-sheet .map-card').count() === 16, 'Mais incompleto');
+    assert(await page.locator('.more-sheet .map-card').count() === 17, 'Mais incompleto');
     await page.click('.more-sheet .map-card[data-go=report]'); await wait(400);
     assert(await page.textContent('#view-title') === 'Relatório', 'Mais não navegou');
     assert(!(await page.locator('#btn-new').isVisible()), 'botão + duplicado no topo');
@@ -1381,6 +1383,50 @@ function watch(p) {
       return { x: out.items[0].x, start: f.snapLine(150, g), g };
     });
     assert(r.x === 300 && r.start === 220, 'Cornell: ' + JSON.stringify(r));
+  });
+
+  // ================= FÓRMULAS =================
+  console.log('Fórmulas de matemática e física');
+  const fmIn = k => page.locator(`.fm-card.open input[data-k="${k}"]`);
+  await step('Fórmulas: busca pelo nome e calcula sozinha o valor que falta', async () => {
+    await nav('formulas');
+    await page.fill('#fm-q', 'qual a fórmula da área da circunferência'); await wait(200);
+    assert(await page.locator('.fm-card.open[data-fid="a-circulo"]').count() === 1, 'não abriu a área do círculo: ' + await page.locator('.fm-card.open .fm-head b').textContent().catch(() => '-'));
+    assert((await page.textContent('.fm-card.open .fm-expr')) === 'A = π · r²', 'fórmula errada');
+    await fmIn('r').fill('5'); await wait(100);
+    assert(await fmIn('A').inputValue() === '78,5398' && await page.locator('.fm-card.open input.fm-auto[data-k="A"]').count() === 1, 'área calculada: ' + await fmIn('A').inputValue());
+    assert((await page.textContent('.fm-card.open .fm-out')).includes('Área = 78,5398 u²'), 'resultado');
+    // ao contrário: sabendo a área, descobre o raio
+    await fmIn('A').fill('50'); await fmIn('r').fill(''); await wait(100);
+    assert(await fmIn('r').inputValue() === '3,9894', 'raio a partir da área: ' + await fmIn('r').inputValue());
+    await page.fill('#fm-q', 'velocidade com aceleração'); await wait(200);
+    assert(await page.locator('.fm-card.open[data-fid="muv-v"]').count() === 1, 'MUV');
+    await fmIn('v0').fill('2'); await fmIn('a').fill('3'); await fmIn('t').fill('4'); await wait(100);
+    assert(await fmIn('v').inputValue() === '14', 'v = v0 + a·t: ' + await fmIn('v').inputValue());
+    const q0 = (await idb('quicknotes')).length;
+    await page.click('.fm-card.open [data-fm=quick]'); await wait(400);
+    const qn = (await idb('quicknotes')).slice(-1)[0];
+    assert((await idb('quicknotes')).length === q0 + 1 && /14/.test(qn.text) && /v₀/.test(qn.text), 'salvar em notas rápidas: ' + (qn && qn.text));
+  });
+  await step('Fórmulas: Bhaskara, filtro de física e busca sem resultado leva ao tutor', async () => {
+    await page.fill('#fm-q', 'bhaskara'); await wait(200);
+    await fmIn('a').fill('1'); await fmIn('b').fill('-5'); await fmIn('c').fill('6'); await wait(100);
+    const out = await page.textContent('.fm-card.open .fm-out');
+    assert(out.includes('Δ = b² − 4ac = -5² − 4 · 1 · 6 = 1') || out.includes('= 1'), 'delta: ' + out);
+    assert(/x₁ = .* = 3/.test(out) && /x₂ = .* = 2/.test(out), 'raízes: ' + out);
+    await page.fill('#fm-q', ''); await page.click('.fm-areas [data-area=fis]'); await wait(200);
+    const groups = await page.locator('h3.sec').allTextContents();
+    assert(groups.includes('Eletricidade') && !groups.includes('Áreas'), 'filtro de física: ' + groups.join(','));
+    await page.click('.fm-areas [data-area=all]');
+    await page.fill('#fm-q', 'xyzwq'); await wait(200);
+    assert(await page.locator('#fm-tutor').isVisible(), 'sem resultado devia oferecer o tutor');
+    await page.fill('#fm-q', ''); await wait(100);
+  });
+  await step('Fórmulas: a busca geral (lupa) acha e abre a fórmula', async () => {
+    await nav('today');
+    await page.keyboard.press('Control+k'); await page.fill('.pal-in input', 'lei de ohm'); await wait(200);
+    await page.click('.pal-item:has-text("Fórmula") >> nth=0'); await wait(400);
+    assert(await page.textContent('#view-title') === 'Fórmulas' && await page.locator('.fm-card.open[data-fid="ohm"]').count() === 1, 'não abriu a lei de Ohm');
   });
 
   await step('nenhum erro de JavaScript em todo o teste', async () => {

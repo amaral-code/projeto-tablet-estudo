@@ -86,7 +86,8 @@ const DEFAULTS = {
   penSeen: false,
   lang: 'pt_BR',
   autoMode: 'off', // off | text | math | flow (escrita organizada)
-  handFont: 'caveat', // fonte da escrita convertida em texto (ou 'normal')
+  handFont: 'auto', // fonte da escrita convertida: 'auto' (igual à letra: cursiva ou de forma), uma das manuscritas ou 'normal'
+  fontChosen: false,
   flowSize: 30,
   flowIndent: 80,
   shapes: true,
@@ -104,6 +105,8 @@ export const settings = (() => {
   try { v = JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch { v = {}; }
   const out = { ...DEFAULTS, ...v };
   for (const k of OLD_KEYS) delete out[k];
+  // a fonte "Caveat" era só o padrão antigo: quem não escolheu nenhuma passa para "igual à minha letra"
+  if (!out.fontChosen && out.handFont === 'caveat') out.handFont = 'auto';
   return out;
 })();
 export function saveSettings() {

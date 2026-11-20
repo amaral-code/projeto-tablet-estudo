@@ -6,7 +6,9 @@
 // editar, apagar ou mover pelo laço, e a organização é refeita a partir do que sobrou.
 import { uid, textWidth, baselineOffset, LINE0, LINE_STEP, PAGE_W, PAGE_H, MARGIN_L, MARGIN_R, BOTTOM } from './ink.js';
 
-export const FLOW_SIZES = { 24: 'Pequena', 30: 'Média', 36: 'Grande' };
+export const FLOW_SIZES = { 24: 'Pequena', 30: 'Média', 36: 'Grande', 44: 'Muito grande (2 linhas)', 60: 'Enorme (2 linhas)' };
+// letras muito grandes ocupam duas pautas, para não atravessar a linha de cima
+export const lineStepFor = size => (size >= 40 ? LINE_STEP * 2 : LINE_STEP);
 export const FLOW_INDENTS = { 0: 'Sem recuo', 40: 'Pequeno', 80: 'Médio', 130: 'Grande' };
 const END = /\.["'”’)]*$/; // ponto final (também ". " seguido de aspas/parênteses)
 
@@ -35,64 +37,59 @@ export function readParas(pages) {
     if (!byPara.has(t.para)) byPara.set(t.para, []);
     const runs = byPara.get(t.para);
     const last = runs[runs.length - 1];
-    if (last && last.color === t.color) last.text += ' ' + t.text.trim();
-    else runs.push({ text: t.text.trim(), color: t.color });
+    if (last && last.color === t.color && last.font === t.font) last.text += ' ' + t.text.trim();
+    else runs.push({ text: t.text.trim(), color: t.color, font: t.font });
   }
   return [...byPara.keys()].sort((a, b) => a - b).map(k => ({ runs: byPara.get(k) }));
 }
 
 // Acrescenta um texto reconhecido: emenda no parágrafo aberto ou abre um novo depois de um ponto final
-export function appendText(paras, text, color) {
+export function appendText(paras, text, color, font) {
   for (const s of sentences(text)) {
     let p = paras[paras.length - 1];
     const lastRun = p && p.runs[p.runs.length - 1];
     if (!p || !lastRun || closes(lastRun.text)) { p = { runs: [] }; paras.push(p); }
     const r = p.runs[p.runs.length - 1];
-    if (r && r.color === color) r.text += ' ' + s; else p.runs.push({ text: s, color });
+    if (r && r.color === color && r.font === font) r.text += ' ' + s; else p.runs.push({ text: s, color, font });
   }
   return paras;
 }
 
 // Diagrama os parágrafos a partir da pauta startY. Devolve os textos da página e o que não coube.
 // cont = o primeiro parágrafo continua da página anterior (sem recuo).
+// Cada trecho pode ter a sua fonte (ex.: "igual à minha letra"); sem fonte, usa a do menu.
 export function layoutFlow(paras, { font, size, indent, startY = LINE0, firstPara = 0, cont = false, geom = paperGeom() }) {
-  const maxX = PAGE_W - MARGIN_R, LEFT = geom.left, BOTTOM = geom.bottom;
-  const base = baselineOffset(font, size);
-  const space = textWidth(' ', size, font);
+  const maxX = PAGE_W - MARGIN_R, LEFT = geom.left, BOTTOM = geom.bottom, STEP = lineStepFor(size);
   const items = [];
   let lineY = startY, ord = 0;
   const flush = (line, para) => {
-    // palavras seguidas da mesma cor viram um texto só
+    // palavras seguidas da mesma cor e fonte viram um texto só; a letra "senta" na pauta (encostada na linha)
     let cur = null;
     for (const w of line) {
-      if (cur && cur.color === w.color) cur.text += ' ' + w.w;
-      else { cur = { id: uid(), x: w.x, y: lineY - base - 3, text: w.w, size, color: w.color, font: font || undefined, flow: true, para, ord: ord++ }; items.push(cur); }
+      if (cur && cur.color === w.color && cur.font === w.font) cur.text += ' ' + w.w;
+      else { cur = { id: uid(), x: w.x, y: lineY - baselineOffset(w.font, size) - 1, text: w.w, size, color: w.color, font: w.font, flow: true, para, ord: ord++ }; items.push(cur); }
     }
   };
+  const toRuns = ws => { const out = []; for (const w of ws) { const r = out[out.length - 1]; if (r && r.color === w.color && r.font === w.font) r.text += ' ' + w.w; else out.push({ text: w.w, color: w.color, font: w.font }); } return out; };
   for (let p = 0; p < paras.length; p++) {
-    const words = paras[p].runs.flatMap(r => r.text.split(/\s+/).filter(Boolean).map(w => ({ w, color: r.color })));
+    const words = paras[p].runs.flatMap(r => r.text.split(/\s+/).filter(Boolean).map(w => ({ w, color: r.color, font: (r.font || font) || undefined })));
     if (!words.length) continue;
     if (lineY > BOTTOM) return { items, overflow: paras.slice(p), overflowFirstPara: firstPara + p, cont: false };
     let x = LEFT + (p === 0 && cont ? 0 : indent);
     let line = [];
     for (let i = 0; i < words.length; i++) {
-      const ww = textWidth(words[i].w, size, font);
+      const ww = textWidth(words[i].w, size, words[i].font);
       if (line.length && x + ww > maxX) {
         flush(line, firstPara + p);
-        line = []; lineY += LINE_STEP; x = LEFT;
-        if (lineY > BOTTOM) {
-          // a folha encheu no meio do parágrafo: o resto continua na próxima página
-          const rest = words.slice(i);
-          const restRuns = [];
-          for (const w of rest) { const r = restRuns[restRuns.length - 1]; if (r && r.color === w.color) r.text += ' ' + w.w; else restRuns.push({ text: w.w, color: w.color }); }
-          return { items, overflow: [{ runs: restRuns }, ...paras.slice(p + 1)], overflowFirstPara: firstPara + p, cont: true };
-        }
+        line = []; lineY += STEP; x = LEFT;
+        // a folha encheu no meio do parágrafo: o resto continua na próxima página
+        if (lineY > BOTTOM) return { items, overflow: [{ runs: toRuns(words.slice(i)) }, ...paras.slice(p + 1)], overflowFirstPara: firstPara + p, cont: true };
       }
       line.push({ ...words[i], x });
-      x += ww + space;
+      x += ww + textWidth(' ', size, words[i].font);
     }
     flush(line, firstPara + p);
-    lineY += LINE_STEP;
+    lineY += STEP;
   }
   return { items, overflow: null };
 }

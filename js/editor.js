@@ -150,18 +150,19 @@ function buildToolbar() {
   $('ed-auto').onchange = e => {
     settings.autoMode = e.target.value; saveSettings();
     toast({
-      off: 'Correção automática desligada',
-      text: 'Automático: sua escrita vira texto ao parar de escrever, no mesmo lugar',
-      math: 'Automático: contas com "=" são conferidas ao parar de escrever',
-      flow: 'Escrita organizada: escreva em qualquer lugar e o texto vai para as linhas. Ponto final = novo parágrafo.',
+      off: 'Sua escrita fica como você escreveu (à mão)',
+      text: 'Ao parar de escrever, a letra vira texto na linha onde você escreveu',
+      math: 'Contas com "=" são conferidas ao parar de escrever (✓ ou ✗)',
+      flow: 'Escreva em qualquer lugar: o texto vai para as linhas, em ordem. Ponto final = novo parágrafo.',
     }[settings.autoMode], 4000);
     syncToggles();
   };
   // fonte, tamanho e parágrafo da escrita convertida
-  $('ed-font').innerHTML = Object.entries(HAND_FONTS).map(([k, f]) => `<option value="${k}" style="font-family:${f.family}">${f.name} (${f.desc})</option>`).join('') + '<option value="normal">Digitada (normal)</option>';
+  $('ed-font').innerHTML = '<option value="auto">✨ Igual à minha</option>'
+    + Object.entries(HAND_FONTS).map(([k, f]) => `<option value="${k}" style="font-family:${f.family}">${f.name} · ${f.desc}</option>`).join('') + '<option value="normal">Digitada</option>';
   $('ed-fsize').innerHTML = Object.entries(FLOW_SIZES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
   $('ed-para').innerHTML = Object.entries(FLOW_INDENTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
-  $('ed-font').onchange = e => { settings.handFont = e.target.value; saveSettings(); restyleFlow(); };
+  $('ed-font').onchange = e => { settings.handFont = e.target.value; settings.fontChosen = true; saveSettings(); restyleFlow(true); };
   $('ed-fsize').onchange = e => { settings.flowSize = +e.target.value; saveSettings(); restyleFlow(); };
   $('ed-para').onchange = e => { settings.flowIndent = +e.target.value; saveSettings(); restyleFlow(); };
   syncToggles();
@@ -170,15 +171,34 @@ function buildToolbar() {
 export function syncToggles() {
   $('ed-shapes').classList.toggle('on', settings.shapes);
   $('ed-auto').value = settings.autoMode;
-  const conv = settings.autoMode !== 'math'; // fonte e tamanho valem também para o "Corrigir escrita"
+  const conv = settings.autoMode === 'flow' || settings.autoMode === 'text'; // (o "Corrigir escrita" usa a mesma letra e tamanho)
   $('ed-flowopts').hidden = !conv;
   $('ed-para-box').hidden = settings.autoMode !== 'flow';
-  $('ed-font').value = HAND_FONTS[settings.handFont] ? settings.handFont : 'normal';
+  $('ed-font').value = settings.handFont === 'auto' || HAND_FONTS[settings.handFont] ? settings.handFont : 'normal';
   $('ed-fsize').value = String(settings.flowSize);
   $('ed-para').value = String(settings.flowIndent);
 }
-const convFont = () => (HAND_FONTS[settings.handFont] ? settings.handFont : undefined);
-const flowOpts = () => ({ font: convFont(), size: +settings.flowSize || 30, indent: +settings.flowIndent || 0, geom: paperGeom(E && E.content.bg) });
+// "Igual à minha letra": na cursiva as letras de uma palavra saem quase num traço só; na letra de forma,
+// cada letra tem um ou mais traços. Contamos os traços principais (pingos e acentos não contam) por letra.
+export function writingStyle(strokes, text) {
+  const letters = (String(text).match(/\p{L}/gu) || []).length;
+  if (letters < 3 || !strokes.length) return null;
+  const big = Math.max(...strokes.map(s => Math.max(s.bbox.w, s.bbox.h)));
+  const main = strokes.filter(s => Math.max(s.bbox.w, s.bbox.h) >= big * 0.35).length;
+  return main / letters <= 0.6 ? 'cursive' : 'print';
+}
+export const STYLE_FONT = { cursive: 'dancing', print: 'patrick' };
+let lastStyle = 'print';
+// Fonte do texto convertido: a escolhida no menu ou, no automático, a que combina com a sua letra
+function convFont(strokes, text) {
+  if (settings.handFont === 'auto') {
+    const st = strokes ? writingStyle(strokes, text) : null;
+    if (st) lastStyle = st;
+    return STYLE_FONT[st || lastStyle];
+  }
+  return HAND_FONTS[settings.handFont] ? settings.handFont : undefined;
+}
+const flowOpts = () => ({ font: settings.handFont === 'auto' ? STYLE_FONT[lastStyle] : convFont(), size: +settings.flowSize || 30, indent: +settings.flowIndent || 0, geom: paperGeom(E && E.content.bg) });
 
 // ----- escrita organizada -----
 // Onde o texto organizado começa numa página: na primeira pauta livre abaixo do que já existe
@@ -202,7 +222,7 @@ function flowAppend(pieces) {
   const pages = E.content.pages;
   const { s, e } = chainOf(pages, E.pageIndex);
   const paras = readParas(pages.slice(s, e + 1));
-  for (const p of pieces) appendText(paras, p.text, p.color);
+  for (const p of pieces) appendText(paras, p.text, p.color, p.font);
   const n0 = pages.length;
   const last = flowRelayout(E.pageIndex, paras);
   if (last !== E.pageIndex) {
@@ -211,13 +231,16 @@ function flowAppend(pieces) {
   }
 }
 // Mudou a fonte, o tamanho ou o parágrafo: reorganiza o texto desta página
-function restyleFlow() {
+function restyleFlow(fontChanged = false) {
   if (!E) { syncToggles(); return; }
   const pages = E.content.pages;
   if (pages[E.pageIndex].texts.some(t => t.flow)) {
     pushUndo();
     const { s, e } = chainOf(pages, E.pageIndex);
-    flowRelayout(E.pageIndex, readParas(pages.slice(s, e + 1)));
+    const paras = readParas(pages.slice(s, e + 1));
+    // escolheu uma fonte: todo o texto organizado passa para ela (no automático, cada trecho mantém a sua)
+    if (fontChanged && settings.handFont !== 'auto') for (const p of paras) for (const r of p.runs) r.font = convFont();
+    flowRelayout(E.pageIndex, paras);
     markDirty(); redraw();
   }
   loadHandFonts().then(() => E && redraw());
@@ -290,8 +313,11 @@ function setColor(c, keepOpen) {
 function resize() {
   const r = stage.getBoundingClientRect();
   dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const changedW = Math.abs(r.width - W) > 40;
   W = r.width; H = r.height;
   for (const c of [base, live]) { c.width = Math.max(1, Math.round(W * dpr)); c.height = Math.max(1, Math.round(H * dpr)); }
+  // girou o tablet (ou mudou o tamanho da tela): se você não tinha dado zoom, a folha volta a caber na largura
+  if (E && changedW && E.autoFit) { const oy = V().oy; fitWidth(); V().oy = oy; }
   if (E) { clampView(); redraw(); }
 }
 function fitWidth() {
@@ -300,6 +326,7 @@ function fitWidth() {
   if (PAGE_H * v.s < H - 32) v.s = Math.min(v.s, (H - 32) / PAGE_H);
   v.ox = (W - PAGE_W * v.s) / 2;
   v.oy = 16;
+  if (E) E.autoFit = true;
   updateZoomLabel();
 }
 function clampView() {
@@ -481,7 +508,7 @@ function onWheel(e) {
     const ns = Math.min(6, Math.max(0.2, v.s * k));
     v.ox = mx - ((mx - v.ox) * ns) / v.s;
     v.oy = my - ((my - v.oy) * ns) / v.s;
-    v.s = ns;
+    v.s = ns; E.autoFit = false;
   } else { v.ox -= e.deltaX; v.oy -= e.deltaY; }
   clampView(); requestRedraw();
 }
@@ -531,7 +558,7 @@ function moveGesture() {
   const v = V();
   const s = Math.min(6, Math.max(0.2, (g.v0.s * d) / g.d0));
   const px = (g.m0.x - r.left - g.v0.ox) / g.v0.s, py = (g.m0.y - r.top - g.v0.oy) / g.v0.s;
-  v.s = s;
+  v.s = s; E.autoFit = false;
   v.ox = m.x - r.left - px * s;
   v.oy = m.y - r.top - py * s;
   clampView();
@@ -936,8 +963,8 @@ function lineToText(pg, line, text) {
   const base = line.y + line.h * 0.8; // onde fica a "linha de base" da letra à mão
   const ruleY = Math.max(g.first, g.first + Math.round((base - g.first) / LINE_STEP) * LINE_STEP);
   const x = Math.max(20, Math.min(line.x, PAGE_W - 200));
-  const { items } = layoutFlow([{ runs: [{ text, color: mainColor(line.strokes) }] }], {
-    font: convFont(), size: +settings.flowSize || 30, indent: Math.max(0, x - g.left), startY: ruleY,
+  const { items } = layoutFlow([{ runs: [{ text, color: mainColor(line.strokes), font: convFont(line.strokes, text) }] }], {
+    size: +settings.flowSize || 30, indent: Math.max(0, x - g.left), startY: ruleY,
     geom: { ...g, left: Math.min(g.left, x), bottom: PAGE_H - 30 },
   });
   // vira texto comum (não entra na escrita organizada)
@@ -1092,7 +1119,7 @@ async function runFlow(pg, lines) {
   lines.forEach((l, i) => {
     const text = (cands[i] && cands[i][0] || '').trim();
     if (!text || !l.strokes.every(s => alive.has(s.id))) return;
-    pieces.push({ text, color: mainColor(l.strokes) });
+    pieces.push({ text, color: mainColor(l.strokes), font: convFont(l.strokes, text) });
     l.strokes.forEach(s => remove.add(s.id));
   });
   if (!pieces.length) return;

@@ -212,7 +212,7 @@ async function seed() {
       T(320, '     "Corrigir escrita" — vira letra digitada certinha.'),
       T(400, '🧮 Verificar conta: escreva 7 + 5 = 12, circule e toque'),
       T(440, '     em "Verificar conta" → aparece ✓ ou ✗ com a resposta.'),
-      T(520, '⚡ Auto: corrige ou confere contas sozinho quando você para.'),
+      T(520, '⚡ Ao escrever → Organizar nas linhas: sua letra vira texto.'),
       T(600, '🔷 Formas: desenhe um círculo e segure a caneta parada.'),
       T(680, '👆 Dois dedos: zoom e mover. Toque com 2 dedos = desfazer.'),
       T(760, '📁 Organize em pastas, crie tarefas e toque em Compartilhar'),
@@ -1058,7 +1058,7 @@ async function settingsDialog() {
         <li><b>Borracha:</b> “Parcial” apaga só onde passa; “Traço inteiro” apaga o risco todo. O botão da caneta também apaga.</li>
         <li><b>Laço:</b> circule algo para mover, aumentar (bolinha no canto), mudar cor, duplicar, apagar, <b>Corrigir escrita</b> ou <b>Verificar conta</b>.</li>
         <li><b>Corrigir escrita:</b> transforma letras e números escritos à mão em texto digitado, com sugestões para escolher.</li>
-        <li><b>Escrita organizada:</b> em “Auto”, escolha <b>Escrita organizada</b>. Escreva em qualquer lugar da folha: ao parar, sua letra vira texto em <b>fonte manuscrita</b> nas linhas, emendado no fim da linha. Cada <b>ponto final</b> abre um parágrafo novo. A fonte, o tamanho e o recuo do parágrafo ficam no menu ao lado; a cor é a da caneta escolhida em cima.</li>
+        <li><b>Organizar nas linhas:</b> em “Ao escrever”, escolha <b>Organizar nas linhas</b>. Escreva em qualquer lugar da folha: ao parar, sua letra vira texto em <b>fonte manuscrita</b> nas linhas, emendado no fim da linha. Cada <b>ponto final</b> abre um parágrafo novo. No menu ao lado: <b>Letra</b> (“Igual à minha letra” usa cursiva se você escreve em cursiva e letra de forma se você escreve separado), <b>Tamanho</b> (até “Enorme”, que usa duas linhas) e <b>Parágrafo</b>. A cor é a da caneta escolhida em cima.</li>
         <li><b>Verificar conta:</b> escreva “12 + 8 = 20” e o app marca ✓ ou ✗ mostrando o resultado certo. Aceita + − × ÷ : x / ^ √ % e vírgula decimal.</li>
         <li><b>Gestos:</b> pinça com 2 dedos = zoom; arrastar com 2 dedos = mover; toque com 2 dedos = desfazer; 3 dedos = refazer.</li>
         <li><b>Compartilhar:</b> envia PDF ou imagem pelo WhatsApp, Gmail, Drive, Classroom…</li>

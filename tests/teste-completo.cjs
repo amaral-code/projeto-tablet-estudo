@@ -285,7 +285,7 @@ function watch(p) {
     await page.click('.modal .btn.primary'); await saved();
     const casa = (await contentOf('Frações e decimais')).pages[1].texts.find(t => t.text === 'casa');
     assert(casa, 'não converteu');
-    assert(casa.size === 30 && casa.font === 'caveat', 'o texto convertido devia ficar do tamanho da linha, em fonte manuscrita: ' + JSON.stringify(casa));
+    assert(casa.size === 30 && casa.font === 'dancing', 'o texto convertido devia ficar do tamanho da linha, em cursiva (escrito num traço só): ' + JSON.stringify(casa));
   });
   await step('verificar conta marca ✗ com resposta certa', async () => {
     await page.click('[data-tool=pen]');
@@ -1383,6 +1383,50 @@ function watch(p) {
       return { x: out.items[0].x, start: f.snapLine(150, g), g };
     });
     assert(r.x === 300 && r.start === 220, 'Cornell: ' + JSON.stringify(r));
+  });
+
+  await step('Letra: "igual à minha letra" (cursiva → cursiva, de forma → de forma) e tamanho Enorme em 2 linhas', async () => {
+    await nav('all'); await page.click('#btn-new'); await page.fill('#n-title', 'Treino de letra'); await page.click('.paper-opts[data-g=type] [data-v=lines]'); await page.click('.modal-actions .btn.primary'); await wait(1000);
+    await page.selectOption('#ed-auto', 'flow'); await page.selectOption('#ed-font', 'auto'); await page.selectOption('#ed-fsize', '30'); await page.selectOption('#ed-para', '0');
+    recogQueue.push('fotossíntese');
+    await scribble(300, 150); // um traço só = cursiva
+    recogQueue.push('casa.');
+    const b = await stageBox();
+    for (let i = 0; i < 6; i++) { // seis traços curtos separados = letra de forma
+      await page.mouse.move(b.x + 400 + i * 30, b.y + 300); await page.mouse.down();
+      await page.mouse.move(b.x + 410 + i * 30, b.y + 330, { steps: 3 }); await page.mouse.up();
+    }
+    await wait(2500); await saved();
+    const t = (await contentOf('Treino de letra')).pages[0].texts.filter(x => x.flow).sort((a, c) => a.ord - c.ord);
+    assert(t.length === 2 && t[0].text === 'fotossíntese' && t[0].font === 'dancing' && t[1].text === 'casa.' && t[1].font === 'patrick', 'estilo: ' + JSON.stringify(t.map(x => [x.text, x.font])));
+    assert(t[0].y === t[1].y || Math.abs(t[0].y - t[1].y) < 6, 'as duas palavras deviam ficar na mesma linha');
+    await page.selectOption('#ed-fsize', '60'); await saved();
+    recogQueue.push('Nova frase grande.');
+    await scribble(300, 300); await saved();
+    const big = (await contentOf('Treino de letra')).pages[0].texts.filter(x => x.flow).sort((a, c) => a.para - c.para || a.ord - c.ord);
+    assert(big.every(x => x.size === 60), 'tamanho Enorme');
+    const lineOf = x => x.y; const p0 = big.filter(x => x.para === 0), p1 = big.filter(x => x.para === 1);
+    assert(p1.length && Math.round(lineOf(p1[0]) - lineOf(p0[0])) >= 75, 'o tamanho Enorme devia pular duas linhas: ' + (lineOf(p1[0]) - lineOf(p0[0])));
+    await page.selectOption('#ed-fsize', '30'); await page.selectOption('#ed-auto', 'off');
+    await page.click('#ed-back'); await wait(900);
+  });
+  await step('Letra encostada na linha em todas as fontes e tamanhos (medido nos pixels)', async () => {
+    const r = await page.evaluate(async () => {
+      const ink = await import('./js/ink.js'); const fl = await import('./js/flow.js');
+      await ink.loadHandFonts();
+      const bad = [];
+      for (const font of [undefined, ...Object.keys(ink.HAND_FONTS)]) for (const size of [24, 30, 36, 44, 60]) {
+        const { items } = fl.layoutFlow([{ runs: [{ text: 'aeno mnu', color: '#000' }] }], { font, size, indent: 0, startY: 200 });
+        const c = document.createElement('canvas'); c.width = 1000; c.height = 400; const ctx = c.getContext('2d');
+        ink.drawText(ctx, items[0]);
+        const d = ctx.getImageData(0, 0, 1000, 400).data;
+        let bottom = -1;
+        for (let y = 0; y < 400; y++) for (let x = 0; x < 1000; x += 2) if (d[(y * 1000 + x) * 4 + 3] > 128) bottom = Math.max(bottom, y);
+        if (bottom < 196 || bottom > 201) bad.push(`${font || 'normal'} ${size}: ${bottom - 200}px`);
+      }
+      return bad;
+    });
+    assert(!r.length, 'fora da linha: ' + r.join(', '));
   });
 
   // ================= FÓRMULAS =================

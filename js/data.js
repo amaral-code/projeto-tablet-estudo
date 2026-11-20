@@ -9,7 +9,12 @@ export const DATA_VIEWS = { data: { title: 'Dados e backup', icon: 'database' } 
 const KEEP = 3; // cópias automáticas guardadas
 const SNAP_KEY = 'caderno-copias'; // lista leve das cópias (o conteúdo fica no banco)
 const dayStr = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const mb = n => (n / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB';
+const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// tamanho legível: KB, MB ou GB
+const mb = n => {
+  const f = (v, u) => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' ' + u;
+  return n < 1048576 ? f(Math.max(1, Math.round(n / 1024)), 'KB') : n < 1073741824 ? f(n / 1048576, 'MB') : f(n / 1073741824, 'GB');
+};
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 export function initData(api) {
@@ -223,7 +228,7 @@ export async function renderData(el) {
         <button class="btn" id="dt-snap">${ic('plus')}<span>Fazer cópia agora</span></button></div>
       <p class="muted small">Guardadas dentro do próprio app (as ${KEEP} mais recentes). Servem para voltar no tempo se algo der errado. Não incluem as gravações de áudio, que continuam salvas.</p>
       <div class="snap-list">${snaps.map(s => `<div class="snap-row"><span class="grow"><b>${new Date(s.createdAt).toLocaleDateString('pt-BR')} ${new Date(s.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</b>
-          <span class="muted small"> · ${esc(s.reason)} · ${s.counts.notes} anotações, ${s.counts.tasks} tarefas, ${s.counts.cards} flashcards · ${mb(s.size)}</span></span>
+          <span class="muted small"> · ${esc(s.reason)} · ${pl(s.counts.notes, 'anotação', 'anotações')}, ${pl(s.counts.tasks, 'tarefa', 'tarefas')}, ${pl(s.counts.cards, 'flashcard', 'flashcards')} · ${mb(s.size)}</span></span>
           <button class="chip small" data-snap="${s.id}">${ic('undo')}<span>Restaurar</span></button></div>`).join('') || '<p class="muted small">Nenhuma cópia ainda. A primeira é feita sozinha hoje.</p>'}</div>
     </div>
     <div class="panel"><h3>${ic('download')}Backup em arquivo</h3>

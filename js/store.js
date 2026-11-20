@@ -1,7 +1,7 @@
 // Armazenamento local (IndexedDB) — tudo fica salvo no próprio tablet.
 const DB_NAME = 'caderno-estudos';
-const VERSION = 1;
-const STORES = ['folders', 'notes', 'pages', 'tasks'];
+const VERSION = 2;
+const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards'];
 let dbp;
 
 function open() {

@@ -5,6 +5,7 @@ import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertI
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
 import { AI_MODELS, DEFAULT_MODEL, streamChat } from './ai.js';
 import { filesToPages } from './importer.js';
+import { initHub, renderHub, leaveHub, hubNewAction, HUB_VIEWS, HUB_NEW_LABEL, hubCounts, reloadHub, saveFlashcards, addDays, dayStr } from './hub.js';
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
 import { LANGS } from './recognize.js';
 import { ic, esc, h, toast, modal, promptText, confirmBox, menu } from './ui.js';
@@ -14,7 +15,7 @@ const FOLDER_COLORS = ['#0a6cff', '#e5352b', '#1f9d4a', '#ff8a00', '#8e44d6', '#
 
 const state = {
   folders: [], notes: [], tasks: [],
-  view: { kind: 'notes', filter: 'all' }, // filter: all | fav | none | <folderId>
+  view: { kind: 'today' }, // today | calendar | focus | cards | habits | tasks | notes (filter: all | fav | none | <folderId>)
   search: '', taskFilter: 'pending',
 };
 
@@ -34,10 +35,20 @@ async function init() {
     onSettings: settingsDialog,
     folderName: id => folderName(id),
     onCreateTasks: createTasksFromAI,
+    onSaveCards: (cards, meta) => saveFlashcards(cards, {
+      deckName: meta ? (folderName(meta.folderId) ? `${folderName(meta.folderId)} — ${meta.title}` : meta.title) : 'Flashcards da IA',
+      folderId: meta?.folderId || '',
+    }),
   });
   bindLibrary();
   await loadAll();
   if (!localStorage.getItem('caderno-seeded') && !state.notes.length && !state.folders.length) await seed();
+  await initHub({
+    db, uid, state, loadContent, openNote, taskDialog, toggleTask, folderName, folderColor, folderOptions,
+    newNote: () => newNoteDialog(),
+    goTo: v => { if (editorIsOpen()) history.back(); setView(v); },
+    onChange: light => { if (editorIsOpen()) return; light ? renderSidebar() : render(); },
+  });
   render();
   window.addEventListener('popstate', () => { if (editorIsOpen()) closeNote(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -108,7 +119,7 @@ async function seed() {
 
 // =================== Biblioteca ===================
 function bindLibrary() {
-  $('btn-new').onclick = () => (state.view.kind === 'tasks' ? taskDialog({}) : newNoteDialog());
+  $('btn-new').onclick = () => (HUB_VIEWS[state.view.kind] ? hubNewAction(state.view.kind) : state.view.kind === 'tasks' ? taskDialog({}) : newNoteDialog());
   $('btn-new-folder').onclick = newFolder;
   $('btn-settings').onclick = settingsDialog;
   $('btn-menu').onclick = () => document.body.classList.toggle('side-open');
@@ -233,6 +244,7 @@ async function createTasksFromAI(titles, meta) {
 }
 
 function setView(v) {
+  if (!HUB_VIEWS[v.kind]) leaveHub();
   state.view = v;
   document.body.classList.remove('side-open');
   render();
@@ -249,14 +261,21 @@ function renderSidebar() {
   const count = f => state.notes.filter(f).length;
   const item = (key, icon, label, n, active) =>
     `<button class="nav-item ${active ? 'active' : ''}" data-k="${key}">${ic(icon)}<span>${esc(label)}</span>${n ? `<em>${n}</em>` : ''}</button>`;
+  const hc = hubCounts();
   $('nav-main').innerHTML =
+    item('today', 'home', 'Hoje', 0, v.kind === 'today') +
+    item('calendar', 'calendar', 'Agenda', 0, v.kind === 'calendar') +
+    item('tasks', 'tasks', 'Tarefas', pending, v.kind === 'tasks') +
+    item('focus', 'timer', hc.running ? 'Foco (rodando)' : 'Foco', 0, v.kind === 'focus') +
+    item('cards', 'cards', 'Flashcards', hc.cards, v.kind === 'cards') +
+    item('habits', 'flame', 'Hábitos', hc.habits, v.kind === 'habits') +
+    '<div class="nav-title"><span>Caderno</span></div>' +
     item('all', 'book', 'Todas as anotações', state.notes.length, v.kind === 'notes' && v.filter === 'all') +
     item('fav', 'star', 'Favoritas', count(n => n.fav), v.kind === 'notes' && v.filter === 'fav') +
-    item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none') +
-    item('tasks', 'tasks', 'Tarefas', pending, v.kind === 'tasks');
+    item('none', 'inbox', 'Sem pasta', count(n => !n.folderId), v.kind === 'notes' && v.filter === 'none');
   $('nav-main').onclick = e => {
     const b = e.target.closest('[data-k]'); if (!b) return;
-    if (b.dataset.k === 'tasks') setView({ kind: 'tasks' });
+    if (b.dataset.k === 'tasks' || HUB_VIEWS[b.dataset.k]) setView({ kind: b.dataset.k });
     else setView({ kind: 'notes', filter: b.dataset.k });
   };
   $('nav-folders').innerHTML = state.folders.map(f => `
@@ -276,6 +295,7 @@ function renderSidebar() {
 function viewTitle() {
   const v = state.view;
   if (v.kind === 'tasks') return 'Tarefas';
+  if (HUB_VIEWS[v.kind]) return HUB_VIEWS[v.kind].title;
   if (v.filter === 'all') return 'Todas as anotações';
   if (v.filter === 'fav') return 'Favoritas';
   if (v.filter === 'none') return 'Sem pasta';
@@ -283,13 +303,19 @@ function viewTitle() {
 }
 
 function renderMain() {
-  const isTasks = state.view.kind === 'tasks';
+  const kind = state.view.kind;
+  const isTasks = kind === 'tasks', isHub = !!HUB_VIEWS[kind];
   $('view-title').textContent = viewTitle();
-  $('view-notes').hidden = isTasks;
+  $('view-notes').hidden = isTasks || isHub;
   $('view-tasks').hidden = !isTasks;
-  $('sort').hidden = isTasks;
-  $('btn-new').querySelector('span').textContent = isTasks ? 'Nova tarefa' : 'Nova anotação';
-  if (isTasks) renderTasks(); else renderNotes();
+  $('view-hub').hidden = !isHub;
+  $('sort').hidden = isTasks || isHub;
+  document.querySelector('.search').hidden = isHub;
+  $('btn-import').hidden = isHub;
+  $('btn-new').hidden = kind === 'focus';
+  $('btn-new').querySelector('span').textContent = isHub ? HUB_NEW_LABEL[kind] : isTasks ? 'Nova tarefa' : 'Nova anotação';
+  if (isHub) renderHub(kind, $('view-hub'));
+  else if (isTasks) renderTasks(); else renderNotes();
 }
 
 function fmtDate(ts) {
@@ -648,13 +674,7 @@ function renderTasks() {
   $('tasks-empty').innerHTML = `${ic('tasks')}<p>${state.taskFilter === 'done' ? 'Nenhuma tarefa concluída.' : 'Nenhuma tarefa aqui. 🎉'}</p>`;
   $('task-list').onclick = async e => {
     const c = e.target.closest('[data-check]');
-    if (c) {
-      const x = state.tasks.find(t => t.id === c.dataset.check);
-      x.done = !x.done; x.doneAt = x.done ? Date.now() : 0;
-      await db.put('tasks', x);
-      if (x.done) toast('Tarefa concluída ✓');
-      render(); return;
-    }
+    if (c) { toggleTask(c.dataset.check); return; }
     const o = e.target.closest('[data-open]');
     if (o) { openNote(o.dataset.open); return; }
     const d = e.target.closest('[data-del]');
@@ -667,6 +687,28 @@ function renderTasks() {
     const ed = e.target.closest('[data-edit]');
     if (ed) taskDialog(state.tasks.find(t => t.id === ed.dataset.edit));
   };
+}
+
+// Conclui/reabre uma tarefa; tarefas repetidas geram a próxima ocorrência
+async function toggleTask(id) {
+  const x = state.tasks.find(t => t.id === id);
+  if (!x) return;
+  x.done = !x.done; x.doneAt = x.done ? Date.now() : 0;
+  await db.put('tasks', x);
+  if (x.done && x.repeat && !x.spawned) {
+    const base = x.due && x.due > dayStr() ? x.due : (x.due || dayStr());
+    let due = base;
+    if (x.repeat === 'daily') due = addDays(base, 1);
+    else if (x.repeat === 'weekly') due = addDays(base, 7);
+    else if (x.repeat === 'monthly') { const [y, m, d] = base.split('-').map(Number); const nd = new Date(y, m, Math.min(d, new Date(y, m + 1, 0).getDate())); due = dayStr(nd); }
+    while (x.repeat === 'daily' && due < dayStr()) due = addDays(due, 1);
+    const next = { ...x, id: uid(), done: false, doneAt: 0, due, createdAt: Date.now(), spawned: false };
+    x.spawned = true;
+    await db.put('tasks', x); await db.put('tasks', next);
+    state.tasks.push(next);
+    toast(`Concluída ✓ — próxima: ${fmtDue(due)}`);
+  } else if (x.done) toast('Tarefa concluída ✓');
+  if (!editorIsOpen()) render();
 }
 
 async function taskDialog(t) {
@@ -686,6 +728,8 @@ async function taskDialog(t) {
       <div class="grow"><label class="lbl">Pasta</label><select class="select full" id="t-folder">${folderOptions(t.folderId)}</select></div>
       <div class="grow"><label class="lbl">Anotação ligada</label><select class="select full" id="t-note">${noteOpts}</select></div>
     </div>
+    <label class="lbl">Repetir</label>
+    <select class="select full" id="t-repeat">${[['', 'Não repetir'], ['daily', 'Todo dia'], ['weekly', 'Toda semana'], ['monthly', 'Todo mês']].map(([k, l]) => `<option value="${k}" ${(t.repeat || '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
     <label class="lbl">Observações</label>
     <textarea class="input" id="t-notes" rows="3" placeholder="Detalhes, páginas do livro…">${esc(t.notes)}</textarea>
     ${isNew ? '' : `<label class="check"><input type="checkbox" id="t-done" ${t.done ? 'checked' : ''}> Concluída</label>`}
@@ -700,6 +744,7 @@ async function taskDialog(t) {
         prio: +el.querySelector('#t-prio').value, folderId: el.querySelector('#t-folder').value,
         noteId: el.querySelector('#t-note').value, notes: el.querySelector('#t-notes').value.trim(),
         done: el.querySelector('#t-done') ? el.querySelector('#t-done').checked : false,
+        repeat: el.querySelector('#t-repeat').value,
       }),
     }],
   });
@@ -818,6 +863,7 @@ $('backup-input').addEventListener('change', async e => {
     if (!(await confirmBox('Restaurar backup', `Restaurar ${n} anotação(ões), ${(data.folders || []).length} pasta(s) e ${t} tarefa(s)? Itens iguais serão substituídos; o resto é mantido.`, 'Restaurar', false))) return;
     for (const s of db.STORES) for (const it of data[s] || []) await db.put(s, it);
     await loadAll();
+    await reloadHub();
     document.querySelector('.modal-back')?._close?.(true);
     render();
     toast('Backup restaurado ✓');

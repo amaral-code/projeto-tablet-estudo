@@ -4,7 +4,20 @@ Caderno digital para estudar no **REDMI Pad 2** com a Redmi Smart Pen (ou com o 
 
 Funciona como aplicativo instalado (PWA): abre em tela cheia, funciona **sem internet** e guarda tudo no próprio tablet.
 
-## ✦ Assistente de IA (novo)
+## 🚀 Tudo em um: central de produtividade
+
+O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos apps de produtividade:
+
+| Seção | O que faz |
+|---|---|
+| 🏠 **Hoje** | Painel do dia com saudação, **sequência de dias estudando 🔥**, tarefas de hoje e atrasadas, próximos 7 dias, minutos de foco e meta diária, flashcards para revisar, hábitos do dia e as últimas anotações para continuar |
+| ⏱️ **Foco (Pomodoro)** | Ciclos de 25 min de foco com pausas de 5 e 15 min, todos ajustáveis. Você escolhe a matéria e a tarefa. Avisa com som, vibração e notificação, e mantém a tela acesa. Um **relógio flutuante** continua visível enquanto você escreve no caderno. Mostra estatísticas: hoje, últimos 7 dias, gráfico por dia e tempo por matéria |
+| 📅 **Agenda** | Calendário do mês com as tarefas de cada dia, os minutos de foco e os hábitos feitos. Toque num dia para ver os detalhes ou criar uma tarefa nele |
+| 🃏 **Flashcards** | Baralhos com **repetição espaçada**: as cartas que você erra voltam logo, e as que você sabe aparecem cada vez mais espaçadas (Errei / Difícil / Bom / Fácil). A **IA cria as cartas** a partir das suas anotações |
+| 🔥 **Hábitos** | Marque o que fez em cada dia da semana e acompanhe a sequência de cada hábito |
+| ✅ **Tarefas** | Agora com **repetição** (todo dia, toda semana ou todo mês): ao concluir uma, a próxima é criada sozinha |
+
+## ✦ Assistente de IA
 
 Toque no botão roxo **IA** dentro de uma anotação. A IA (Claude, da Anthropic) **lê a sua letra direto da folha**, sem precisar converter antes. Escolha **Seleção**, **Esta página** ou **Todas** e peça:
 
@@ -15,7 +28,7 @@ Toque no botão roxo **IA** dentro de uma anotação. A IA (Claude, da Anthropic
 | **Escrever mais** | Aprofunda a matéria com explicações, exemplos e detalhes que faltam |
 | **Explicar passo a passo** | Explica como um professor e resolve os exercícios mostrando onde você errou |
 | **Perguntas de revisão** | 10 perguntas, da mais fácil para a mais difícil, com gabarito |
-| **Flashcards** | Pares de pergunta e resposta para memorizar |
+| **Flashcards** | Cartas de pergunta e resposta. Um toque salva tudo num baralho para revisar na aba Flashcards |
 | **Plano de estudo** | Plano da semana. Um toque transforma o plano em **tarefas** |
 | **Pergunta livre** | Converse sobre a anotação ("o que é denominador?") |
 
@@ -86,6 +99,7 @@ js/export.js          gerador de PDF/PNG e compartilhamento
 js/ai.js              assistente de IA (Claude): pedidos, ações e tratamento de erros
 js/aipanel.js         painel da IA no editor e janela de IA para pastas/anotações
 js/importer.js        importação de PDF (pdf.js) e fotos como páginas
+js/hub.js             Hoje, Foco (Pomodoro), Agenda, Flashcards (repetição espaçada) e Hábitos
 js/vendor/            SDK oficial da Anthropic (@anthropic-ai/sdk 1.11.0) e pdf.js 6.5.438, embutidos
 js/store.js           banco local (IndexedDB) e configurações
 sw.js                 funcionamento offline

@@ -165,3 +165,19 @@ export function extractTasks(text) {
   if (!m) return [];
   return m.split('\n').map(l => l.replace(/^\s*(?:[-•*]|\d+[.)])\s*/, '').trim()).filter(l => l && !l.startsWith('#')).slice(0, 10);
 }
+
+// Lê pares "P: ... / R: ..." (também "Pergunta:"/"Resposta:" e "Q:"/"A:") de uma resposta de flashcards
+export function parseFlashcards(text) {
+  const out = [];
+  let cur = null;
+  for (const raw of cleanText(text).split('\n')) {
+    const line = raw.trim();
+    const q = line.match(/^(?:\d+[.)]\s*)?(?:P|Pergunta|Q|Frente)\s*[:\-–]\s*(.+)$/i);
+    const a = line.match(/^(?:R|Resposta|A|Verso)\s*[:\-–]\s*(.+)$/i);
+    if (q) { if (cur && cur.back) out.push(cur); cur = { front: q[1].trim(), back: '' }; }
+    else if (a && cur) cur.back = cur.back ? cur.back + '\n' + a[1].trim() : a[1].trim();
+    else if (line && cur && cur.back) cur.back += '\n' + line;
+  }
+  if (cur && cur.back) out.push(cur);
+  return out.filter(c => c.front && c.back);
+}

@@ -1,5 +1,5 @@
 // Interface do Assistente IA: painel lateral no editor e janela para pastas/anotações.
-import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTasks, MAX_PAGES } from './ai.js';
+import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTasks, parseFlashcards, MAX_PAGES } from './ai.js';
 import { getEditorContext, insertText } from './editor.js';
 import { shareText } from './export.js';
 import { ic, esc, h, toast, modal } from './ui.js';
@@ -229,6 +229,8 @@ function renderLog() {
         <button class="chip small" data-r="copy">${ic('copy')}<span>Copiar</span></button>
         <button class="chip small" data-r="share">${ic('share')}<span>Enviar</span></button></div>`);
       const tasks = last && conv.action === 'plan' ? extractTasks(t.text) : [];
+      const fcs = last && conv.action === 'flashcards' ? parseFlashcards(t.text) : [];
+      if (fcs.length) bar.prepend(h(`<button class="chip small on" data-r="cards">${ic('cards')}<span>Salvar ${fcs.length} flashcards</span></button>`));
       if (tasks.length) {
         const tb = h(`<button class="chip small on" data-r="tasks">${ic('tasks')}<span>Criar ${tasks.length} tarefas</span></button>`);
         bar.prepend(tb);
@@ -244,6 +246,10 @@ function renderLog() {
         } else if (b.dataset.r === 'share') {
           const r = await shareText(txt, 'Caderno de Estudos');
           if (r === 'copied') toast('Texto copiado — cole onde quiser');
+        } else if (b.dataset.r === 'cards') {
+          const r = await cb.onSaveCards(fcs, getEditorContext()?.meta);
+          toast(`${r.n} flashcards salvos em “${r.deck.name}” ✓ — revise na aba Flashcards`, 4000);
+          b.remove();
         } else if (b.dataset.r === 'tasks') {
           const n = await cb.onCreateTasks(tasks, getEditorContext()?.meta);
           if (n) { toast(`${n} tarefas criadas ✓`); b.remove(); }

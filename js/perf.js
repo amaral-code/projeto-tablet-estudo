@@ -2,7 +2,7 @@
 // Atalhos para outros apps e Busca global.
 import { ic, esc, h, toast, modal, confirmBox, menu, richText } from './ui.js';
 import { speak } from './voice.js';
-import { dayStr, addDays, hubData, reviewsByDay, studyStreak, markHabitToday, startFocus } from './hub.js';
+import { dayStr, addDays, hubData, reviewsByDay, studyStreak, markHabitToday, startFocus, calendarOn } from './hub.js';
 import { aiConfigured, streamChat, cleanText, extractTasks } from './ai.js';
 import { quickData } from './quicknotes.js';
 import { chatsData, openChat } from './tutor.js';
@@ -63,11 +63,44 @@ export function shortcutURL(s, android = isAndroid()) {
   return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=${s.pkg};${fb};end`;
 }
 export function openShortcut(s) {
+  if (s.id === 'kindle' && s.pkg === 'com.amazon.kindle') { openKindle(); return; }
   const target = shortcutURL(s);
   if (target.startsWith('intent:')) location.href = target;
   else window.open(target, '_blank', 'noopener');
 }
-export function openKindle() { openShortcut(shortcuts().find(s => s.id === 'kindle') || DEFAULT_SHORTCUTS[0]); }
+
+// Kindle: o app do Kindle não abre por um link de site, então tentamos os caminhos que abrem o app instalado,
+// um de cada vez. Se um caminho não funcionar, o Chrome volta para o Caderno (?kt=N) e oferecemos o próximo.
+// O caminho que funcionou fica guardado e é usado direto nas próximas vezes.
+const KINDLE_TRIES = [
+  'intent://book/#Intent;scheme=kindle;package=com.amazon.kindle;{fb}end',
+  'intent://home#Intent;scheme=kindle;package=com.amazon.kindle;{fb}end',
+  'intent://read.amazon.com/kindle-library#Intent;scheme=https;package=com.amazon.kindle;{fb}end',
+  'intent://details?id=com.amazon.kindle#Intent;scheme=market;package=com.android.vending;end',
+];
+const KINDLE_KEY = 'caderno-kindle-jeito';
+export const kindleURL = (i, base = location.origin + location.pathname) =>
+  KINDLE_TRIES[Math.min(i, KINDLE_TRIES.length - 1)].replace('{fb}', `S.browser_fallback_url=${encodeURIComponent(`${base}?kt=${i + 1}`)};`);
+export function openKindle(start) {
+  if (!isAndroid()) { window.open('https://read.amazon.com/', '_blank', 'noopener'); return; }
+  const i = Math.min(KINDLE_TRIES.length - 1, Math.max(0, start ?? (+localStorage.getItem(KINDLE_KEY) || 0)));
+  try { localStorage.setItem(KINDLE_KEY, String(i)); } catch { /* */ }
+  location.href = kindleURL(i);
+}
+// O Chrome voltou para o Caderno: aquele caminho não abriu o app
+export async function kindleRetry(n) {
+  const i = Math.min(KINDLE_TRIES.length - 1, Math.max(1, n));
+  try { localStorage.setItem(KINDLE_KEY, String(i)); } catch { /* */ }
+  const last = i === KINDLE_TRIES.length - 1;
+  const a = await modal({
+    title: '📚 Abrir o Kindle',
+    body: `<p>${last ? 'O Kindle não abriu pelos caminhos diretos. Vou abrir a página do Kindle na <b>Play Store</b>: lá, toque em <b>Abrir</b>. (Se aparecer <b>Instalar</b>, o app não está instalado neste tablet.)'
+      : `Esse caminho não abriu o app do Kindle. Toque em <b>Tentar de novo</b> para usar outro caminho (${i + 1} de ${KINDLE_TRIES.length}). Quando funcionar, o app lembra e abre direto nas próximas vezes.`}</p>`,
+    actions: [{ label: 'Kindle na web', value: 'web' }, { label: last ? 'Abrir a Play Store' : 'Tentar de novo', value: 'try', primary: true }],
+  });
+  if (a === 'try') openKindle(i);
+  else if (a === 'web') window.open('https://read.amazon.com/', '_blank', 'noopener');
+}
 
 function shortcutsHTML() {
   return `<div class="shortcuts">${shortcuts().map(s => `<button class="shortcut" data-sc="${esc(s.id)}"><span class="sc-ic">${esc(s.icon || '🔗')}</span><span>${esc(s.name)}</span></button>`).join('')}
@@ -665,7 +698,7 @@ export async function openPalette() {
       ['Lançar nota ou prova', 'award', () => gradeDialog()], ['Revisar flashcards', 'cards', () => A.goTo({ kind: 'cards' })],
       ['Relatório da semana', 'chart', () => A.goTo({ kind: 'report' })], ['Importar PDF', 'upload', () => A.importPdf()],
       ['Ajustes e IA', 'settings', () => A.settings()],
-      ['Nova nota rápida', 'sticky', () => A.quick('quicknote')], ['Gravar a aula (áudio)', 'mic', () => A.quick('record')],
+      ['Nova nota rápida', 'sticky', () => A.quick('quicknote')], ['Novo evento na agenda', 'calendar', () => A.quick('event')], ['Gravar a aula (áudio)', 'mic', () => A.quick('record')],
       ['Perguntar ao tutor IA', 'chat', () => A.goTo({ kind: 'tutor' })],
       ...Object.entries(A.views()).map(([k, v]) => [`Ir para ${v.title}`, v.icon, () => A.goTo({ kind: k })]),
     ].map(([label, icon, run]) => ({ label, icon, run, kind: 'Ação' }));
@@ -677,8 +710,9 @@ export async function openPalette() {
     const cards = hubData().cards.map(c => ({ label: c.front.slice(0, 70), text: c.back, icon: 'cards', kind: 'Flashcard', run: () => A.goTo({ kind: 'cards' }) }));
     const decks = hubData().decks.map(d => ({ label: d.name, icon: 'cards', kind: 'Baralho', run: () => A.goTo({ kind: 'cards' }) }));
     const books = P.books.map(b => ({ label: b.title, icon: 'bookOpen', kind: 'Livro', run: () => logReading(b) }));
+    const events = (A.ev ? A.ev.eventsData() : []).map(e => ({ label: e.title, text: `${e.notes || ''} ${e.date.split('-').reverse().join('/')}`, icon: 'calendar', kind: 'Evento', run: () => calendarOn(e.date) }));
     const folders = A.state.folders.map(f => ({ label: f.name, icon: 'folder', kind: 'Pasta', run: () => A.goTo({ kind: 'notes', filter: f.id }) }));
-    return [...acts, ...notes, ...tasks, ...quick, ...folders, ...decks, ...books, ...chats, ...cards];
+    return [...acts, ...events, ...notes, ...tasks, ...quick, ...folders, ...decks, ...books, ...chats, ...cards];
   };
   const all = items();
   const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

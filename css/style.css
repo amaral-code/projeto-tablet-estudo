@@ -1038,3 +1038,38 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 .pal-item { min-height: 50px; }
 .pal-item .grow { min-width: 0; overflow: hidden; }
 .flash-head { width: 100%; }
+
+/* ======================= EVENTOS DA AGENDA ======================= */
+.cal-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.cal-day h4, .cal-next h4 { margin: 14px 0 6px; }
+.cal-t.ev { font-weight: 700; background: color-mix(in srgb, var(--ev) 16%, var(--panel)); border-left-color: var(--ev); --ev: #ff8a00; }
+.cal-t.ev.p1 { --ev: #1f9d4a; } .cal-t.ev.p3 { --ev: var(--danger); }
+.cal-cell.has-high .cal-n { box-shadow: 0 0 0 2px var(--danger); }
+.ev-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.ev-row { --ev: #ff8a00; display: flex; align-items: center; gap: 6px; padding: 8px 2px 8px 10px; border-radius: 12px; background: var(--panel-2); border-left: 4px solid var(--ev); cursor: pointer; }
+.ev-row.p1 { --ev: #1f9d4a; } .ev-row.p3 { --ev: var(--danger); }
+.ev-ic { font-size: 20px; flex: none; }
+.ev-txt { display: flex; flex-direction: column; min-width: 0; }
+.ev-txt b { font-size: 15px; overflow-wrap: anywhere; }
+.ev-txt small { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.ev-badge { display: inline-block; vertical-align: 1px; margin-right: 2px; flex: none; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: 3px 8px; border-radius: 10px; color: #fff; background: #d97706; }
+.ev-badge.p1 { background: #1f8a43; } .ev-badge.p3 { background: #d93a30; }
+.ev-del { color: var(--danger); }
+.ev-notif { margin: 0 0 10px; }
+.ev-notif.off { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(245, 179, 1, .14); }
+.ev-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.seg.ev-prio button.p1.active { background: #1f8a43; color: #fff; }
+.seg.ev-prio button.p2.active { background: #d97706; color: #fff; }
+.seg.ev-prio button.p3.active { background: #d93a30; color: #fff; }
+.ev-mini { --ev: #ff8a00; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; border-left: 4px solid var(--ev); background: var(--panel-2); margin-top: 6px; font-size: 14px; }
+.ev-mini.p1 { --ev: #1f9d4a; } .ev-mini.p3 { --ev: var(--danger); }
+.ev-mini .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ======================= METAS POR ÁREA ======================= */
+.gl-filter { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 8px; margin-bottom: 4px; }
+.gl-filter .chip { flex: none; }
+.gl-filter .chip em { font-style: normal; font-size: 12px; opacity: .75; margin-left: 2px; }
+.gl-sec small { font-weight: 500; font-size: 13px; margin-left: 6px; }
+.gl-empty { margin: 16px 2px; }
+.gl-area-tag { display: block; font-size: 12px; color: var(--muted); font-weight: 600; margin-top: 2px; }
+.gl-areas { display: flex; flex-wrap: wrap; gap: 6px; }

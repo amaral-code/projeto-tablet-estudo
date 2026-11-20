@@ -108,7 +108,11 @@ Toque no botão roxo **IA** dentro de uma anotação. A IA **lê a sua letra dir
 
 O resultado pode ser **escrito na folha**, alinhado às pautas, **ouvido em voz alta**, copiado ou enviado. Pelo menu **⋮** de uma anotação ou de uma pasta, dá para resumir uma **pasta inteira** e salvar como anotação nova. A mesma IA faz o **Tutor**, o **Simulado**, o resumo das **gravações de aula**, a análise do **Relatório** e o resumo do **Diário**.
 
-### Como ligar (grátis, pelo tablet)
+### Já vem ligada
+
+A chave do Gemini pode vir **dentro do app** (arquivo `js/chave.js`): assim a IA funciona sem configurar nada. Se um dia ela parar (por exemplo, se o Google desativar a chave), crie outra e cole em **Ajustes e IA**: a chave colada tem prioridade sobre a embutida.
+
+### Usar outra chave (opcional)
 
 1. Entre em **aistudio.google.com/apikey** com a sua conta Google.
 2. Toque em **Create API key** (Criar chave de API) e copie a chave.
@@ -151,7 +155,7 @@ Medido de verdade em 20/11/2026: texto em **0,8 s**, página do caderno lida em 
 - **Onde ficam os dados:** tudo é gravado na hora no **banco de dados do próprio app** (IndexedDB do Chrome), mesmo sem internet: anotações, tarefas, flashcards, notas rápidas, conversas, gravações… Em **Dados e backup**, toque em **Proteger meus dados** para o Android não apagar nada quando faltar espaço (instalar o app na tela inicial ajuda).
 - **Cópias automáticas:** uma por dia, guardadas dentro do app (as 3 mais recentes). Servem para **voltar no tempo** se algo der errado. Elas não levam o áudio das gravações, que continua salvo.
 - **Backup em arquivo:** de vez em quando, toque em **Exportar backup** e guarde o arquivo no Google Drive. Ele leva tudo, até as gravações. **A chave da IA não vai no backup**, por segurança. Não limpe os dados do Chrome sem ter um backup.
-- **IA:** precisa de internet e da sua chave do Gemini, que fica salva só neste tablet e é enviada apenas para o Google. No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele. Não use a sua chave no tablet de outra pessoa e, se ela vazar, apague-a em aistudio.google.com/apikey e crie outra.
+- **IA:** precisa de internet. A chave do Gemini está embutida no código, que é público: qualquer pessoa que olhar o código pode usá-la e gastar a cota grátis, e o Google pode desativar chaves publicadas. Se isso acontecer, crie outra e cole em Ajustes e IA. No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele. Não use a sua chave no tablet de outra pessoa e, se ela vazar, apague-a em aistudio.google.com/apikey e crie outra.
 - **Gravações:** ocupam cerca de **10 MB por hora** de aula. A IA consegue resumir de uma vez gravações de até cerca de 1 hora.
 - **Correção de escrita e verificação de contas precisam de internet.** Elas usam o reconhecimento de escrita à mão do Google (o mesmo do teclado de escrita do Google), que não é uma API oficial. Se um dia parar, o resto do app continua funcionando. Todo o resto funciona offline.
 - As contas aceitam `+ − × ÷ : x / ^ √ %`, parênteses e vírgula decimal (`2,5`).

@@ -2,6 +2,7 @@
 // As páginas vão como imagens (o Gemini lê a escrita à mão) e as gravações de aula, como áudio.
 import { renderPage, loadPageImages, PAGE_W, PAGE_H } from './ink.js';
 import { settings } from './store.js';
+import { CHAVE_GEMINI } from './chave.js';
 
 // Medido de verdade em 20/11/2026 com a chave do estudante:
 //  - gemini-flash-lite-latest + raciocínio "low": 0,6–0,7 s para responder (o mais rápido);
@@ -56,7 +57,12 @@ export const ACTIONS = {
   },
 };
 
-export function aiConfigured() { return !!(settings.geminiKey && settings.geminiKey.trim()); }
+// Chave embutida (js/chave.js); a chave colada em Ajustes tem prioridade
+const BUILTIN_KEY = (CHAVE_GEMINI || '').trim();
+export const hasBuiltinKey = () => !!BUILTIN_KEY;
+export const usingBuiltinKey = () => !!BUILTIN_KEY && !(settings.geminiKey || '').trim();
+export const geminiKey = () => (settings.geminiKey || '').trim() || BUILTIN_KEY;
+export function aiConfigured() { return !!geminiKey(); }
 
 async function renderToImage(page, bg, region) {
   await loadPageImages(page);
@@ -174,7 +180,7 @@ export function streamChat(messages, onText, opts = {}) {
   if (!aiConfigured()) throw new AIError('Ligue a IA: cole a chave do Gemini em Ajustes → Inteligência artificial.');
   if (!navigator.onLine) throw new AIError('Sem internet: a IA precisa de conexão.');
   const ctrl = new AbortController();
-  const key = settings.geminiKey.trim();
+  const key = geminiKey();
   const blocks = messages.flatMap(m => (Array.isArray(m.content) ? m.content : []));
   const hasAudio = blocks.some(b => b.type === 'audio');
   const nImages = blocks.filter(b => b.type === 'image').length;

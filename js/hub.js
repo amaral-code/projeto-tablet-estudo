@@ -651,8 +651,10 @@ function renderCalendar(el) {
     const ds = dayStr(d);
     const ts = (tasksBy.get(ds) || []).sort((a, b) => a.done - b.done || b.prio - a.prio);
     const fm = focusBy.get(ds);
-    cells.push(`<button class="cal-cell ${d.getMonth() !== cal.m ? 'out' : ''} ${ds === today ? 'today' : ''} ${ds === cal.sel ? 'sel' : ''}" data-d="${ds}">
+    const evs = A.ev ? A.ev.eventsOn(ds) : [];
+    cells.push(`<button class="cal-cell ${d.getMonth() !== cal.m ? 'out' : ''} ${ds === today ? 'today' : ''} ${ds === cal.sel ? 'sel' : ''} ${evs.some(e => +e.prio === 3) ? 'has-high' : ''}" data-d="${ds}">
       <span class="cal-n">${d.getDate()}</span>
+      ${evs.map(e => `<span class="cal-t ev p${e.prio}">${esc(e.title)}</span>`).join('')}
       ${(A.examsOn ? A.examsOn(ds) : []).map(g => `<span class="cal-t exam">📝 ${esc(g.title)}</span>`).join('')}
       ${ts.slice(0, 3).map(t => `<span class="cal-t p${t.prio} ${t.done ? 'done' : ''} ${!t.done && ds < today ? 'late' : ''}">${esc(t.title)}</span>`).join('')}
       ${ts.length > 3 ? `<span class="cal-more">+${ts.length - 3}</span>` : ''}
@@ -670,13 +672,19 @@ function renderCalendar(el) {
         <button class="icon-btn" id="cal-next" aria-label="Próximo mês">${ic('right')}</button></div>
       <div class="cal-grid">${WD.map(w => `<span class="cal-wd">${w}</span>`).join('')}${cells.join('')}</div>
     </div>
+    <div class="cal-side">
     <div class="panel cal-day">
       <h3>${esc(longDate(sel))}</h3>
+      ${A.ev ? `<h4>Eventos</h4><div class="ev-list">${A.ev.eventsOn(sel).map(e => A.ev.eventRow(e)).join('') || '<p class="muted small">Nenhum evento neste dia.</p>'}</div>
+      <button class="btn primary" id="cal-addev">${ic('plus')}<span>Evento neste dia</span></button><h4>Tarefas</h4>` : ''}
       ${(A.examsOn ? A.examsOn(sel) : []).map(g => `<div class="exam-mini soon"><b>📝</b><span class="grow">${esc(g.title)} <span class="muted small">· ${esc(A.folderName(g.folderId) || 'Geral')}${g.score != null ? ` · nota ${g.score}` : ''}</span></span></div>`).join('')}
       <div class="mini-tasks">${dayTasks.map(t => miniTask(t)).join('') || '<p class="muted small">Nenhuma tarefa neste dia.</p>'}</div>
       <button class="btn" id="cal-add">${ic('plus')}<span>Tarefa neste dia</span></button>
       ${daySessions.length ? `<h4>Foco</h4>${daySessions.map(s => `<div class="subj-row"><span class="dot" style="background:${s.folderId ? A.folderColor(s.folderId) : '#9aa0a6'}"></span><span class="grow">${esc(s.folderId ? A.folderName(s.folderId) : 'Geral')}</span><b>${fmtMin(s.minutes)}</b></div>`).join('')}` : ''}
       ${dayHabits.length ? `<h4>Hábitos feitos</h4><p>${dayHabits.map(hb => `<span class="tag"><span class="dot" style="background:${hb.color}"></span>${esc(hb.name)}</span>`).join(' ')}</p>` : ''}
+    </div>
+    ${A.ev ? `<div class="panel cal-next"><h3>${ic('calendar')}Próximos eventos</h3>${A.ev.notifHTML()}
+      <div class="ev-list">${A.ev.upcoming(60).map(e => A.ev.eventRow(e, { showDate: true })).join('') || '<p class="muted small">Nenhum evento nos próximos 60 dias. Toque em <b>Novo evento</b> para salvar provas, trabalhos, aniversários…</p>'}</div></div>` : ''}
     </div></div>`;
   const go = dm => { cal.m += dm; if (cal.m < 0) { cal.m = 11; cal.y--; } if (cal.m > 11) { cal.m = 0; cal.y++; } renderCalendar(el); };
   el.querySelector('#cal-prev').onclick = () => go(-1);
@@ -684,6 +692,12 @@ function renderCalendar(el) {
   el.querySelector('#cal-today').onclick = () => { const d = new Date(); cal = { y: d.getFullYear(), m: d.getMonth(), sel: today }; renderCalendar(el); };
   el.querySelector('.cal-grid').onclick = e => { const b = e.target.closest('[data-d]'); if (b) { cal.sel = b.dataset.d; renderCalendar(el); } };
   el.querySelector('#cal-add').onclick = () => A.taskDialog({ due: sel });
+  if (A.ev) {
+    el.querySelector('#cal-addev').onclick = () => A.ev.eventDialog(null, { date: sel });
+    A.ev.bindEventRows(el);
+    A.ev.bindNotif(el, () => renderCalendar(el));
+    el.querySelectorAll('.cal-next [data-ev]').forEach(r => r.onclick = () => { const e = A.ev.eventsData().find(x => x.id === r.dataset.ev); if (e) { const d = new Date(e.date + 'T00:00'); cal = { y: d.getFullYear(), m: d.getMonth(), sel: e.date }; renderCalendar(el); } });
+  }
   bindMiniTasks(el);
 }
 function miniTask(t, showDue) {
@@ -782,11 +796,11 @@ function rerenderIf(kind) { if (currentKind === kind) { const el = document.getE
 export function hubNewAction(kind) {
   if (kind === 'cards') return deckDialog();
   if (kind === 'habits') return habitDialog();
-  if (kind === 'calendar') return A.taskDialog({ due: cal ? cal.sel : dayStr() });
+  if (kind === 'calendar') return A.ev ? A.ev.eventDialog(null, { date: cal ? cal.sel : dayStr() }) : A.taskDialog({ due: cal ? cal.sel : dayStr() });
   if (kind === 'focus') return (T.running ? pauseT() : startT());
   return A.newNote();
 }
-export const HUB_NEW_LABEL = { today: 'Nova anotação', calendar: 'Nova tarefa', focus: 'Iniciar/pausar', cards: 'Novo baralho', habits: 'Novo hábito' };
+export const HUB_NEW_LABEL = { today: 'Nova anotação', calendar: 'Novo evento', focus: 'Iniciar/pausar', cards: 'Novo baralho', habits: 'Novo hábito' };
 export function hubCounts() { return { cards: dueCards().length, habits: H.habits.filter(hb => !hb.days[dayStr()]).length, running: T.running }; }
 // ----- dados para outros módulos (relatório, leitura) -----
 const RKEY = 'caderno-revisoes';
@@ -798,6 +812,8 @@ export function hubData() { return H; }
 export function focusCfg() { return T.cfg; }
 export function startFocus() { if (!T.running) startT(); }
 // Começa um foco já com a matéria e a tarefa escolhidas (usado pelo "O que fazer agora")
+// Abre a Agenda já no dia escolhido
+export function calendarOn(date) { const d = new Date(date + 'T00:00'); cal = { y: d.getFullYear(), m: d.getMonth(), sel: date }; A.goTo({ kind: 'calendar' }); }
 export function startFocusFor({ folderId = '', taskId = '' } = {}) {
   if (T.running) { toast('Já existe um foco rodando'); return; }
   if (T.mode !== 'focus') resetT('focus');

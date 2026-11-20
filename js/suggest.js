@@ -1,6 +1,6 @@
 // "O que fazer agora": olha tudo o que existe no app e sugere os próximos passos, já com o botão de ação.
 import { ic, esc } from './ui.js';
-import { dayStr, addDays, hubData, dueCount, focusCfg, focusToday, startFocusFor, reviewNow, markHabitDone } from './hub.js';
+import { dayStr, addDays, hubData, dueCount, focusCfg, focusToday, startFocusFor, reviewNow, markHabitDone, calendarOn } from './hub.js';
 import { perfData } from './perf.js';
 import { classNow, notesToReview } from './plus.js';
 import { goalsList, progress } from './goals.js';
@@ -23,6 +23,15 @@ export function suggestions(now = new Date()) {
   if (cls) {
     const name = cls.folderId ? fname(cls.folderId) : cls.name;
     add(100, 'clock', `Anotar a aula de ${name}`, `Acontecendo agora, até ${cls.end}`, 'Anotar', () => A.noteForClass(cls), 'blue');
+  }
+  // eventos importantes de hoje e de amanhã
+  if (A.ev) {
+    const tomorrow = addDays(today, 1);
+    for (const e of A.ev.upcoming(1)) {
+      const isToday = e.date === today, hi = +e.prio === 3;
+      add((isToday ? 92 : 74) + (hi ? 6 : 0), 'calendar', `${isToday ? 'Hoje' : 'Amanhã'}: ${e.title}`, `${e.time ? `Às ${e.time} · ` : ''}Prioridade ${['', 'baixa', 'média', 'alta'][e.prio] || 'média'}${e.notes ? ` · ${e.notes}` : ''}`, 'Ver', () => calendarOn(e.date), hi ? 'red' : 'orange');
+      if (e.date > tomorrow) break;
+    }
   }
   // provas chegando
   for (const g of perfData().grades.filter(x => x.score == null && x.date >= today)) {

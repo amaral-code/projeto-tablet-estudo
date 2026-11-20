@@ -1,5 +1,5 @@
 // Metas: objetivos com progresso automático (calculado com o que você faz no app).
-import { ic, esc, h, toast, modal, confirmBox, menu } from './ui.js';
+import { ic, esc, h, toast, modal, confirmBox, menu, promptText } from './ui.js';
 import { dayStr, addDays, hubData, reviewsByDay } from './hub.js';
 import { perfData, subjectAverage } from './perf.js';
 
@@ -32,6 +32,26 @@ const PRESETS = [
   ['manual', 'Fazer 10 simulados', 10, 30],
 ];
 
+// Áreas para separar as metas (dá para criar as suas)
+const BASE_AREAS = [
+  { id: 'estudos', emoji: '📚', name: 'Estudos' }, { id: 'leitura', emoji: '📖', name: 'Leitura' },
+  { id: 'saude', emoji: '💪', name: 'Saúde e esporte' }, { id: 'pessoal', emoji: '🌱', name: 'Pessoal' },
+  { id: 'dinheiro', emoji: '💰', name: 'Dinheiro' }, { id: 'trabalho', emoji: '💼', name: 'Trabalho e cursos' },
+];
+const AREA_KEY = 'caderno-areas-metas', FILTER_KEY = 'caderno-metas-filtro';
+const customAreas = () => { try { return JSON.parse(localStorage.getItem(AREA_KEY) || '[]'); } catch { return []; } };
+export const areas = () => [...BASE_AREAS, ...customAreas()];
+const DEFAULT_AREA = { focus: 'estudos', cards: 'estudos', tasks: 'estudos', grade: 'estudos', pages: 'leitura', books: 'leitura', habit: 'pessoal', manual: 'pessoal' };
+export const areaOf = g => (areas().some(a => a.id === g.area) ? g.area : DEFAULT_AREA[g.type] || 'pessoal');
+const areaById = id => areas().find(a => a.id === id) || BASE_AREAS[3];
+async function newArea() {
+  const name = await promptText('Nova área de metas', '', 'Ex.: Música, Inglês, Família…');
+  if (!name || !name.trim()) return null;
+  const a = { id: 'a-' + Date.now().toString(36), emoji: '⭐', name: name.trim().slice(0, 30) };
+  try { localStorage.setItem(AREA_KEY, JSON.stringify([...customAreas(), a])); } catch { /* */ }
+  return a;
+}
+
 export async function initGoals(api) { A = api; G = await A.db.all('goals'); }
 export async function reloadGoals() { G = await A.db.all('goals'); }
 
@@ -51,10 +71,15 @@ async function goalDialog(g, preset) {
   const isNew = !g;
   g = g ? { ...g } : { id: A.uid(), title: '', type: 'focus', target: '', start: dayStr(), deadline: addDays(dayStr(), 30), count: 0, createdAt: Date.now() };
   if (preset) Object.assign(g, { type: preset[0], title: preset[1], target: preset[2], deadline: preset[3] ? addDays(dayStr(), preset[3]) : '' });
+  const filt = localStorage.getItem(FILTER_KEY);
+  let area = g.area || (isNew && filt && filt !== 'all' ? filt : areaOf(g));
+  let areaTouched = !!g.area || (isNew && filt && filt !== 'all');
   const habits = hubData().habits;
   const body = h(`<div>
     <label class="lbl">Tipo de meta</label>
     <select class="select full" id="gl-type">${Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${g.type === k ? 'selected' : ''}>${t.label}</option>`).join('')}</select>
+    <label class="lbl">Área</label>
+    <div class="gl-areas" id="gl-areas"></div>
     <label class="lbl">Nome da meta</label><input class="input" id="gl-title" value="${esc(g.title)}" placeholder="Ex.: Estudar 20 horas este mês">
     <div class="row"><div class="grow"><label class="lbl" id="gl-tlabel">Quanto</label><input class="input" id="gl-target" inputmode="decimal" value="${esc(g.target)}"></div>
       <div class="grow"><label class="lbl">Prazo (opcional)</label><input class="input" type="date" id="gl-deadline" value="${esc(g.deadline || '')}"></div></div>
@@ -70,7 +95,17 @@ async function goalDialog(g, preset) {
     body.querySelector('#gl-tlabel').textContent = t === 'grade' ? 'Média que quero (0 a 10)' : `Quanto (${TYPES[t].unit || 'vezes'})`;
     body.querySelector('#gl-help').textContent = t === 'manual' ? 'Você mesmo marca +1 cada vez que fizer.' : t === 'grade' ? 'Usa a média lançada em Notas e provas.' : 'O progresso é calculado sozinho com o que você registra no app.';
   };
-  body.querySelector('#gl-type').onchange = sync;
+  const drawAreas = () => {
+    body.querySelector('#gl-areas').innerHTML = areas().map(a => `<button type="button" class="chip small ${a.id === area ? 'on' : ''}" data-area="${a.id}">${a.emoji} ${esc(a.name)}</button>`).join('')
+      + '<button type="button" class="chip small" data-area="+">＋ Nova área</button>';
+  };
+  body.querySelector('#gl-areas').onclick = async e => {
+    const b = e.target.closest('[data-area]'); if (!b) return;
+    if (b.dataset.area === '+') { const a = await newArea(); if (a) area = a.id; } else area = b.dataset.area;
+    areaTouched = true; drawAreas();
+  };
+  drawAreas();
+  body.querySelector('#gl-type').onchange = () => { sync(); if (!areaTouched) { area = DEFAULT_AREA[body.querySelector('#gl-type').value] || area; drawAreas(); } };
   sync();
   const res = await modal({
     title: isNew ? 'Nova meta' : 'Editar meta', body,
@@ -93,7 +128,7 @@ async function goalDialog(g, preset) {
   });
   if (!res) return;
   const { past, ...data } = res;
-  Object.assign(g, data);
+  Object.assign(g, data, { area });
   // "contar o que já fiz" começa do zero da história; senão, conta a partir de hoje (ou da data original)
   if (past) g.start = '2000-01-01';
   else if (isNew || g.start === '2000-01-01') g.start = dayStr();
@@ -117,8 +152,9 @@ function goalCard(g) {
   const t = TYPES[g.type] || TYPES.manual;
   const p = progress(g);
   const val = g.type === 'focus' || g.type === 'grade' ? fmt1(p.value) : Math.floor(p.value);
-  return `<div class="panel goal-card ${p.done ? 'done' : ''} ${p.late ? 'late' : ''}">
-    <div class="deck-top"><span class="map-ic small">${ic(t.icon)}</span><b class="grow">${esc(g.title)}</b>
+  const ar = areaById(areaOf(g));
+  return `<div class="panel goal-card ${p.done ? 'done' : ''} ${p.late ? 'late' : ''}" data-area="${ar.id}">
+    <div class="deck-top"><span class="map-ic small">${ic(t.icon)}</span><span class="grow"><b>${esc(g.title)}</b><small class="gl-area-tag">${ar.emoji} ${esc(ar.name)}</small></span>
       <button class="icon-btn small" data-gmore="${g.id}" aria-label="Opções">${ic('more')}</button></div>
     <div class="goal-num"><b>${val}</b><span>de ${fmt1(g.target)} ${esc(t.unit)}</span>${p.done ? '<span class="status good">' + ic('check') + 'Concluída</span>' : ''}</div>
     <div class="goal-bar"><i style="width:${p.pct}%"></i></div>
@@ -128,13 +164,26 @@ function goalCard(g) {
 }
 
 export function renderGoals(el) {
-  const active = G.filter(g => !progress(g).done).sort((a, b) => (a.deadline || '9') < (b.deadline || '9') ? -1 : 1);
-  const done = G.filter(g => progress(g).done);
-  el.innerHTML = `${G.length ? '' : `<div class="panel"><h3>${ic('target')}Comece com uma meta</h3><p class="muted small">Toque numa sugestão ou crie a sua.</p>
+  let filt = localStorage.getItem(FILTER_KEY) || 'all';
+  if (filt !== 'all' && !areas().some(a => a.id === filt)) filt = 'all';
+  const inF = g => filt === 'all' || areaOf(g) === filt;
+  const byDeadline = (a, b) => ((a.deadline || '9') < (b.deadline || '9') ? -1 : 1);
+  const active = G.filter(g => !progress(g).done && inF(g)).sort(byDeadline);
+  const done = G.filter(g => progress(g).done && inF(g));
+  const count = id => G.filter(g => areaOf(g) === id && !progress(g).done).length;
+  const used = areas().filter(a => G.some(g => areaOf(g) === a.id) || a.id === filt);
+  // com "Todas", as metas em andamento ficam separadas por área
+  const groups = filt === 'all' ? used.map(a => [a, active.filter(g => areaOf(g) === a.id)]).filter(([, l]) => l.length) : [[areaById(filt), active]];
+  el.innerHTML = `${G.length ? `<div class="gl-filter" role="tablist" aria-label="Separar metas por área">
+      <button class="chip ${filt === 'all' ? 'on' : ''}" data-filt="all">Todas <em>${G.filter(g => !progress(g).done).length}</em></button>
+      ${used.map(a => `<button class="chip ${filt === a.id ? 'on' : ''}" data-filt="${a.id}">${a.emoji} ${esc(a.name)} <em>${count(a.id)}</em></button>`).join('')}</div>`
+    : `<div class="panel"><h3>${ic('target')}Comece com uma meta</h3><p class="muted small">Toque numa sugestão ou crie a sua. Depois você separa as metas por área: Estudos, Leitura, Saúde, Pessoal…</p>
       <div class="presets">${PRESETS.map((p, i) => `<button class="chip" data-preset="${i}">${esc(p[1])}</button>`).join('')}</div></div>`}
-    ${active.length ? `<h3 class="sec">Em andamento</h3><div class="goal-grid">${active.map(goalCard).join('')}</div>` : ''}
-    <div class="goal-grid" style="margin-top:14px"><button class="panel goal-card new-deck" id="gl-new">${ic('plus')}<span>Nova meta</span></button></div>
+    ${groups.map(([a, list]) => list.length ? `<h3 class="sec gl-sec">${a.emoji} ${esc(a.name)} <small class="muted">${list.length} em andamento</small></h3><div class="goal-grid">${list.map(goalCard).join('')}</div>`
+      : `<p class="muted gl-empty">Nenhuma meta em andamento em ${a.emoji} ${esc(a.name)}.</p>`).join('')}
+    <div class="goal-grid" style="margin-top:14px"><button class="panel goal-card new-deck" id="gl-new">${ic('plus')}<span>Nova meta${filt !== 'all' ? ` em ${esc(areaById(filt).name)}` : ''}</span></button></div>
     ${done.length ? `<h3 class="sec">Concluídas 🎉</h3><div class="goal-grid">${done.map(goalCard).join('')}</div>` : ''}`;
+  el.querySelectorAll('[data-filt]').forEach(b => b.onclick = () => { try { localStorage.setItem(FILTER_KEY, b.dataset.filt); } catch { /* */ } renderGoals(el); });
   el.querySelector('#gl-new').onclick = () => goalDialog();
   el.querySelectorAll('[data-preset]').forEach(b => b.onclick = () => goalDialog(null, PRESETS[+b.dataset.preset]));
   el.querySelectorAll('[data-inc],[data-dec]').forEach(b => b.onclick = async () => {

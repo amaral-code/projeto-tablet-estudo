@@ -3,12 +3,12 @@ import { db, settings, saveSettings } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
 import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages, insertText, getEditorContext } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
-import { streamChat } from './ai.js';
+import { streamChat, aiConfigured, usingBuiltinKey, hasBuiltinKey } from './ai.js';
 import { initData, DATA_VIEWS, renderData, importBackupFile } from './data.js';
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
 import { initPlus, reloadPlus, PLUS_VIEWS, PLUS_NEW_LABEL, renderPlus, plusNewAction, plusToday, plusCounts, newReview, toggleReview, renderBoard, renderMatrix, noteForClass } from './plus.js';
-import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette, openBookOrNew, newGrade } from './perf.js';
+import { initPerf, reloadPerf, PERF_VIEWS, PERF_NEW_LABEL, renderPerf, perfNewAction, perfCounts, extraToday, levelBadge, examsOn, openPalette, openBookOrNew, newGrade, kindleRetry } from './perf.js';
 import { initGoals, reloadGoals, GOAL_VIEWS, renderGoals, goalsToday, goalsCount, newGoal } from './goals.js';
 import { initQuiz, reloadQuiz, QUIZ_VIEWS, renderQuiz, leaveQuiz } from './quiz.js';
 import { initNav, SECTIONS, sectionOf, sidebarHTML, navItem, updateBottomBar, renderMap, quickAdd, addTip, tour, initSidebar, toggleMenu } from './nav.js';
@@ -16,6 +16,7 @@ import { initQuick, reloadQuick, QUICK_VIEWS, renderQuick, newQuick, quickToday,
 import { initTutor, reloadTutor, TUTOR_VIEWS, renderTutor, leaveTutor } from './tutor.js';
 import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording } from './recorder.js';
 import { initSuggest, suggestToday } from './suggest.js';
+import * as EVM from './events.js';
 
 // Registro único de todas as telas da central: título, ícone, como desenhar e o botão "novo"
 const VIEW_REG = {};
@@ -41,7 +42,7 @@ const renderHub = (kind, el) => {
 const hubNewAction = kind => VIEW_REG[kind].newAction();
 // cartões extras do painel Hoje (aulas, revisões, metas, diário, provas, leitura, atalhos)
 const todayCards = {
-  html: () => quickToday.html() + plusToday.html() + goalsToday.html() + extraToday.html(),
+  html: () => EVM.eventsToday.html() + quickToday.html() + plusToday.html() + goalsToday.html() + extraToday.html(),
   bind: el => { quickToday.bind(el); plusToday.bind(el); goalsToday.bind(el); extraToday.bind(el); },
 };
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
@@ -109,6 +110,7 @@ async function init() {
     noteForClass,
     startRecording: (meta, title) => startRecording({ noteId: meta.id, title: title || `Aula — ${meta.title}` }),
     journalMissing: () => plusCounts().journal === 1,
+    ev: EVM,
     // navegação
     go: k => { if (editorIsOpen()) history.back(); setView(k === 'notes' ? { kind: 'notes', filter: 'all' } : { kind: k }); },
     counts: navCounts,
@@ -133,8 +135,9 @@ async function init() {
   await initQuick(api);
   await initTutor(api);
   await initRecorder(api);
+  await EVM.initEvents(api);
   initSuggest(api);
-  EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder);
+  EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder, EVM.reloadEvents);
   initData(api);
   appReady = true;
   routeFromURL();
@@ -388,7 +391,7 @@ function navCounts() {
     notes: state.notes.length, goals: goalsCount(), running: hc.running, today: xc.review,
   };
 }
-const aiReadyAny = () => !!settings.geminiKey;
+const aiReadyAny = () => aiConfigured();
 
 // Botão + : cria qualquer coisa
 async function quickAction(k) {
@@ -406,6 +409,7 @@ async function quickAction(k) {
   else if (k === 'pdf') pickImport('library');
   else if (k === 'search') openPalette();
   else if (k === 'quicknote') newQuick();
+  else if (k === 'event') EVM.eventDialog(null, { date: dayStr() });
   else if (k === 'tutor') go('tutor');
   else if (k === 'record') {
     if (isRecording()) { toast('Já existe uma gravação em andamento: toque no botão vermelho para parar'); return; }
@@ -1023,18 +1027,20 @@ async function settingsDialog() {
     </select>
     <hr>
     <label class="lbl">Inteligência artificial — Gemini (versão rápida)</label>
-    <ol class="help small">
-      <li>Entre em <b>aistudio.google.com/apikey</b> com a sua conta Google.</li>
-      <li>Toque em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
-      <li>Cole a chave abaixo e toque em <b>Testar</b>.</li>
-    </ol>
-    <input class="input" id="s-geminikey" type="password" autocomplete="off" spellcheck="false" placeholder="Cole aqui a chave do Gemini" value="${esc(settings.geminiKey || '')}">
+    <p class="status ${aiConfigured() ? 'good' : 'bad'}" id="s-aiwhich">${aiConfigured() ? ic('check') : '! '}${usingBuiltinKey() ? 'A IA já vem ligada: o app usa a chave embutida' : aiConfigured() ? 'Usando a sua chave colada abaixo' : 'Cole a chave do Gemini abaixo para ligar a IA'}</p>
+    <details class="help small" ${hasBuiltinKey() ? '' : 'open'}><summary>${hasBuiltinKey() ? 'Usar outra chave (opcional)' : 'Como pegar a chave (grátis)'}</summary>
+      <ol>
+        <li>Entre em <b>aistudio.google.com/apikey</b> com a sua conta Google.</li>
+        <li>Toque em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
+        <li>Cole a chave abaixo e toque em <b>Testar</b>. Para voltar à chave embutida, toque em <b>Remover chave</b>.</li>
+      </ol></details>
+    <input class="input" id="s-geminikey" type="password" autocomplete="off" spellcheck="false" placeholder="Opcional: cole aqui outra chave do Gemini" value="${esc(settings.geminiKey || '')}">
     <div class="row wrap" style="margin-top:8px">
       <button class="btn primary" id="s-aitest" type="button">${ic('check')}<span>Testar</span></button>
       ${settings.geminiKey ? `<button class="btn" id="s-aiclear" type="button">${ic('trash')}<span>Remover chave</span></button>` : ''}
     </div>
     <p class="muted small" id="s-aistatus"></p>
-    <p class="muted small">Usa o <b>Gemini Flash-Lite</b>, o modelo mais rápido do Google (responde em menos de 1 segundo nos testes), com um reserva também rápido se ele estiver ocupado. A chave fica salva só neste tablet. No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele.</p>
+    <p class="muted small">Usa o <b>Gemini Flash-Lite</b>, o modelo mais rápido do Google (responde em menos de 1 segundo nos testes), com um reserva também rápido se ele estiver ocupado. Se você colar a sua própria chave, ela fica salva só neste tablet. No plano gratuito há limite de pedidos por minuto e por dia, e o Google pode usar o que for enviado para melhorar os produtos dele.</p>
     <hr>
     <label class="lbl">Dados e backup</label>
     <p class="muted small">Tudo fica salvo automaticamente no banco de dados do tablet, com cópias automáticas diárias.${est ? ` Espaço usado: ${(est.usage / 1048576).toFixed(1)} MB.` : ''}${persisted ? ' Armazenamento protegido ✓' : ''}</p>
@@ -1072,7 +1078,8 @@ async function settingsDialog() {
   const readAI = () => { settings.geminiKey = body.querySelector('#s-geminikey').value.trim(); };
   body.querySelector('#s-aiclear')?.addEventListener('click', () => {
     body.querySelector('#s-geminikey').value = ''; readAI(); saveSettings();
-    body.querySelector('#s-aistatus').textContent = 'Chave removida deste tablet.';
+    body.querySelector('#s-aistatus').textContent = 'Chave removida: o app volta a usar a chave embutida.';
+    body.querySelector('#s-aiwhich').lastChild.textContent = hasBuiltinKey() ? 'A IA já vem ligada: o app usa a chave embutida' : 'Cole a chave do Gemini abaixo para ligar a IA';
   });
   body.querySelector('#s-aitest').onclick = async () => {
     const st = body.querySelector('#s-aistatus');
@@ -1121,7 +1128,9 @@ function routeFromURL() {
   if (a === 'nova-anotacao') setTimeout(() => newNoteDialog(), 300);
   if (a === 'nova-tarefa') setTimeout(() => taskDialog({}), 300);
   if (a === 'busca') setTimeout(openPalette, 300);
-  if (v || a) history.replaceState(null, '', location.pathname);
+  const kt = q.get('kt');
+  if (kt) { state.view = { kind: 'reading' }; setTimeout(() => kindleRetry(+kt), 400); }
+  if (v || a || kt) history.replaceState(null, '', location.pathname);
 }
 
 // Nenhum erro passa em silêncio: mostra um aviso e mantém o app funcionando

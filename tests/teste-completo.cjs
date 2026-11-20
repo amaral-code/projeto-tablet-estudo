@@ -151,7 +151,7 @@ function watch(p) {
   const srv = await serve();
   base = `http://127.0.0.1:${srv.address().port}/`;
   browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
-  ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write', 'microphone'] });
+  ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write', 'microphone', 'notifications'] });
   await mocks(ctx);
   await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); } catch { /* */ } });
   await geminiMock(ctx);
@@ -419,6 +419,52 @@ function watch(p) {
     await page.fill('#t-title', 'Tarefa da agenda'); await page.click('.modal .btn.primary'); await wait(400);
     assert((await idb('tasks')).find(t => t.title === 'Tarefa da agenda').due, 'tarefa sem data');
   });
+  const dplus = n => { const d = new Date(Date.now() + n * 86400000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  await step('Agenda: evento importante com prioridade fica salvo e aparece no calendário', async () => {
+    await nav('calendar');
+    assert((await page.textContent('#btn-new')).includes('Novo evento'), 'botão Novo evento');
+    await page.click('#btn-new');
+    await page.fill('#ev-title', 'Prova de Biologia'); await page.fill('#ev-date', dplus(5)); await page.fill('#ev-time', '08:30');
+    await page.click('#ev-kind [data-k=prova]'); await page.click('#ev-prio [data-p="3"]'); await page.fill('#ev-notes', 'Capítulos 4 e 5');
+    await page.click('.modal-actions .btn.primary'); await wait(500);
+    const ev = (await idb('events')).find(e => e.title === 'Prova de Biologia');
+    assert(ev && ev.prio === 3 && ev.date === dplus(5) && ev.time === '08:30' && ev.remind === true && ev.kind === 'prova', 'evento: ' + JSON.stringify(ev));
+    assert(await page.locator('.cal-next .ev-row.p3:has-text("Prova de Biologia") .ev-badge').textContent() === 'Alta', 'prioridade na lista');
+    await page.click('.cal-next .ev-row:has-text("Prova de Biologia")'); await wait(300);
+    assert(await page.locator('.cal-cell.sel .cal-t.ev.p3').count() === 1, 'evento não aparece no dia do calendário');
+    assert(await page.locator('.cal-day .ev-row:has-text("Prova de Biologia")').count() === 1, 'evento não aparece na lista do dia');
+    await page.reload(); await wait(1300); await nav('calendar');
+    assert(await page.locator('.cal-next .ev-row:has-text("Prova de Biologia")').count() === 1, 'evento não ficou salvo depois de reabrir');
+  });
+  await step('Agenda: botão de apagar evento (com desfazer) e editar prioridade', async () => {
+    await page.click('.cal-next .ev-row:has-text("Prova de Biologia") [data-evdel]'); await wait(300);
+    assert(!(await idb('events')).some(e => e.title === 'Prova de Biologia'), 'não apagou');
+    await page.click('#toast .toast-btn'); await wait(400);
+    assert((await idb('events')).some(e => e.title === 'Prova de Biologia'), 'desfazer não trouxe o evento');
+    await page.click('.cal-next .ev-row:has-text("Prova de Biologia") [data-evedit]'); await page.click('#ev-prio [data-p="1"]'); await page.click('.modal-actions .btn.primary'); await wait(400);
+    assert((await idb('events')).find(e => e.title === 'Prova de Biologia').prio === 1, 'prioridade não mudou');
+    await page.click('.cal-next .ev-row:has-text("Prova de Biologia") [data-evedit]'); await page.click('.modal-actions .btn.danger'); await wait(400);
+    assert(!(await idb('events')).some(e => e.title === 'Prova de Biologia'), 'Apagar na janela do evento não apagou');
+  });
+  await step('Agenda: aviso 1 dia antes (notificação do tablet + aviso no app) e só uma vez', async () => {
+    await page.evaluate(async d => { const st = await import('./js/store.js'); await st.db.put('events', { id: 'ev-amanha', title: 'Entrega do trabalho de Geografia', date: d, time: '07:30', prio: 3, kind: 'trabalho', notes: '', remind: true, notified: {}, createdAt: Date.now() }); }, dplus(1));
+    // o Chromium de teste não mostra notificações: simulamos a permissão do Android e guardamos o que seria mostrado
+    await page.addInitScript(() => {
+      try { Object.defineProperty(Notification, 'permission', { get: () => 'granted' }); } catch { /* */ }
+      ServiceWorkerRegistration.prototype.showNotification = function (t, o) { (window.__notifs ||= []).push(`${t} | ${o && o.body}`); return Promise.resolve(); };
+    });
+    await page.reload();
+    await toastHas('Amanhã: Entrega do trabalho de Geografia', 8000);
+    const ev = (await idb('events')).find(e => e.id === 'ev-amanha');
+    assert(ev.notified && ev.notified.before === dplus(1), 'não marcou o aviso: ' + JSON.stringify(ev.notified));
+    const shown = await page.evaluate(() => window.__notifs || []);
+    assert(shown.some(t => t.includes('Amanhã: Entrega do trabalho de Geografia') && t.includes('07:30') && t.includes('ALTA')), 'notificação do tablet: ' + shown.join(' / '));
+    const n0 = await page.evaluate(async () => (await import('./js/events.js')).checkReminders());
+    assert(n0 === 0, 'avisou de novo o mesmo evento');
+    await nav('today');
+    assert((await page.textContent('.t-events')).includes('Entrega do trabalho de Geografia'), 'Hoje não mostra os próximos eventos');
+    assert(await page.locator('.sg:has-text("Amanhã: Entrega do trabalho de Geografia")').count() === 1, '"O que fazer agora" não lembra do evento');
+  });
   await step('Foco: iniciar, pausar, pular e encerrar', async () => {
     await nav('focus');
     await page.click('#fc-start'); await wait(1300);
@@ -470,17 +516,23 @@ function watch(p) {
     await page.click('#q-form button'); await wait(300); await page.click('[data-card="0"]'); await wait(400); await closeModals();
     assert((await idb('decks')).some(d => d.name === 'Leitura — Dom Casmurro'), 'flashcard da citação não criado');
   });
-  await step('Kindle: link do app no Android e versão web no computador', async () => {
+  await step('Kindle: abre o app instalado (sem cair no read.amazon.com) e lembra o caminho que funcionou', async () => {
     const r = await page.evaluate(async () => {
       const m = await import('./js/perf.js');
-      const k = { url: 'https://read.amazon.com/', pkg: 'com.amazon.kindle', scheme: 'kindle://home' };
-      return [m.shortcutURL(k, true), m.shortcutURL(k, false)];
+      return [0, 1, 2, 3].map(i => m.kindleURL(i, 'https://x.github.io/app/'));
     });
-    assert(r[0] === 'intent://home#Intent;scheme=kindle;package=com.amazon.kindle;S.browser_fallback_url=https%3A%2F%2Fread.amazon.com%2F;end', 'intent errado: ' + r[0]);
-    assert(r[1] === 'https://read.amazon.com/', 'link web errado');
+    assert(r[0] === 'intent://book/#Intent;scheme=kindle;package=com.amazon.kindle;S.browser_fallback_url=https%3A%2F%2Fx.github.io%2Fapp%2F%3Fkt%3D1;end', 'caminho 1: ' + r[0]);
+    assert(r.every(u => !u.includes('read.amazon.com%2F;') && !/fallback_url=https%3A%2F%2Fread/.test(u)), 'ainda cai no site do Kindle');
+    assert(r[3].includes('scheme=market') && r[3].includes('id=com.amazon.kindle'), 'último caminho devia ser a Play Store: ' + r[3]);
+    // o Chrome voltou ao Caderno porque o caminho 1 não abriu: oferece o próximo e guarda
+    await page.goto(base + '?kt=1'); await page.waitForSelector('.modal h2:has-text("Abrir o Kindle")', { timeout: 5000 });
+    assert((await page.textContent('.modal')).includes('2 de 4'), 'não ofereceu o próximo caminho');
+    assert(await page.evaluate(() => localStorage.getItem('caderno-kindle-jeito')) === '1', 'não guardou o caminho');
+    assert(await page.textContent('#view-title') === 'Leitura', 'devia voltar para a Leitura');
+    await closeModals();
     const popup = page.waitForEvent('popup', { timeout: 5000 }).catch(() => null);
     await page.click('.kindle-hero [data-kindle]');
-    assert(await popup, 'não abriu o Kindle');
+    assert(await popup, 'no computador devia abrir o Kindle na web');
   });
   await step('Notas: validação, média, meta e "quanto preciso tirar"', async () => {
     await nav('grades');
@@ -693,7 +745,7 @@ function watch(p) {
   await step('Botão + cria qualquer coisa e mostra a ação da tela atual', async () => {
     await nav('goals');
     await page.click('#fab'); await wait(300);
-    assert(await page.locator('.quick').count() === 15, 'ações rápidas: ' + await page.locator('.quick').count());
+    assert(await page.locator('.quick').count() === 16, 'ações rápidas: ' + await page.locator('.quick').count());
     assert((await page.textContent('.quick-ctx')).includes('Nova meta'), 'ação da tela');
     await page.click('.quick[data-q=task]'); await wait(300);
     assert(await page.locator('#t-title').count() === 1, 'não abriu nova tarefa');
@@ -756,6 +808,30 @@ function watch(p) {
     await nav('today');
     assert(await page.locator('.t-goals').count() === 1, 'metas não aparecem no Hoje');
   });
+  await step('Metas separadas por área: escolher área, criar área nova, filtrar e agrupar', async () => {
+    await nav('goals');
+    const g1 = (await idb('goals')).find(g => g.title === 'Estudar 10 horas');
+    assert(!(await page.textContent('.goal-card:has-text("Estudar 10 horas") .gl-area-tag')).includes('Saúde') && (await page.textContent('.goal-card:has-text("Estudar 10 horas") .gl-area-tag')).includes('Estudos'), 'área automática da meta de foco');
+    await page.click('#btn-new'); await page.selectOption('#gl-type', 'manual'); await page.fill('#gl-title', 'Correr 12 vezes'); await page.fill('#gl-target', '12');
+    await page.click('#gl-areas [data-area=saude]'); await page.click('.modal-actions .btn.primary'); await wait(400);
+    assert((await idb('goals')).find(g => g.title === 'Correr 12 vezes').area === 'saude', 'área não salva');
+    await page.click('#btn-new'); await page.selectOption('#gl-type', 'manual'); await page.fill('#gl-title', 'Aprender 3 músicas no violão'); await page.fill('#gl-target', '3');
+    await page.click('#gl-areas [data-area="+"]'); await page.fill('.modal >> nth=-1 >> input', 'Música'); await page.click('.modal-back >> nth=-1 >> .modal-actions .btn.primary'); await wait(300);
+    await page.click('.modal-actions .btn.primary'); await wait(400);
+    const gm = (await idb('goals')).find(g => g.title === 'Aprender 3 músicas no violão');
+    assert(gm && gm.area && gm.area.startsWith('a-'), 'área nova: ' + JSON.stringify(gm));
+    const heads = await page.locator('.gl-sec').allTextContents();
+    assert(heads.some(t => t.includes('Estudos')) && heads.some(t => t.includes('Saúde')) && heads.some(t => t.includes('Música')), 'grupos: ' + heads.join(' | '));
+    await page.click('.gl-filter [data-filt=saude]'); await wait(300);
+    const titles = await page.locator('.goal-card b').allTextContents();
+    assert(titles.includes('Correr 12 vezes') && !titles.includes('Estudar 10 horas'), 'filtro: ' + titles.join(','));
+    await page.click('#gl-new'); await wait(300);
+    assert(await page.locator('#gl-areas [data-area=saude].on').count() === 1, 'nova meta não veio na área do filtro');
+    await closeModals();
+    await page.reload(); await wait(1300); await nav('goals');
+    assert(await page.locator('.gl-filter [data-filt=saude].on').count() === 1, 'não lembrou o filtro');
+    await page.click('.gl-filter [data-filt=all]'); await wait(200);
+  });
   await step('Simulado: IA cria a prova, responde, corrige, lança nota e cria flashcards dos erros', async () => {
     await nav('quiz');
     await page.selectOption('#qz-src', { label: 'Frações e decimais' });
@@ -804,6 +880,20 @@ function watch(p) {
     assert(await page.locator('#s-geminikey').isVisible(), 'campo da chave do Gemini');
     assert(!/Groq|Claude|Anthropic/.test(await page.textContent('.modal')), 'os Ajustes ainda falam de outros provedores');
     await page.click('.modal-actions .btn.primary'); await wait(300);
+  });
+  await step('IA já vem ligada: sem colar chave nenhuma, o app usa a chave embutida', async () => {
+    if (!(await page.evaluate(async () => (await import('./js/ai.js')).hasBuiltinKey()))) { console.log('      (sem chave embutida em js/chave.js: passo conferido só pela metade)'); await page.click('#btn-settings'); await page.click('#s-aiclear'); await wait(100); assert((await page.textContent('#s-aiwhich')).includes('Cole a chave'), 'aviso sem chave'); await page.fill('#s-geminikey', 'chave-teste'); await page.click('.modal-actions .btn.primary'); await wait(300); return; }
+    await page.click('#btn-settings'); await page.click('#s-aiclear'); await wait(100);
+    assert((await page.textContent('#s-aiwhich')).includes('chave embutida'), 'aviso da chave embutida');
+    const n0 = gemReqs.length;
+    await page.click('#s-aitest');
+    await page.waitForFunction(() => /✓|✗/.test(document.getElementById('s-aistatus').textContent), null, { timeout: 8000 });
+    assert((await page.textContent('#s-aistatus')).includes('Tudo certo'), 'IA não respondeu com a chave embutida');
+    const k = gemReqs[n0].h['x-goog-api-key'];
+    assert(k && k !== 'chave-teste' && k.length > 30, 'não usou a chave embutida');
+    await page.click('.modal-actions .btn.primary'); await wait(300);
+    // outra chave colada em Ajustes tem prioridade
+    await page.click('#btn-settings'); await page.fill('#s-geminikey', 'chave-teste'); await page.click('.modal-actions .btn.primary'); await wait(300);
   });
   await step('Gemini: "Testar" usa o Flash-Lite com pensamento baixo e mostra o tempo', async () => {
     const n0 = gemReqs.length;
@@ -1121,10 +1211,10 @@ function watch(p) {
 
   // ================= BANCO DE DADOS E BACKUP =================
   console.log('Banco de dados, cópias e backup');
-  const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings'];
+  const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads', 'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings', 'events'];
   await step('Dados e backup: a tela mostra o que está salvo no banco', async () => {
     await page.click('#btn-data'); await page.waitForSelector('.db-counts');
-    assert(await page.locator('.db-counts div').count() === 17, 'caixas: ' + await page.locator('.db-counts div').count());
+    assert(await page.locator('.db-counts div').count() === 18, 'caixas: ' + await page.locator('.db-counts div').count());
     const shown = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.db-counts div')].map(d => [d.querySelector('span').textContent, +d.querySelector('b').textContent])));
     const real = { 'Anotações': 'notes', 'Tarefas': 'tasks', 'Notas rápidas': 'quicknotes', 'Gravações de aula': 'recordings', 'Conversas com o tutor': 'chats', 'Flashcards': 'cards', 'Pastas': 'folders' };
     for (const [label, s] of Object.entries(real)) { const n = (await idb(s)).length; assert(shown[label] === n, `${label}: tela ${shown[label]} ≠ banco ${n}`); }

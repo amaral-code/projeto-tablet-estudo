@@ -2,6 +2,7 @@
 // têm prioridade e avisam 1 dia antes (e no próprio dia) com notificação do tablet.
 import { ic, esc, h, toast, modal } from './ui.js';
 import { dayStr, addDays } from './hub.js';
+import { askPermission, testNotification, gcalURL, skipPastFor } from './notify.js';
 
 let A;
 let EV = [];
@@ -15,11 +16,7 @@ const sortEv = (a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time |
 export async function initEvents(api) {
   A = api;
   EV = await A.db.all('events');
-  // avisos: ao abrir, a cada 15 min e quando o app volta para a tela
-  setTimeout(() => checkReminders().catch(() => {}), 2500);
-  setInterval(() => checkReminders().catch(() => {}), 15 * 60 * 1000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkReminders().catch(() => {}); });
-  registerBackground();
+  // os avisos (véspera e no dia) ficam com a Central de Avisos (notify.js)
 }
 export async function reloadEvents() { EV = await A.db.all('events'); }
 export const eventsData = () => EV;
@@ -67,15 +64,12 @@ export async function eventDialog(ev, { date } = {}) {
   });
   if (res === 'del') { await deleteEvent(ev.id); return null; }
   if (!res) return null;
-  const dateChanged = res.date !== ev.date;
   Object.assign(ev, res, { kind, prio });
-  if (dateChanged || isNew) ev.notified = {};
-  // quem cria um evento para hoje ou amanhã já sabe dele: não precisa de aviso agora
-  const today = dayStr();
-  if (ev.date === addDays(today, 1)) ev.notified = { ...ev.notified, before: ev.date };
-  if (ev.date === today) ev.notified = { before: ev.date, day: ev.date };
+  delete ev.notified; // (versões antigas guardavam aqui os avisos dados)
   await save(ev);
-  toast(isNew ? `Evento salvo 📅 ${ev.remind ? '— aviso 1 dia antes' : ''}` : 'Evento salvo');
+  // quem cria um evento já sabe dele: avisos com horário que já passou não tocam agora
+  await skipPastFor(ev.id).catch(() => {});
+  toast(isNew ? `Evento salvo 📅 ${ev.remind ? '— aviso na véspera e no dia' : ''}` : 'Evento salvo');
   if (ev.remind) askPermission();
   A.onChange();
   return ev;
@@ -91,66 +85,16 @@ export async function deleteEvent(id) {
   toast(`Evento apagado: ${ev.title}`, 5000, { label: 'Desfazer', run: async () => { await save(ev); A.onChange(); toast('Evento de volta ✓'); } });
 }
 
-// ---------- avisos ----------
+// ---------- avisos (ficam na Central de Avisos) ----------
 export const notifState = () => (!('Notification' in window) ? 'unsupported' : Notification.permission);
-export async function askPermission() {
-  if (notifState() !== 'default') return notifState();
-  try { const p = await Notification.requestPermission(); if (p === 'granted') registerBackground(); return p; } catch { return notifState(); }
-}
-async function show(title, body, tag) {
-  if (notifState() === 'granted') {
-    try {
-      const reg = await navigator.serviceWorker?.ready;
-      const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag, data: { url: './?v=calendar' }, vibrate: [200, 100, 200] };
-      if (reg) { await reg.showNotification(title, opts); return true; }
-      new Notification(title, opts); return true;
-    } catch { /* cai no aviso dentro do app */ }
-  }
-  return false;
-}
-const line = e => `${kindIcon(e.kind)} ${e.title}${e.time ? ` às ${e.time}` : ''}${+e.prio === 3 ? ' · prioridade ALTA' : ''}`;
-export async function checkReminders() {
-  const today = dayStr(), tomorrow = addDays(today, 1);
-  const msgs = [];
-  for (const e of EV) {
-    if (e.remind === false) continue;
-    const n = e.notified || {};
-    let kind = null;
-    if (e.date === tomorrow && n.before !== e.date) kind = 'before';
-    else if (e.date === today && n.day !== e.date) kind = 'day';
-    if (!kind) continue;
-    const title = kind === 'before' ? 'Amanhã' : 'Hoje';
-    const sent = await show(`📅 ${title}: ${e.title}`, line(e) + (e.notes ? `\n${e.notes}` : ''), `ev-${e.id}-${kind}`);
-    msgs.push({ title, e, sent });
-    e.notified = { ...n, [kind]: e.date, ...(kind === 'day' ? { before: e.date } : {}) };
-    await save(e);
-  }
-  // dentro do app também aparece o aviso
-  if (msgs.length) toast(msgs.map(m => `📅 ${m.title}: ${m.e.title}${m.e.time ? ` às ${m.e.time}` : ''}`).join('\n'), 7000);
-  return msgs.length;
-}
-// Com o app instalado, o Chrome pode acordar o app de vez em quando para conferir os avisos mesmo fechado
-async function registerBackground() {
-  try {
-    const reg = await navigator.serviceWorker?.ready;
-    if (!reg || !('periodicSync' in reg) || notifState() !== 'granted') return;
-    const st = await navigator.permissions.query({ name: 'periodic-background-sync' });
-    if (st.state === 'granted') await reg.periodicSync.register('lembretes', { minInterval: 4 * 60 * 60 * 1000 });
-  } catch { /* nem todo navegador deixa */ }
-}
-export async function testNotification() {
-  const p = await askPermission();
-  if (p !== 'granted') { toast(p === 'denied' ? 'Os avisos estão bloqueados. Libere em Configurações do Android → Apps → Chrome (ou Caderno) → Notificações.' : 'Este navegador não mostra avisos', 6000); return false; }
-  const ok = await show('📅 Avisos ligados', 'Você vai receber um aviso 1 dia antes dos seus eventos.', 'ev-teste');
-  toast(ok ? 'Avisos ligados ✓' : 'Não consegui mostrar o aviso', 3500);
-  return ok;
-}
+export { testNotification, askPermission };
 
 // ---------- pedaços de tela ----------
 export function eventRow(e, { showDate = false } = {}) {
   return `<div class="ev-row ${PRIO[e.prio]?.cls || 'p2'}" data-ev="${e.id}">
     <span class="ev-ic">${kindIcon(e.kind)}</span>
     <span class="grow ev-txt"><b>${esc(e.title)}</b><small><span class="ev-badge ${PRIO[e.prio]?.cls || 'p2'}">${PRIO[e.prio]?.label || 'Média'}</span> ${[showDate ? `${esc(fmtDay(e.date))} · ${whenText(e.date)}` : '', e.time ? esc(e.time) : '', e.notes ? esc(e.notes) : '', e.remind !== false ? '🔔' : ''].filter(Boolean).join(' · ')}</small></span>
+    <a class="icon-btn small ev-gcal" href="${esc(gcalURL(e))}" target="_blank" rel="noopener" title="Pôr no Google Agenda (o alarme toca mesmo com o app fechado)" aria-label="Pôr no Google Agenda">${ic('calendar')}</a>
     <button class="icon-btn small" data-evedit="${e.id}" aria-label="Editar evento">${ic('edit')}</button>
     <button class="icon-btn small ev-del" data-evdel="${e.id}" aria-label="Apagar evento">${ic('trash')}</button>
   </div>`;
@@ -161,11 +105,14 @@ export function bindEventRows(el) {
 }
 export function notifHTML() {
   const st = notifState();
-  if (st === 'granted') return `<p class="muted small ev-notif">🔔 Avisos ligados: você recebe um aviso 1 dia antes de cada evento. <button class="link" id="ev-testn">Testar</button></p>`;
+  if (st === 'granted') return `<p class="muted small ev-notif">🔔 Avisos ligados: na véspera e no dia de cada evento. <button class="link" data-goto-avisos="1">Ajustar horários</button> · <button class="link" id="ev-testn">Testar</button></p>`;
   if (st === 'unsupported') return '<p class="muted small ev-notif">Este navegador não mostra avisos; eles aparecem dentro do app.</p>';
   return `<div class="ev-notif off"><span class="grow small">${st === 'denied' ? '🔕 Os avisos estão bloqueados no Android.' : '🔔 Ligue os avisos para lembrar 1 dia antes.'}</span><button class="btn small-btn" id="ev-testn">Ligar avisos</button></div>`;
 }
-export function bindNotif(el, rerender) { const b = el.querySelector('#ev-testn'); if (b) b.onclick = async () => { await testNotification(); rerender && rerender(); }; }
+export function bindNotif(el, rerender) {
+  const b = el.querySelector('#ev-testn'); if (b) b.onclick = async () => { await testNotification(); rerender && rerender(); };
+  el.querySelectorAll('[data-goto-avisos]').forEach(x => x.onclick = () => A.go('avisos'));
+}
 
 // Cartão do painel Hoje: próximos eventos
 export const eventsToday = {

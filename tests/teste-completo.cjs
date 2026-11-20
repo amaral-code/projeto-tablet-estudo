@@ -475,20 +475,25 @@ function watch(p) {
     await page.click('.cal-next .ev-row:has-text("Prova de Biologia") [data-evedit]'); await page.click('.modal-actions .btn.danger'); await wait(400);
     assert(!(await idb('events')).some(e => e.title === 'Prova de Biologia'), 'Apagar na janela do evento não apagou');
   });
-  await step('Agenda: aviso 1 dia antes (notificação do tablet + aviso no app) e só uma vez', async () => {
-    await page.evaluate(async d => { const st = await import('./js/store.js'); await st.db.put('events', { id: 'ev-amanha', title: 'Entrega do trabalho de Geografia', date: d, time: '07:30', prio: 3, kind: 'trabalho', notes: '', remind: true, notified: {}, createdAt: Date.now() }); }, dplus(1));
+  await step('Agenda: aviso na véspera (notificação do tablet + aviso no app) e só uma vez', async () => {
+    await page.evaluate(async d => {
+      const st = await import('./js/store.js');
+      await st.db.put('events', { id: 'ev-amanha', title: 'Entrega do trabalho de Geografia', date: d, time: '07:30', prio: 3, kind: 'trabalho', notes: '', remind: true, createdAt: Date.now() });
+      // véspera "às 00:00" para o aviso já estar na hora; os outros tipos ficam desligados neste teste
+      localStorage.setItem('caderno-avisos', JSON.stringify({ eveTime: '00:00', tasks: false, cards: false, habits: false, classes: false, exams: false }));
+    }, dplus(1));
     // o Chromium de teste não mostra notificações: simulamos a permissão do Android e guardamos o que seria mostrado
     await page.addInitScript(() => {
       try { Object.defineProperty(Notification, 'permission', { get: () => 'granted' }); } catch { /* */ }
-      ServiceWorkerRegistration.prototype.showNotification = function (t, o) { (window.__notifs ||= []).push(`${t} | ${o && o.body}`); return Promise.resolve(); };
+      ServiceWorkerRegistration.prototype.showNotification = function (t, o) { (window.__notifs ||= []).push(`${t} | ${o && o.body} | ${o && o.data && o.data.url}`); return Promise.resolve(); };
     });
     await page.reload();
     await toastHas('Amanhã: Entrega do trabalho de Geografia', 8000);
-    const ev = (await idb('events')).find(e => e.id === 'ev-amanha');
-    assert(ev.notified && ev.notified.before === dplus(1), 'não marcou o aviso: ' + JSON.stringify(ev.notified));
     const shown = await page.evaluate(() => window.__notifs || []);
-    assert(shown.some(t => t.includes('Amanhã: Entrega do trabalho de Geografia') && t.includes('07:30') && t.includes('ALTA')), 'notificação do tablet: ' + shown.join(' / '));
-    const n0 = await page.evaluate(async () => (await import('./js/events.js')).checkReminders());
+    assert(shown.some(t => t.includes('Amanhã: Entrega do trabalho de Geografia') && t.includes('07:30') && t.includes('ALTA') && t.includes('v=calendar')), 'notificação do tablet: ' + shown.join(' / '));
+    const kv = (await idb('kv')).find(x => x.id === 'avisos');
+    assert(kv && kv.fired[`ev-v-ev-amanha-${dplus(1)}`], 'não guardou o aviso dado');
+    const n0 = await page.evaluate(async () => (await import('./js/notify.js')).tick());
     assert(n0 === 0, 'avisou de novo o mesmo evento');
     await nav('today');
     assert((await page.textContent('.t-events')).includes('Entrega do trabalho de Geografia'), 'Hoje não mostra os próximos eventos');
@@ -639,7 +644,7 @@ function watch(p) {
   await step('nenhuma tela passa da largura no tablet em pé (800px)', async () => {
     await page.setViewportSize({ width: 800, height: 1280 });
     const bad = [];
-    for (const k of ['today', 'calendar', 'schedule', 'goals', 'tasks', 'quick', 'focus', 'cards', 'quiz', 'formulas', 'tutor', 'habits', 'journal', 'reading', 'grades', 'report', 'all', 'data']) {
+    for (const k of ['today', 'calendar', 'avisos', 'schedule', 'goals', 'tasks', 'quick', 'focus', 'cards', 'quiz', 'formulas', 'tutor', 'habits', 'journal', 'reading', 'grades', 'report', 'all', 'data']) {
       await page.evaluate(k => { document.body.classList.remove('side-open'); (k === 'data' ? document.getElementById('btn-data') : document.querySelector(`#nav-main [data-k=${k}]`)).click(); }, k); await wait(300);
       // conta só o que fica visível (o que está dentro de uma área com rolagem própria, como o mapa do ano, não estoura a tela)
       const over = await page.evaluate(() => {
@@ -755,12 +760,12 @@ function watch(p) {
     await nav('today');
     const secs = await page.locator('#nav-main .nav-sec-h').allTextContents();
     assert(['Planejar', 'Estudar', 'Acompanhar', 'Caderno'].every(x => secs.includes(x)), 'áreas: ' + secs.join(','));
-    for (const k of ['today', 'tasks', 'quick', 'calendar', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'formulas', 'tutor', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
+    for (const k of ['today', 'tasks', 'quick', 'calendar', 'avisos', 'schedule', 'goals', 'all', 'focus', 'cards', 'quiz', 'formulas', 'tutor', 'reading', 'habits', 'journal', 'grades', 'report']) assert(await page.locator(`#nav-main [data-k=${k}]`).count() >= 1, 'faltou ' + k);
     assert((await page.textContent('#view-section')).includes('Planejar'), 'nome da área no topo');
   });
   await step('Tela "Tudo" mostra cada recurso e abre ao tocar', async () => {
     await page.click('#btn-map'); await wait(300);
-    assert(await page.locator('.map-card').count() === 17, 'cartões: ' + await page.locator('.map-card').count());
+    assert(await page.locator('.map-card').count() === 18, 'cartões: ' + await page.locator('.map-card').count());
     await page.click('.map-card[data-go=goals]'); await wait(300);
     assert(await page.textContent('#view-title') === 'Metas', 'não abriu Metas');
   });
@@ -786,7 +791,7 @@ function watch(p) {
     await page.click('#bottom-bar [data-bk=tasks]'); await wait(300);
     assert(await page.textContent('#view-title') === 'Tarefas', 'barra não navegou');
     await page.click('#bottom-bar [data-bk=more]'); await wait(300);
-    assert(await page.locator('.more-sheet .map-card').count() === 17, 'Mais incompleto');
+    assert(await page.locator('.more-sheet .map-card').count() === 18, 'Mais incompleto');
     await page.click('.more-sheet .map-card[data-go=report]'); await wait(400);
     assert(await page.textContent('#view-title') === 'Relatório', 'Mais não navegou');
     assert(!(await page.locator('#btn-new').isVisible()), 'botão + duplicado no topo');
@@ -1498,6 +1503,51 @@ function watch(p) {
     await page.waitForSelector('.is-item', { timeout: 15000 });
     wikiMode = 'ok';
     await closeModals(); await page.click('#ed-back'); await wait(900);
+  });
+
+  // ================= CENTRAL DE AVISOS =================
+  console.log('Central de Avisos');
+  await step('Avisos: escolher o que avisar e a que horas; a lista mostra os próximos avisos', async () => {
+    await page.evaluate(() => localStorage.removeItem('caderno-avisos'));
+    await nav('avisos');
+    assert((await page.textContent('.av-status h3')).includes('ligados'), 'status dos avisos');
+    assert(await page.locator('.av-row input[type=checkbox]').count() === 7, 'tipos de aviso');
+    await page.check('.av-row input[data-p=study]'); await wait(300);
+    await page.fill('.av-row input[data-p=studyTime]', '23:58'); await page.dispatchEvent('.av-row input[data-p=studyTime]', 'change'); await wait(300);
+    const list = await page.locator('.av-item b').allTextContents();
+    assert(list.some(t => t.includes('Hora de estudar')), 'lista: ' + list.slice(0, 6).join(' | '));
+    const prefs = await page.evaluate(() => JSON.parse(localStorage.getItem('caderno-avisos')));
+    const kv = (await idb('kv')).find(x => x.id === 'avisos');
+    assert(prefs.study === true && prefs.studyTime === '23:58' && kv.prefs.studyTime === '23:58', 'preferências não foram salvas (app e banco)');
+    await page.uncheck('.av-row input[data-p=study]'); await wait(200);
+  });
+  await step('Avisos: Google Agenda em cada evento e exportar eventos (.ics)', async () => {
+    await nav('calendar');
+    const href = await page.getAttribute('.cal-next .ev-row:has-text("Entrega do trabalho") .ev-gcal', 'href');
+    assert(href.startsWith('https://calendar.google.com/calendar/render?action=TEMPLATE') && href.includes('Entrega%20do%20trabalho') && href.includes(`dates=${dplus(1).replace(/-/g, '')}T073000/`), 'link do Google Agenda: ' + href);
+    await nav('avisos');
+    const dl = page.waitForEvent('download', { timeout: 8000 });
+    await page.click('#av-ics'); const f = path.join(OUT, 'eventos.ics'); await (await dl).saveAs(f);
+    const ics = fs.readFileSync(f, 'utf8');
+    assert(ics.includes('BEGIN:VCALENDAR') && ics.includes('SUMMARY:Entrega do trabalho de Geografia') && ics.includes('TRIGGER:-P1D'), 'arquivo .ics');
+  });
+  await step('Avisos com o app fechado: o service worker usa o mesmo motor e acha o aviso', async () => {
+    await page.evaluate(async d => {
+      const st = await import('./js/store.js');
+      await st.db.put('events', { id: 'ev-sw', title: 'Feira de ciências', date: d, time: '', prio: 2, kind: 'outro', remind: true, createdAt: Date.now() });
+      // o app não avisa este (eventos desligados nele); o service worker lê as preferências do banco
+      localStorage.setItem('caderno-avisos', JSON.stringify({ events: false }));
+      const kv = (await st.db.get('kv', 'avisos')) || { id: 'avisos', fired: {} };
+      kv.prefs = { eveTime: '00:00', tasks: false, cards: false, habits: false, classes: false, exams: false, study: false };
+      await st.db.put('kv', kv);
+    }, dplus(1));
+    const n = await page.evaluate(() => new Promise(res => {
+      navigator.serviceWorker.addEventListener('message', e => res(e.data.avisos), { once: true });
+      navigator.serviceWorker.controller.postMessage('conferir-avisos');
+      setTimeout(() => res(-1), 8000);
+    }));
+    assert(n >= 1, 'o service worker não achou o aviso: ' + n);
+    await page.evaluate(() => localStorage.removeItem('caderno-avisos'));
   });
 
   // ================= FÓRMULAS =================

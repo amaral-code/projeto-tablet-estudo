@@ -1,11 +1,11 @@
 // Banco de dados local (IndexedDB) — tudo fica salvo no próprio tablet, sem precisar de conta.
 const DB_NAME = 'caderno-estudos';
-const VERSION = 8;
+const VERSION = 9;
 // Coleções com os dados do estudante (entram no backup)
 const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads',
   'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings', 'events', 'images'];
 // Coleções internas
-const INTERNAL = ['snapshots'];
+const INTERNAL = ['snapshots', 'kv']; // kv: dados internos (ex.: avisos já mostrados, lidos também com o app fechado)
 export const STORE_LABELS = {
   folders: 'Pastas', notes: 'Anotações', pages: 'Páginas das anotações', tasks: 'Tarefas', sessions: 'Sessões de foco',
   habits: 'Hábitos', decks: 'Baralhos', cards: 'Flashcards', books: 'Livros', reads: 'Registros de leitura',

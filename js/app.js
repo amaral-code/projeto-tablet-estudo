@@ -18,6 +18,10 @@ import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRec
 import { initSuggest, suggestToday } from './suggest.js';
 import * as EVM from './events.js';
 import { initFormulas, FORMULA_VIEWS, renderFormulas } from './formulas.js';
+import { initNotify, NOTIFY_VIEWS, renderAvisos } from './notify.js';
+import { hubData } from './hub.js';
+import { perfData } from './perf.js';
+import { classesData } from './plus.js';
 
 // Registro único de todas as telas da central: título, ícone, como desenhar e o botão "novo"
 const VIEW_REG = {};
@@ -34,6 +38,7 @@ reg(DATA_VIEWS, (k, el) => renderData(el));
 reg(QUICK_VIEWS, (k, el) => renderQuick(el), { quick: 'Nova nota' }, () => newQuick());
 reg(TUTOR_VIEWS, (k, el) => renderTutor(el), { tutor: '' });
 reg(FORMULA_VIEWS, (k, el) => renderFormulas(el), { formulas: '' });
+reg(NOTIFY_VIEWS, (k, el) => renderAvisos(el), { avisos: '' });
 const HUB_VIEWS = VIEW_REG;
 const renderHub = (kind, el) => {
   if (!VIEW_REG[kind].isHub) leaveHub();
@@ -113,6 +118,8 @@ async function init() {
     startRecording: (meta, title) => startRecording({ noteId: meta.id, title: title || `Aula — ${meta.title}` }),
     journalMissing: () => plusCounts().journal === 1,
     ev: EVM,
+    // dados que a Central de Avisos usa (os mesmos que o service worker lê do banco com o app fechado)
+    notifyData: () => ({ grades: perfData().grades, classes: classesData(), cards: hubData().cards, habits: hubData().habits }),
     // navegação
     go: k => { if (editorIsOpen()) history.back(); setView(k === 'notes' ? { kind: 'notes', filter: 'all' } : { kind: k }); },
     counts: navCounts,
@@ -139,6 +146,7 @@ async function init() {
   await initRecorder(api);
   await EVM.initEvents(api);
   initFormulas(api);
+  await initNotify(api);
   initSuggest(api);
   EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder, EVM.reloadEvents);
   initData(api);

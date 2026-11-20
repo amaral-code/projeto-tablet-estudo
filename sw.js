@@ -1,9 +1,9 @@
 // Service worker: deixa o app funcionando offline.
-const CACHE = 'caderno-v15';
+const CACHE = 'caderno-v16';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/editor.js', 'js/ink.js', 'js/shapes.js', 'js/recognize.js', 'js/store.js', 'js/export.js', 'js/ui.js',
-  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/plus.js', 'js/sound.js', 'js/nav.js', 'js/goals.js', 'js/quiz.js', 'js/data.js', 'js/voice.js', 'js/quicknotes.js', 'js/tutor.js', 'js/recorder.js', 'js/suggest.js', 'js/events.js', 'js/chave.js', 'js/flow.js', 'js/formulas.js', 'js/imagesearch.js', 'fonts/caveat.woff2', 'fonts/patrick-hand.woff2', 'fonts/indie-flower.woff2', 'fonts/kalam.woff2', 'fonts/shadows-into-light-two.woff2', 'fonts/dancing-script.woff2', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
+  'js/ai.js', 'js/aipanel.js', 'js/importer.js', 'js/hub.js', 'js/perf.js', 'js/plus.js', 'js/sound.js', 'js/nav.js', 'js/goals.js', 'js/quiz.js', 'js/data.js', 'js/voice.js', 'js/quicknotes.js', 'js/tutor.js', 'js/recorder.js', 'js/suggest.js', 'js/events.js', 'js/chave.js', 'js/flow.js', 'js/formulas.js', 'js/imagesearch.js', 'js/notify.js', 'js/avisos-core.js', 'fonts/caveat.woff2', 'fonts/patrick-hand.woff2', 'fonts/indie-flower.woff2', 'fonts/kalam.woff2', 'fonts/shadows-into-light-two.woff2', 'fonts/dancing-script.woff2', 'js/vendor/pdf.min.mjs', 'js/vendor/pdf.worker.min.mjs',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
 ];
 self.addEventListener('install', e => {
@@ -30,42 +30,43 @@ self.addEventListener('notificationclick', e => {
   e.waitUntil(self.clients.matchAll({ type: 'window' }).then(cs => cs.length ? cs[0].focus() : self.clients.openWindow(url)));
 });
 
-// Avisos da agenda com o app fechado: o Chrome acorda o app instalado de vez em quando ("periodic sync")
-// e aqui conferimos os eventos de amanhã e de hoje direto no banco de dados.
+// Avisos com o app fechado: o Chrome acorda o app instalado de vez em quando ("periodic background sync")
+// e aqui o mesmo motor da Central de Avisos (js/avisos-core.js) confere o que já devia ter tocado.
+importScripts('js/avisos-core.js');
 self.addEventListener('periodicsync', e => { if (e.tag === 'lembretes') e.waitUntil(lembretes()); });
-const dia = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-function lembretes() {
+const STORES_AVISOS = ['events', 'tasks', 'grades', 'classes', 'cards', 'habits', 'folders'];
+function lembretes(now = Date.now()) {
   return new Promise(res => {
     const r = indexedDB.open('caderno-estudos');
     r.onupgradeneeded = () => r.transaction.abort(); // o banco ainda não existe: nada a fazer
-    r.onerror = () => res();
+    r.onerror = () => res(0);
     r.onsuccess = () => {
       const db = r.result;
-      if (!db.objectStoreNames.contains('events')) { db.close(); res(); return; }
-      const q = db.transaction('events').objectStore('events').getAll();
-      q.onerror = () => { db.close(); res(); };
-      q.onsuccess = async () => {
-        const hoje = dia(new Date()), amanha = dia(new Date(Date.now() + 86400000));
-        const mudou = [];
-        for (const ev of q.result) {
-          if (ev.remind === false) continue;
-          const n = ev.notified || {};
-          const tipo = ev.date === amanha && n.before !== ev.date ? 'before' : ev.date === hoje && n.day !== ev.date ? 'day' : null;
-          if (!tipo) continue;
+      const stores = STORES_AVISOS.filter(s => db.objectStoreNames.contains(s));
+      if (!db.objectStoreNames.contains('kv')) { db.close(); res(0); return; }
+      const tx = db.transaction([...stores, 'kv']);
+      const data = {}; let kv = null;
+      for (const s of stores) { const q = tx.objectStore(s).getAll(); q.onsuccess = () => { data[s] = q.result; }; }
+      const k = tx.objectStore('kv').get('avisos'); k.onsuccess = () => { kv = k.result || { id: 'avisos', fired: {} }; };
+      tx.oncomplete = async () => {
+        const C = self.AvisosCore;
+        const due = C.due(C.compute(data, kv.prefs || {}, now), kv.fired || {}, now);
+        if (!due.length) { db.close(); res(0); return; }
+        kv.fired = kv.fired || {};
+        for (const a of due) {
           try {
-            await self.registration.showNotification(`📅 ${tipo === 'before' ? 'Amanhã' : 'Hoje'}: ${ev.title}`, {
-              body: `${ev.time ? `Às ${ev.time}` : 'O dia todo'}${+ev.prio === 3 ? ' · prioridade ALTA' : ''}${ev.notes ? `\n${ev.notes}` : ''}`,
-              icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: `ev-${ev.id}-${tipo}`, data: { url: './?v=calendar' },
-            });
-            ev.notified = { ...n, [tipo]: ev.date, ...(tipo === 'day' ? { before: ev.date } : {}) };
-            mudou.push(ev);
+            await self.registration.showNotification(a.title, { body: a.body, tag: a.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: a.url } });
+            kv.fired[a.id] = now;
           } catch { /* sem permissão */ }
         }
-        if (!mudou.length) { db.close(); res(); return; }
-        const tx = db.transaction('events', 'readwrite');
-        for (const ev of mudou) tx.objectStore('events').put(ev);
-        tx.oncomplete = tx.onerror = () => { db.close(); res(); };
+        kv.fired = C.prune(kv.fired, now);
+        const w = db.transaction('kv', 'readwrite');
+        w.objectStore('kv').put(kv);
+        w.oncomplete = w.onerror = () => { db.close(); res(due.length); };
       };
+      tx.onerror = () => { db.close(); res(0); };
     };
   });
 }
+// (para testes: a página pode pedir ao service worker para conferir os avisos agora)
+self.addEventListener('message', e => { if (e.data === 'conferir-avisos') e.waitUntil(lembretes().then(n => e.source && e.source.postMessage({ avisos: n }))); });

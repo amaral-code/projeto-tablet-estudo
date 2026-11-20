@@ -37,6 +37,7 @@
           <option value="created">Criação</option>
           <option value="title">Nome (A–Z)</option>
         </select>
+        <button class="btn" id="btn-import"></button>
         <button class="btn primary" id="btn-new"></button>
       </header>
 
@@ -80,6 +81,8 @@
       <div class="spacer"></div>
       <button class="icon-btn" id="ed-undo" aria-label="Desfazer" title="Desfazer"></button>
       <button class="icon-btn" id="ed-redo" aria-label="Refazer" title="Refazer"></button>
+      <button class="btn ai-btn" id="ed-ai" title="Assistente IA"></button>
+      <button class="icon-btn" id="ed-import" aria-label="Importar PDF ou foto" title="Importar PDF ou foto como páginas"></button>
       <button class="icon-btn" id="ed-task" aria-label="Criar tarefa" title="Criar tarefa desta anotação"></button>
       <button class="icon-btn" id="ed-paper" aria-label="Papel" title="Tipo de papel"></button>
       <button class="icon-btn" id="ed-settings" aria-label="Ajustes" title="Ajustes"></button>
@@ -111,7 +114,7 @@
     </div>
     <div class="pagebar">
       <button class="icon-btn" id="pg-prev" aria-label="Página anterior"></button>
-      <span id="pg-label">1 / 1</span>
+      <button id="pg-label" title="Ver todas as páginas">1 / 1</button>
       <button class="icon-btn" id="pg-next" aria-label="Próxima página"></button>
       <button class="icon-btn" id="pg-add" aria-label="Nova página" title="Nova página"></button>
       <button class="icon-btn" id="pg-del" aria-label="Excluir página" title="Excluir página"></button>
@@ -121,6 +124,7 @@
   </section>
 
   <input type="file" id="backup-input" accept=".json,application/json" hidden>
+  <input type="file" id="import-input" accept="application/pdf,.pdf,image/*" multiple hidden>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

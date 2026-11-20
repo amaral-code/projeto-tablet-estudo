@@ -1,7 +1,10 @@
 // App principal: biblioteca (pastas e anotações), tarefas, ajustes, compartilhamento e backup.
 import { db, settings, saveSettings } from './store.js';
-import { uid, PAPER_COLORS, PAPER_TYPES } from './ink.js';
-import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles } from './editor.js';
+import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
+import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages } from './editor.js';
+import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
+import { AI_MODELS, DEFAULT_MODEL, streamChat } from './ai.js';
+import { filesToPages } from './importer.js';
 import { pagesToPDF, pageToPNG, shareFile, shareText, download } from './export.js';
 import { LANGS } from './recognize.js';
 import { ic, esc, h, toast, modal, promptText, confirmBox, menu } from './ui.js';
@@ -24,6 +27,13 @@ async function init() {
     onShare: (meta, content, pageIndex) => shareNoteDialog(meta, content, pageIndex),
     onAddTask: meta => taskDialog({ noteId: meta.id, folderId: meta.folderId || '' }),
     onSettings: settingsDialog,
+    onAI: toggleAIPanel,
+    onImport: () => pickImport('editor'),
+  });
+  initAIPanel({
+    onSettings: settingsDialog,
+    folderName: id => folderName(id),
+    onCreateTasks: createTasksFromAI,
   });
   bindLibrary();
   await loadAll();
@@ -39,6 +49,9 @@ function fillIcons() {
   $('btn-settings').innerHTML = `${ic('settings')}<span>Ajustes e backup</span>`;
   $('btn-menu').innerHTML = ic('menu');
   $('btn-new').innerHTML = `${ic('plus')}<span>Nova anotação</span>`;
+  $('btn-import').innerHTML = `${ic('upload')}<span>Importar PDF</span>`;
+  $('ed-ai').innerHTML = `${ic('magic')}<span>IA</span>`;
+  $('ed-import').innerHTML = ic('upload');
   document.querySelector('.search-ic').innerHTML = ic('search');
   $('btn-share-tasks').innerHTML = `${ic('share')}<span>Compartilhar lista</span>`;
   $('ed-back').innerHTML = ic('back');
@@ -81,7 +94,8 @@ async function seed() {
       T(680, '👆 Dois dedos: zoom e mover. Toque com 2 dedos = desfazer.'),
       T(760, '📁 Organize em pastas, crie tarefas e toque em Compartilhar'),
       T(800, '     para enviar PDF ou imagem pelo WhatsApp, e-mail…'),
-      T(880, 'Teste aqui embaixo! ↓', 30, '#1f9d4a', true),
+      T(840, '✦  IA: toque em "IA" para resumir, melhorar sua escrita e mais.'),
+      T(920, 'Teste aqui embaixo! ↓', 30, '#1f9d4a', true),
     ],
   };
   const id = uid();
@@ -123,6 +137,99 @@ function bindLibrary() {
     renderTasks();
   };
   $('btn-share-tasks').onclick = shareTasks;
+  $('btn-import').onclick = () => pickImport('library');
+  $('import-input').addEventListener('change', onImportFiles);
+}
+
+// =================== Importar PDF / fotos ===================
+let importMode = 'library';
+function pickImport(mode) { importMode = mode; $('import-input').click(); }
+
+function imagePage(img) {
+  const k = Math.min(PAGE_W / img.w, PAGE_H / img.h);
+  const w = img.w * k, hh = img.h * k;
+  return { id: uid(), strokes: [], texts: [], images: [{ id: uid(), src: img.src, x: (PAGE_W - w) / 2, y: (PAGE_H - hh) / 2, w, h: hh, locked: true }] };
+}
+
+async function onImportFiles(e) {
+  const files = [...(e.target.files || [])];
+  e.target.value = '';
+  if (!files.length) return;
+  let res;
+  try {
+    toast('Importando…', 60000);
+    res = await filesToPages(files, msg => toast(`Importando ${msg}…`, 60000));
+  } catch (err) {
+    toast('Não foi possível importar: ' + (err.message || err), 4500);
+    return;
+  }
+  if (!res.pages.length) { toast('Nenhuma página encontrada nos arquivos'); return; }
+  const extra = res.skipped ? ` (${res.skipped} páginas ignoradas: limite de 60 por PDF)` : '';
+  if (importMode === 'editor' && editorIsOpen()) {
+    insertImagePages(res.pages);
+    toast(`${res.pages.length} página(s) importada(s)${extra}`, 3500);
+    return;
+  }
+  const v = state.view;
+  const folderId = v.kind === 'notes' && !['all', 'fav', 'none'].includes(v.filter) ? v.filter : '';
+  const now = Date.now();
+  const meta = {
+    id: uid(), title: files[0].name.replace(/\.[^.]+$/, '').slice(0, 80) || 'Importado',
+    folderId, fav: false, createdAt: now, updatedAt: now, pageCount: res.pages.length, thumb: '',
+  };
+  await db.put('pages', { id: meta.id, bg: { type: 'blank', color: 'white' }, pages: res.pages.map(imagePage) });
+  await db.put('notes', meta);
+  state.notes.push(meta);
+  render();
+  toast(`${res.pages.length} página(s) importada(s) — escreva por cima!${extra}`, 3500);
+  openNote(meta.id);
+}
+
+// =================== IA fora do editor ===================
+async function createNoteFromText(title, folderId, text) {
+  const groups = layoutText(text);
+  const now = Date.now();
+  const meta = { id: uid(), title, folderId: folderId || '', fav: false, createdAt: now, updatedAt: now, pageCount: groups.length, thumb: '' };
+  await db.put('pages', { id: meta.id, bg: { type: 'lines', color: 'white' }, pages: groups.map(g => ({ id: uid(), strokes: [], texts: g, images: [] })) });
+  await db.put('notes', meta);
+  state.notes.push(meta);
+  render();
+  toast('Anotação criada ✓');
+  openNote(meta.id);
+}
+
+async function aiForNote(n) {
+  const c = await loadContent(n.id);
+  openAIDialog({
+    title: n.title, subtitle: `${c.pages.length} página(s)`, pages: c.pages, bg: c.bg,
+    folder: folderName(n.folderId), onSettings: settingsDialog,
+    onSave: text => createNoteFromText(`IA – ${n.title}`, n.folderId, text),
+  });
+}
+
+async function aiForFolder(f) {
+  const notes = state.notes.filter(n => n.folderId === f.id).sort((a, b) => a.createdAt - b.createdAt);
+  if (!notes.length) { toast('Pasta vazia'); return; }
+  const pages = [];
+  for (const n of notes) {
+    const c = await loadContent(n.id);
+    pages.push(...c.pages.map(p => ({ ...p, _bg: c.bg, _title: n.title })));
+  }
+  openAIDialog({
+    title: f.name, subtitle: `${notes.length} anotação(ões), ${pages.length} página(s)`, pages, bg: null,
+    folder: f.name, onSettings: settingsDialog,
+    onSave: text => createNoteFromText(`IA – ${f.name}`, f.id, text),
+  });
+}
+
+async function createTasksFromAI(titles, meta) {
+  const now = Date.now();
+  let n = 0;
+  for (const title of titles) {
+    const t = { id: uid(), title, done: false, due: '', prio: 2, folderId: meta?.folderId || '', noteId: meta?.id || '', notes: 'Criada pelo plano de estudo da IA', createdAt: now + n };
+    await db.put('tasks', t); state.tasks.push(t); n++;
+  }
+  return n;
 }
 
 function setView(v) {
@@ -281,12 +388,14 @@ async function folderMenu(id) {
   const a = await menu(f.name, [
     { label: 'Nova anotação nesta pasta', icon: 'plus', value: 'new' },
     { label: 'Renomear / mudar cor', icon: 'edit', value: 'edit' },
+    { label: 'Assistente IA: resumir a pasta…', icon: 'magic', value: 'ai' },
     { label: 'Compartilhar todas (PDF)', icon: 'share', value: 'share' },
     { label: 'Excluir pasta', icon: 'trash', value: 'del', danger: true },
   ]);
   if (a === 'new') newNoteDialog(f.id);
   else if (a === 'edit') folderDialog(f);
   else if (a === 'share') shareFolder(f);
+  else if (a === 'ai') aiForFolder(f);
   else if (a === 'del') {
     const notes = state.notes.filter(n => n.folderId === id);
     const choice = await modal({
@@ -377,6 +486,7 @@ async function openNote(id) {
 }
 
 async function closeNote() {
+  resetAIPanel();
   await closeEditor();
   document.body.classList.remove('editing');
   render();
@@ -392,6 +502,7 @@ async function noteMenu(id) {
   if (!n) return;
   const a = await menu(n.title, [
     { label: 'Abrir', icon: 'page', value: 'open' },
+    { label: 'Assistente IA: resumir, perguntas…', icon: 'magic', value: 'ai' },
     { label: 'Compartilhar', icon: 'share', value: 'share' },
     { label: 'Renomear', icon: 'edit', value: 'rename' },
     { label: 'Mover para pasta', icon: 'folder', value: 'move' },
@@ -402,6 +513,7 @@ async function noteMenu(id) {
   ]);
   if (a === 'open') openNote(id);
   else if (a === 'share') shareNoteDialog(n, null, 0);
+  else if (a === 'ai') aiForNote(n);
   else if (a === 'rename') {
     const t = await promptText('Renomear', n.title);
     if (t) { n.title = t; await db.put('notes', n); render(); }
@@ -627,6 +739,15 @@ async function settingsDialog() {
       <option value="math" ${settings.autoMode === 'math' ? 'selected' : ''}>Conferir contas (✓ / ✗) ao terminar de escrever</option>
     </select>
     <hr>
+    <label class="lbl">Inteligência artificial (Claude)</label>
+    <p class="muted small">Resumos, melhoria da escrita, explicações, perguntas, flashcards e plano de estudo. Crie uma chave em <b>platform.claude.com</b> → API Keys e cole aqui. A chave fica salva só neste tablet e o uso é cobrado na sua conta da Anthropic.</p>
+    <input class="input" id="s-aikey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(settings.aiKey || '')}">
+    <div class="row wrap" style="margin-top:8px">
+      <select class="select grow" id="s-aimodel">${Object.entries(AI_MODELS).map(([k, v]) => `<option value="${k}" ${(settings.aiModel || DEFAULT_MODEL) === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+      <button class="btn" id="s-aitest" type="button">${ic('check')}<span>Testar</span></button>
+    </div>
+    <p class="muted small" id="s-aistatus"></p>
+    <hr>
     <label class="lbl">Backup</label>
     <p class="muted small">Tudo fica salvo no próprio tablet, sem precisar de conta. Faça backup de vez em quando (ex.: enviar para o Google Drive).</p>
     <div class="row wrap">
@@ -644,17 +765,35 @@ async function settingsDialog() {
         <li><b>Verificar conta:</b> escreva “12 + 8 = 20” e o app marca ✓ ou ✗ mostrando o resultado certo. Aceita + − × ÷ : x / ^ √ % e vírgula decimal.</li>
         <li><b>Gestos:</b> pinça com 2 dedos = zoom; arrastar com 2 dedos = mover; toque com 2 dedos = desfazer; 3 dedos = refazer.</li>
         <li><b>Compartilhar:</b> envia PDF ou imagem pelo WhatsApp, Gmail, Drive, Classroom…</li>
-        <li>A correção usa a internet; todo o resto funciona offline.</li>
+        <li><b>IA:</b> toque em “IA” no editor. Escolha Seleção, Esta página ou Todas e peça um resumo, melhorar a escrita, escrever mais, explicação, perguntas, flashcards ou plano de estudo. O resultado pode ser escrito na folha.</li>
+        <li><b>Importar PDF:</b> traga listas de exercícios e apostilas para escrever por cima.</li>
+        <li><b>Páginas:</b> toque no número da página para ver todas, reordenar, duplicar ou excluir.</li>
+        <li>A correção de escrita e a IA usam a internet; todo o resto funciona offline.</li>
       </ul>
     </details>
   </div>`);
   body.querySelector('#s-export').onclick = exportBackup;
+  body.querySelector('#s-aitest').onclick = async () => {
+    const st = body.querySelector('#s-aistatus');
+    settings.aiKey = body.querySelector('#s-aikey').value.trim();
+    settings.aiModel = body.querySelector('#s-aimodel').value;
+    saveSettings();
+    st.textContent = 'Testando…';
+    try {
+      let txt = '';
+      const r = streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; });
+      await r.done;
+      st.textContent = '✓ IA funcionando: ' + txt.trim().slice(0, 60);
+    } catch (e) { st.textContent = '✗ ' + e.message; }
+  };
   body.querySelector('#s-import').onclick = () => $('backup-input').click();
   await modal({ title: 'Ajustes', body, wide: true, actions: [{ label: 'Fechar', value: true, primary: true }] });
   settings.fingerDraw = body.querySelector('#s-finger').checked;
   settings.shapes = body.querySelector('#s-shapes').checked;
   settings.lang = body.querySelector('#s-lang').value;
   settings.autoMode = body.querySelector('#s-auto').value;
+  settings.aiKey = body.querySelector('#s-aikey').value.trim();
+  settings.aiModel = body.querySelector('#s-aimodel').value;
   saveSettings();
   syncToggles();
 }

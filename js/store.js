@@ -52,6 +52,8 @@ const DEFAULTS = {
   shapes: true,
   eraserMode: 'partial',
   sort: 'updated',
+  aiKey: '',
+  aiModel: 'claude-opus-5-5',
 };
 export const settings = (() => {
   let v = {};

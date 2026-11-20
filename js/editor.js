@@ -3,7 +3,7 @@
 import {
   PAGE_W, PAGE_H, PAPER_COLORS, PAPER_TYPES, uid, renderPage, drawStroke, makeStroke, strokeHit,
   eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit,
-  setImageLoadHandler, renderPageToCanvas,
+  setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine,
 } from './ink.js';
 import { snapShape } from './shapes.js';
 import { groupLines, recognizeStrokes, checkMath, fmtNum } from './recognize.js';
@@ -72,6 +72,9 @@ export function initEditor(callbacks) {
   $('pg-add').onclick = addPage;
   $('pg-del').onclick = deletePage;
   $('pg-zoom').onclick = () => { fitWidth(); redraw(); };
+  $('pg-label').onclick = openPageOverview;
+  $('ed-ai').onclick = () => cb.onAI();
+  $('ed-import').onclick = () => cb.onImport();
   $('img-input').addEventListener('change', onImageFile);
 
   stage.addEventListener('pointerdown', onDown);
@@ -598,7 +601,7 @@ function endLasso() {
     // toque: seleciona o item sob o dedo/caneta
     const x = pts[0][0], y = pts[0][1];
     const t = [...pg.texts].reverse().find(t => bboxHit(textBBox(t), x, y, 4 / v.s));
-    const im = !t && [...pg.images].reverse().find(i => bboxHit(itemBBox('images', i), x, y));
+    const im = !t && [...pg.images].reverse().find(i => !i.locked && bboxHit(itemBBox('images', i), x, y));
     const s = !t && !im && [...pg.strokes].reverse().find(s => strokeHit(s, x, y, 10 / v.s));
     if (t) sel.texts.add(t.id); else if (im) sel.images.add(im.id); else if (s) sel.strokes.add(s.id);
   } else {
@@ -609,7 +612,7 @@ function endLasso() {
       if (total && inside / total >= 0.5) sel.strokes.add(s.id);
     }
     for (const t of pg.texts) { const b = textBBox(t); if (pointInPoly(b.x + b.w / 2, b.y + b.h / 2, pts)) sel.texts.add(t.id); }
-    for (const i of pg.images) if (pointInPoly(i.x + i.w / 2, i.y + i.h / 2, pts)) sel.images.add(i.id);
+    for (const i of pg.images) if (!i.locked && pointInPoly(i.x + i.w / 2, i.y + i.h / 2, pts)) sel.images.add(i.id);
   }
   if (!sel.strokes.size && !sel.texts.size && !sel.images.size) { clearSel(); return; }
   E.sel = sel;
@@ -1143,4 +1146,108 @@ export async function flushSave() {
     st.dirty = true;
     toast('Erro ao salvar: ' + (e && e.message ? e.message : 'armazenamento cheio?'), 4000);
   }
+}
+
+// =================== Integração: IA, importação e visão geral ===================
+export function getEditorContext() {
+  if (!E) return null;
+  return {
+    meta: E.meta, content: E.content, pageIndex: E.pageIndex,
+    selBBox: E.sel && E.sel.bbox && E.sel.bbox.w > 0 ? { ...E.sel.bbox } : null,
+  };
+}
+
+const emptyPage = () => ({ id: uid(), strokes: [], texts: [], images: [] });
+const isEmptyPage = p => !p.strokes.length && !p.texts.length && !p.images.length;
+
+// Escreve um texto longo nas pautas: 'here' = abaixo do conteúdo desta página; 'new' = em página nova
+export function insertText(text, where = 'new') {
+  if (!E) return 0;
+  commitTextEdit();
+  const dark = E.content.bg && E.content.bg.color === 'dark';
+  const color = dark ? '#f1f3f5' : '#1d1d1f', accent = dark ? '#7fb2ff' : '#0a6cff';
+  pushUndo();
+  let idx = E.pageIndex;
+  let startY;
+  if (where === 'here') startY = nextFreeLine(page());
+  else {
+    if (!isEmptyPage(page())) { E.content.pages.splice(idx + 1, 0, emptyPage()); idx++; }
+    startY = undefined;
+  }
+  let groups = layoutText(text, { startY, color, accent });
+  if (where === 'here' && startY > 1300) { // página cheia: começa na próxima
+    E.content.pages.splice(idx + 1, 0, emptyPage()); idx++;
+    groups = layoutText(text, { color, accent });
+  }
+  const first = idx;
+  groups.forEach((g, i) => {
+    if (i > 0) { E.content.pages.splice(idx + 1, 0, emptyPage()); idx++; }
+    E.content.pages[idx].texts.push(...g);
+  });
+  markDirty();
+  gotoPage(first);
+  return groups.length;
+}
+
+// Coloca imagens (ex.: páginas de um PDF) como fundo de páginas novas, travadas para não sair do lugar
+export function insertImagePages(images) {
+  if (!E || !images.length) return;
+  pushUndo();
+  let idx = E.pageIndex;
+  let first = -1;
+  images.forEach((img, n) => {
+    let pg;
+    if (n === 0 && isEmptyPage(page())) pg = page();
+    else { pg = emptyPage(); E.content.pages.splice(++idx, 0, pg); }
+    if (first < 0) first = E.content.pages.indexOf(pg);
+    const k = Math.min(PAGE_W / img.w, PAGE_H / img.h);
+    const w = img.w * k, hh = img.h * k;
+    pg.images.push({ id: uid(), src: img.src, x: (PAGE_W - w) / 2, y: (PAGE_H - hh) / 2, w, h: hh, locked: true });
+  });
+  markDirty();
+  gotoPage(first);
+}
+
+// Visão geral: miniaturas para pular, reordenar, duplicar e excluir páginas
+export function openPageOverview() {
+  if (!E) return;
+  commitTextEdit();
+  const body = h('<div class="pages-grid"></div>');
+  const draw = () => {
+    body.innerHTML = '';
+    E.content.pages.forEach((p, i) => {
+      const cell = h(`<div class="pg-cell ${i === E.pageIndex ? 'active' : ''}">
+        <button class="pg-thumb" data-go="${i}" aria-label="Ir para a página ${i + 1}"></button>
+        <div class="pg-tools"><span>${i + 1}</span>
+          <button class="icon-btn small" data-left="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Mover para trás">${ic('left')}</button>
+          <button class="icon-btn small" data-right="${i}" ${i === E.content.pages.length - 1 ? 'disabled' : ''} aria-label="Mover para frente">${ic('right')}</button>
+          <button class="icon-btn small" data-dup="${i}" aria-label="Duplicar">${ic('copy')}</button>
+          <button class="icon-btn small" data-del="${i}" aria-label="Excluir">${ic('trash')}</button></div></div>`);
+      const c = renderPageToCanvas(p, E.content.bg, 150);
+      cell.querySelector('.pg-thumb').appendChild(c);
+      body.appendChild(cell);
+    });
+    const add = h(`<button class="pg-cell pg-add">${ic('plus')}<span>Nova página</span></button>`);
+    add.onclick = () => { pushUndo(); E.content.pages.push(emptyPage()); markDirty(); draw(); updatePageBar(); };
+    body.appendChild(add);
+  };
+  draw();
+  body.onclick = e => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    const d = b.dataset, pages = E.content.pages;
+    if (d.go !== undefined) { gotoPage(+d.go); body.closest('.modal-back')?._close?.(); return; }
+    pushUndo();
+    if (d.left !== undefined) { const i = +d.left; [pages[i - 1], pages[i]] = [pages[i], pages[i - 1]]; if (E.pageIndex === i) E.pageIndex--; else if (E.pageIndex === i - 1) E.pageIndex++; }
+    else if (d.right !== undefined) { const i = +d.right; [pages[i + 1], pages[i]] = [pages[i], pages[i + 1]]; if (E.pageIndex === i) E.pageIndex++; else if (E.pageIndex === i + 1) E.pageIndex--; }
+    else if (d.dup !== undefined) {
+      const i = +d.dup, p = pages[i];
+      pages.splice(i + 1, 0, { id: uid(), strokes: p.strokes.map(s => ({ ...s, id: uid() })), texts: p.texts.map(t => ({ ...t, id: uid() })), images: p.images.map(m => ({ ...m, id: uid() })) });
+    } else if (d.del !== undefined) {
+      if (pages.length === 1) { E.undo.pop(); toast('A anotação precisa ter pelo menos uma página'); return; }
+      pages.splice(+d.del, 1);
+      E.pageIndex = Math.min(E.pageIndex, pages.length - 1);
+    } else { E.undo.pop(); return; }
+    clearSel(); markDirty(); updatePageBar(); redraw(); draw();
+  };
+  modal({ title: `Páginas (${E.content.pages.length})`, body, wide: true, actions: [{ label: 'Fechar', value: true, primary: true }] });
 }

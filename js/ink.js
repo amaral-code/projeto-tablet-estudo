@@ -10,7 +10,7 @@ export const PAPER_COLORS = {
   dark:  { fill: '#22252b', line: 'rgba(255,255,255,.13)', label: 'Escuro' },
 };
 export const PAPER_TYPES = {
-  lines: 'Pautado', grid: 'Quadriculado', dots: 'Pontilhado', blank: 'Liso',
+  lines: 'Pautado', grid: 'Quadriculado', smallgrid: 'Matemática', dots: 'Pontilhado', cornell: 'Cornell', blank: 'Liso',
 };
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -37,6 +37,32 @@ export function drawPaper(ctx, bg) {
     for (let y = step; y < PAGE_H; y += step) { ctx.moveTo(0, y); ctx.lineTo(PAGE_W, y); }
     for (let x = step; x < PAGE_W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, PAGE_H); }
     ctx.stroke();
+  } else if (type === 'smallgrid') {
+    for (let y = 20, i = 1; y < PAGE_H; y += 20, i++) {
+      ctx.globalAlpha = i % 5 ? 0.45 : 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(PAGE_W, y); ctx.stroke();
+    }
+    for (let x = 20, i = 1; x < PAGE_W; x += 20, i++) {
+      ctx.globalAlpha = i % 5 ? 0.45 : 1; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, PAGE_H); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (type === 'cornell') {
+    const top = 140, cue = 280, sum = PAGE_H - 280;
+    ctx.beginPath();
+    for (let y = top + 40; y < sum - 10; y += step) { ctx.moveTo(cue, y); ctx.lineTo(PAGE_W, y); }
+    for (let y = sum + 80; y < PAGE_H - 20; y += step) { ctx.moveTo(0, y); ctx.lineTo(PAGE_W, y); }
+    ctx.stroke();
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, top); ctx.lineTo(PAGE_W, top);
+    ctx.moveTo(cue, top); ctx.lineTo(cue, sum);
+    ctx.moveTo(0, sum); ctx.lineTo(PAGE_W, sum);
+    ctx.stroke();
+    ctx.font = `600 18px ${FONT}`;
+    ctx.textBaseline = 'top';
+    ctx.fillText('Título / data', 20, 20);
+    ctx.fillText('Palavras-chave', 20, top + 14);
+    ctx.fillText('Anotações', cue + 20, top + 14);
+    ctx.fillText('Resumo', 20, sum + 14);
   } else if (type === 'dots') {
     for (let y = step; y < PAGE_H; y += step)
       for (let x = step; x < PAGE_W; x += step) { ctx.beginPath(); ctx.arc(x, y, 2, 0, 7); ctx.fill(); }
@@ -295,4 +321,78 @@ export function transformItem(kind, it, k, ox, oy, dx, dy) {
   }
   if (kind === 'texts') return { ...it, x: tx(it.x), y: ty(it.y), size: Math.max(6, it.size * k) };
   return { ...it, x: tx(it.x), y: ty(it.y), w: it.w * k, h: it.h * k };
+}
+
+// ---------- Diagramação de textos longos (respostas da IA) ----------
+export const LINE0 = 120, LINE_STEP = 40;
+const MARGIN_L = 110, MARGIN_R = 50, BOTTOM = PAGE_H - 50;
+
+function wrapLine(text, size, bold, maxW) {
+  const words = text.split(/(\s+)/);
+  const out = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur + w;
+    if (cur.trim() && textBBox({ text: test, size, bold, x: 0, y: 0 }).w > maxW) {
+      out.push(cur.trimEnd());
+      cur = w.trimStart();
+      // palavra maior que a linha: quebra à força
+      while (textBBox({ text: cur, size, bold, x: 0, y: 0 }).w > maxW && cur.length > 1) {
+        let n = cur.length - 1;
+        while (n > 1 && textBBox({ text: cur.slice(0, n), size, bold, x: 0, y: 0 }).w > maxW) n--;
+        out.push(cur.slice(0, n)); cur = cur.slice(n);
+      }
+    } else cur = test;
+  }
+  if (cur.trim() || !out.length) out.push(cur.trimEnd());
+  return out;
+}
+
+// Linha pautada livre abaixo do conteúdo existente na página
+export function nextFreeLine(page) {
+  let bottom = 0;
+  for (const s of page.strokes) bottom = Math.max(bottom, s.bbox.y + s.bbox.h);
+  for (const t of page.texts) { const b = textBBox(t); bottom = Math.max(bottom, b.y + b.h); }
+  for (const i of page.images) if (!i.locked) bottom = Math.max(bottom, i.y + i.h);
+  if (!bottom) return LINE0;
+  let y = LINE0;
+  while (y < bottom + 30) y += LINE_STEP;
+  return y;
+}
+
+// Divide o texto em linhas posicionadas nas pautas. Retorna [[textos da 1ª página], [2ª], ...]
+export function layoutText(text, { startY = LINE0, color = '#1d1d1f', accent = '#0a6cff' } = {}) {
+  const pages = [[]];
+  let y = startY;
+  const maxW = PAGE_W - MARGIN_L - MARGIN_R;
+  const put = (txt, x, size, bold, col) => {
+    if (y > BOTTOM) { pages.push([]); y = LINE0; }
+    pages[pages.length - 1].push({ id: uid(), x, y: y - size * 0.95, text: txt, size, bold, color: col });
+    y += LINE_STEP;
+  };
+  let prevBlank = true;
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) { if (!prevBlank) y += LINE_STEP / 2; prevBlank = true; continue; }
+    prevBlank = false;
+    const h = line.match(/^\s*#{1,6}\s+(.*)$/);
+    if (h) {
+      if (y !== LINE0 && y !== startY) y = Math.ceil((y - LINE0) / LINE_STEP) * LINE_STEP + LINE0;
+      for (const l of wrapLine(h[1], 28, true, maxW)) put(l, MARGIN_L, 28, true, accent);
+      continue;
+    }
+    if (y !== LINE0) y = Math.ceil((y - LINE0) / LINE_STEP) * LINE_STEP + LINE0;
+    const b = line.match(/^(\s*)([-•*]|\d+[.)]|[a-e]\))\s+(.*)$/);
+    if (b) {
+      const indent = Math.min(2, Math.floor(b[1].length / 2)) * 30;
+      const bullet = /^[-•*]$/.test(b[2]) ? '•' : b[2];
+      const lead = bullet + ' ';
+      const leadW = textBBox({ text: lead, size: 24, x: 0, y: 0 }).w;
+      wrapLine(b[3], 24, false, maxW - indent - leadW).forEach((l, i) =>
+        put(i ? l : lead + l, MARGIN_L + indent + (i ? leadW : 0), 24, false, color));
+      continue;
+    }
+    for (const l of wrapLine(line.trim(), 24, false, maxW)) put(l, MARGIN_L, 24, false, color);
+  }
+  return pages.filter((p, i) => p.length || i === 0);
 }

@@ -38,11 +38,14 @@ export function parseQuick(text, { folders = [], now = new Date() } = {}) {
       if (fn(m) !== false) take(m.index, m.index + m[0].length);
     }
   };
-  const out = { kind: 'task', evKind: '', title: '', date: '', time: '', prio: 0, folderId: '', raw: src };
+  const out = { kind: 'task', evKind: '', title: '', date: '', time: '', prio: 0, folderId: '', raw: src, warn: [], past: false, nextWeek: false };
+  const warn = w => { if (!out.warn.includes(w)) out.warn.push(w); };
+  // conta/fração no texto ("frações 1/2 e 3/4"): barra sem "dia" não é data
+  const mathy = /\b(fra[cç]|conta|calcul|equa|razao|propor|porcent|divis|multiplic|simplific|potenc|raiz|mmc|mdc)/.test(norm(src)) || (src.match(/\d+\s*\/\s*\d+/g) || []).length >= 2 || /[=+*×÷]/.test(src);
   const today = dayAt(now, 0);
 
   // ----- hora (antes da data, para "15/12 às 14h" não confundir) -----
-  const setTime = (h, m = 0) => { if (h > 23 || m > 59 || out.time) return false; out.time = `${pad(h)}:${pad(m)}`; };
+  const setTime = (h, m = 0) => { if (out.time) return false; if (h > 23 || m > 59) { warn('horário inválido'); return false; } out.time = `${pad(h)}:${pad(m)}`; };
   each(/\b(?:as\s+|a\s+)?(\d{1,2})(?:h|:\d{2})?\s+da\s+(manha|tarde|noite)\b/g, m => { let h = +m[1]; const mm = +((m[0].match(/:(\d{2})/) || [])[1] || 0); if (m[2] !== 'manha' && h < 12) h += 12; return setTime(h, mm); });
   each(/\b(?:as\s+|a\s+|ate\s+as\s+)?(\d{1,2})(?::|h)(\d{2})\b/g, m => setTime(+m[1], +m[2]));
   // "às 8 horas", "8h": sem o "às", só vale das 6h em diante ("estudar 2h" é quanto tempo, não a hora)
@@ -60,13 +63,18 @@ export function parseQuick(text, { folders = [], now = new Date() } = {}) {
   each(new RegExp(`\\b${PRE}(?:semana\\s+que\\s+vem|proxima\\s+semana)\\b`, 'g'), () => setDate(dayAt(today, 7)));
   each(new RegExp(`\\b${PRE}fim\\s+de\\s+semana\\b`, 'g'), () => { const k = (6 - today.getDay() + 7) % 7; return setDate(dayAt(today, today.getDay() === 0 ? 0 : k)); });
   each(new RegExp(`\\b${PRE}(segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:[\\s-]feira)?(?:\\s+que\\s+vem)?\\b`, 'g'), m => {
-    const w = WEEK.indexOf(m[1]); let k = (w - today.getDay() + 7) % 7; if (k === 0) k = 7; return setDate(dayAt(today, k));
+    const w = WEEK.indexOf(m[1]); let k = (w - today.getDay() + 7) % 7; if (k === 0) { k = 7; out.nextWeek = true; } return setDate(dayAt(today, k));
   });
-  each(new RegExp(`\\b${PRE}(?:dia\\s+)?(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{2,4}))?\\b`, 'g'), m => {
-    const d = +m[1], mo = +m[2]; if (!d || d > 31 || !mo || mo > 12) return false;
-    let y = m[3] ? +m[3] : today.getFullYear(); if (y < 100) y += 2000;
-    let dt = new Date(y, mo - 1, d); if (dt.getMonth() !== mo - 1) return false;
-    if (!m[3] && dt < today) dt = new Date(y + 1, mo - 1, d);
+  each(new RegExp(`\\b${PRE}(dia\\s+)?(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{2,4}))?\\b`, 'g'), m => {
+    if (!m[1] && mathy && !m[4]) return false; // fração, não data
+    const d = +m[2], mo = +m[3]; if (!d || d > 31 || !mo || mo > 12) { if (m[1] || (d <= 31 && mo <= 12)) warn('data inválida'); return false; }
+    let y = m[4] ? +m[4] : today.getFullYear(); if (y < 100) y += 2000;
+    let dt = new Date(y, mo - 1, d); if (dt.getMonth() !== mo - 1) { warn('data inválida'); return false; }
+    if (!m[4] && dt < today) {
+      // passou há pouco (até 2 meses): provavelmente é deste ano mesmo, só avisa
+      if (today - dt <= 62 * 86400000) out.past = true; else dt = new Date(y + 1, mo - 1, d);
+    }
+    if (m[4] && dt < today) out.past = true;
     return setDate(dt);
   });
   each(new RegExp(`\\b${PRE}dia\\s+(\\d{1,2})\\b(?!\\s*(?:\\/|h\\b|:))`, 'g'), m => {
@@ -86,9 +94,10 @@ export function parseQuick(text, { folders = [], now = new Date() } = {}) {
   let title = '';
   for (let i = 0; i < src.length; i++) if (!gone[i]) title += src[i];
   const LEAD = /^(?:tenho|vou\s+ter|vai\s+ter|tem|lembrar\s+de|lembrete:?)\s+/i;
-  const TAIL = /[\s,;.:-]+(?:para|pra|na|no|de|do|da|em|as|às|a|até|ate|dia|e|que|o)?\s*$/i;
+  // sobras do que foi tirado ("para", "na", "dia"…): só em minúsculas e só se algo foi entendido ("Tarefa da janela A" fica inteira)
+  const TAIL = /[\s,;.:-]+(?:para|pra|na|no|de|do|da|em|as|às|a|até|ate|dia|e|que|o)?\s*$/;
   title = title.replace(/\s+/g, ' ').trim().replace(LEAD, '');
-  for (let k = 0; k < 4; k++) title = title.replace(TAIL, '').trim();
+  if (used.some(Boolean)) for (let k = 0; k < 4; k++) title = title.replace(TAIL, '').trim();
   title = title.replace(/^[,;.:-]+\s*/, '');
   if (!title) title = 'Lembrete';
   out.title = title.charAt(0).toUpperCase() + title.slice(1);
@@ -122,6 +131,7 @@ export function describeQuick(q, { folderName = () => '', now = new Date() } = {
     const [y, m, d] = q.date.split('-').map(Number), dt = new Date(y, m - 1, d);
     parts.push(q.date === t ? 'hoje' : q.date === tm ? 'amanhã' : dt.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace('.', ''));
   }
+  if (q.nextWeek && parts.length) parts[parts.length - 1] += ' (semana que vem)';
   if (q.time) parts.push(q.time);
   if (q.folderId && folderName(q.folderId)) parts.push(folderName(q.folderId));
   if (q.prio === 3) parts.push('prioridade alta'); else if (q.prio === 1) parts.push('prioridade baixa');

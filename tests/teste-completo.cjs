@@ -41,7 +41,9 @@ async function closeModals() {
 async function idb(store) {
   return page.evaluate(store => new Promise((res, rej) => {
     const r = indexedDB.open('caderno-estudos');
-    r.onsuccess = () => { const d = r.result; const q = d.transaction(store).objectStore(store).getAll(); q.onsuccess = () => { res(q.result); d.close(); }; q.onerror = () => rej(q.error); };
+    // (as páginas ficam gravadas como texto compacto por página: aqui voltam ao formato normal)
+    const decode = x => (x && Array.isArray(x.pj) ? (({ pj, ...rest }) => ({ ...rest, pages: pj.map(j => JSON.parse(j)) }))(x) : x);
+    r.onsuccess = () => { const d = r.result; const q = d.transaction(store).objectStore(store).getAll(); q.onsuccess = () => { res(q.result.map(decode)); d.close(); }; q.onerror = () => rej(q.error); };
     r.onerror = () => rej(r.error);
   }), store);
 }
@@ -96,7 +98,7 @@ async function mocks(c) {
 // Gemini simulado: responde de acordo com o pedido (resumo, flashcards, plano, simulado em JSON, tutor, áudio…)
 // gemMode: 'ok' | '503once' (1ª tentativa falha) | '503primary' (modelo principal sempre sobrecarregado) | '404primary' | '429'
 //          | 'slowprimary' (o principal só começa a responder depois de 8 s)
-let gemReqs = [], gemMode = 'ok';
+let gemReqs = [], gemMode = 'ok', gemUploads = [];
 const ENEM_JSON = JSON.stringify([1, 2, 3, 4, 5].map(i => ({ texto: `Texto-base ${i}: um mercado vende 3 maçãs por R$ ${i},00.`, pergunta: `Questão ${i}: quanto custam 6 maçãs?`, alternativas: [`R$ ${2 * i},00`, `R$ ${3 * i},00`, `R$ ${i},00`, `R$ ${4 * i},00`, `R$ ${5 * i},00`], correta: 0, explicacao: `6 é o dobro de 3, então custa o dobro: R$ ${2 * i},00.` })));
 const QUIZ_JSON = JSON.stringify([
   { pergunta: 'Quanto é 1/2 + 1/2?', alternativas: ['1/4', '1', '2', '1/2'], correta: 1, explicacao: 'Meio mais meio dá um inteiro.' },
@@ -107,8 +109,9 @@ function geminiReply(body) {
   const sys = body.systemInstruction ? body.systemInstruction.parts.map(p => p.text).join(' ') : '';
   const parts = body.contents[body.contents.length - 1].parts || [];
   const txt = parts.filter(p => p.text).map(p => p.text).join(' ');
-  const has = re => parts.some(p => p.inline_data && re.test(p.inline_data.mime_type));
+  const has = re => parts.some(p => (p.inline_data && re.test(p.inline_data.mime_type)) || (p.file_data && re.test(p.file_data.mime_type)));
   if (/Responda apenas/.test(txt)) return 'Tudo certo!';
+  if (/Transcreva para o caderno do estudante/.test(txt) && has(/^image\//)) return '# Fotossíntese (quadro)\n- A planta usa luz, água e gás carbônico\n6CO2 + 6H2O = C6H12O6 + 6O2';
   if (has(/^audio\//)) {
     if (/Transcreva/.test(txt)) return 'Hoje vamos estudar frações. [inaudível] A prova é na sexta.';
     if (/só o que for tarefa/.test(txt)) return '# Tarefas da aula\n\n- Estudar frações para a prova de sexta\n- Fazer os exercícios 1 a 10 da página 42';
@@ -139,6 +142,11 @@ async function geminiMock(c) {
     if (r.request().method() === 'OPTIONS') return r.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
     const h = await r.request().allHeaders();
     const url = r.request().url();
+    // envio de arquivo grande (aula longa): 1) pede o endereço, 2) manda os bytes
+    if (url.includes('/upload/v1beta/files')) {
+      if (!url.includes('upload_id')) { gemUploads.push({ size: +h['x-goog-upload-header-content-length'], type: h['x-goog-upload-header-content-type'] }); return r.fulfill({ status: 200, headers: { ...cors, 'access-control-expose-headers': 'x-goog-upload-url', 'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=teste' }, body: '' }); }
+      return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ file: { name: 'files/aula-teste', uri: 'https://generativelanguage.googleapis.com/v1beta/files/aula-teste', state: 'ACTIVE', mimeType: 'audio/webm' } }) });
+    }
     const body = JSON.parse(r.request().postData());
     gemReqs.push({ url, h, body });
     const err = (status, code, message, extra = {}) => r.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: { code: status, message, status: code, ...extra } }) });
@@ -2554,6 +2562,164 @@ function watch(p) {
     assert(await page.locator('#task-list .task').count() > 300, 'Mostrar mais');
     await page.evaluate(async () => { const st = await import('./js/store.js'); for (let i = 0; i < 300; i++) await st.db.del('tasks', 'muitas-' + i); });
     await page.reload(); await wait(1200);
+  });
+
+  // ================= AULAS LONGAS, MUITAS NOTAS E DOIS APPS JUNTOS =================
+  console.log('Aulas longas, muitas notas, foto para a folha e dois apps abertos juntos');
+  await page.goto(base); await wait(1500);
+  await step('Adição rápida: fração não vira data; data que passou avisa; dia de hoje mostra "semana que vem"', async () => {
+    const { parseQuick, describeQuick } = await import(require('url').pathToFileURL(path.join(ROOT, 'js/quickparse.js')).href);
+    const now = new Date(2026, 10, 27, 10, 0); // sexta
+    const q = t => parseQuick(t, { now });
+    assert(q('exercícios de frações 1/2 e 3/4').date === '' && q('exercícios de frações 1/2 e 3/4').title.includes('1/2'), 'fração virou data');
+    const d = q('dentista 25/11');
+    assert(d.date === '2026-11-25' && d.past, 'data que acabou de passar: ' + JSON.stringify(d));
+    assert(q('prova dia 1/2').date === '2027-02-01', '"dia 1/2" continua sendo data');
+    const f = q('prova sexta');
+    assert(f.date === '2026-12-04' && /semana que vem/.test(describeQuick(f, { now }).join(' ')), 'sexta numa sexta: ' + JSON.stringify(f));
+    assert(q('trabalho 31/04').warn.includes('data inválida') && q('treino 24h').warn.includes('horário inválido'), 'avisos de data/hora inválida');
+  });
+  await step('Gravador: cada pedaço vai na hora para o banco e, se o app fechar no meio, a aula volta inteira', async () => {
+    const P = await ctx.newPage(); watch(P);
+    await P.goto(base); await P.waitForTimeout(1500);
+    await P.evaluate(async () => { const r = await import('./js/recorder.js'); await r.startRecording({ noteId: '', title: 'Aula que caiu' }); });
+    await P.waitForTimeout(11500);
+    const parts = await P.evaluate(async () => (await (await import('./js/store.js')).db.all('recparts')).length);
+    assert(parts >= 2, 'pedaços salvos durante a gravação: ' + parts);
+    await P.close({ runBeforeUnload: false }); // o Android fechou o app no meio da aula
+    await page.reload(); await wait(2500);
+    const rec = (await idb('recordings')).find(r => r.title.startsWith('Aula que caiu'));
+    assert(rec && /interrompida/.test(rec.title) && rec.blob instanceof Object && rec.size > 5000 && rec.duration >= 10 && !rec.partial, 'aula recuperada: ' + JSON.stringify(rec && { t: rec.title, s: rec.size, d: rec.duration }));
+    assert((await idb('recparts')).length === 0, 'os pedaços deviam ser limpos depois de juntar');
+  });
+  await step('Gravador: aula de 1h50 (20 MB em 1320 pedaços) é remontada sem perder nada', async () => {
+    await page.evaluate(async () => {
+      const st = await import('./js/store.js'); const chunk = new Uint8Array(15 * 1024).fill(9);
+      await st.db.put('recordings', { id: 'aula-longa', noteId: '', title: 'Aula longa', createdAt: Date.now(), duration: 30, mime: 'audio/webm', size: 0, blob: null, partial: true });
+      const parts = []; for (let i = 0; i < 1320; i++) parts.push({ id: `aula-longa:${String(i).padStart(6, '0')}`, rec: 'aula-longa', seq: i, blob: new Blob([chunk], { type: 'audio/webm' }) });
+      await st.db.bulkPut('recparts', parts);
+    });
+    await page.reload(); await wait(3000);
+    const r = await page.evaluate(async () => { const x = await (await import('./js/store.js')).db.get('recordings', 'aula-longa'); return { size: x.blob.size, dur: x.duration, partial: x.partial }; });
+    assert(r.size === 1320 * 15 * 1024 && r.dur >= 6600 && !r.partial, 'aula longa: ' + JSON.stringify(r));
+  });
+  await step('Gravador: aula longa vai para a IA como arquivo (sem o limite de ~1 hora)', async () => {
+    gemUploads = []; gemReqs = [];
+    const n = (await idb('notes'))[0];
+    await page.evaluate(async id => { const st = await import('./js/store.js'); const r = await st.db.get('recordings', 'aula-longa'); r.noteId = id; await st.db.put('recordings', r); await (await import('./js/recorder.js')).reloadRecorder(); }, n.id);
+    await page.evaluate(async id => { const r = await import('./js/recorder.js'); const st = await import('./js/store.js'); r.openRecordings(await st.db.get('notes', id)); }, n.id);
+    await wait(500);
+    await page.click('.rc-item[data-id="aula-longa"] [data-ai=summary]');
+    await page.waitForFunction(() => /Aula de frações/.test(document.getElementById('rc-out')?.textContent || ''), null, { timeout: 15000 });
+    assert(gemUploads.length === 1 && gemUploads[0].size === 1320 * 15 * 1024, 'envio do arquivo: ' + JSON.stringify(gemUploads));
+    const parts = gemReqs[gemReqs.length - 1].body.contents[0].parts;
+    assert(parts.some(p => p.file_data && /aula-teste/.test(p.file_data.file_uri)) && !parts.some(p => p.inline_data), 'o pedido devia usar o arquivo enviado');
+    await page.evaluate(() => document.querySelectorAll('.modal-back').forEach(m => m._close && m._close())); await wait(400);
+  });
+  await step('Gravador do celular: importar áudio e "Compartilhar → Caderno" criam a gravação', async () => {
+    const wav = await page.evaluate(() => {
+      const sr = 8000, n = sr * 2, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+      const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / 9) * 9000, true);
+      return [...new Uint8Array(buf)];
+    });
+    const f = path.join(OUT, 'voz-teste.wav'); fs.writeFileSync(f, Buffer.from(wav));
+    // importar dentro das gravações da anotação
+    const n = (await idb('notes'))[0];
+    await page.evaluate(async id => { const r = await import('./js/recorder.js'); const st = await import('./js/store.js'); r.openRecordings(await st.db.get('notes', id)); }, n.id);
+    await wait(400);
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.rc-import [data-imp]')]);
+    await fc.setFiles({ name: 'Gravação de voz 001.wav', mimeType: 'audio/wav', buffer: fs.readFileSync(f) }); // (nome com acento, como o gravador do Android)
+    let imp; for (let k = 0; k < 40 && !imp; k++) { await wait(250); imp = (await idb('recordings')).find(r => r.title === 'Gravação de voz 001'); }
+    assert(imp && imp.noteId === n.id && imp.duration === 2 && imp.size > 30000, 'importado: ' + JSON.stringify(imp ? { d: imp.duration, s: imp.size, n: imp.noteId } : (await idb('recordings')).map(r => r.title)));
+    assert(/Gravação de voz 001/.test(await page.textContent('.rc-list')), 'a gravação importada devia aparecer na lista');
+    await page.evaluate(() => document.querySelectorAll('.modal-back').forEach(m => m._close && m._close())); await wait(300);
+    // compartilhar do gravador do Android (o service worker recebe e o app abre com a gravação)
+    const st = await page.evaluate(async bytes => {
+      const fd = new FormData(); fd.append('arquivos', new File([new Uint8Array(bytes)], 'Aula de quinta.m4a', { type: 'audio/mp4' }));
+      const r = await fetch('./compartilhar', { method: 'POST', body: fd, redirect: 'manual' });
+      return r.type === 'opaqueredirect' ? 303 : r.status;
+    }, wav.slice(0, 20000));
+    assert(st === 303 || st === 200, 'o service worker devia receber o arquivo: ' + st);
+    await page.goto(base + '?compartilhado=1'); await wait(3000);
+    const note = (await idb('notes')).find(x => x.title === 'Aula — Aula de quinta');
+    const rec = note && (await idb('recordings')).find(r => r.noteId === note.id);
+    assert(note && rec && rec.mime === 'audio/mp4', 'compartilhado: ' + JSON.stringify({ note: !!note, rec: rec && rec.mime }));
+    await page.evaluate(() => document.querySelectorAll('.modal-back').forEach(m => m._close && m._close())); await wait(300);
+    if (await page.locator('#editor:not([hidden])').count()) { await page.click('#ed-back'); await wait(900); }
+  });
+  await step('Backup com muitas aulas longas é montado em pedaços e volta inteiro', async () => {
+    const r = await page.evaluate(async () => {
+      const st = await import('./js/store.js'), d = await import('./js/data.js');
+      for (let i = 0; i < 3; i++) await st.db.put('recordings', { id: 'bk' + i, noteId: '', title: 'Aula ' + i, createdAt: Date.now(), duration: 6600, mime: 'audio/webm', size: 8e6, blob: new Blob([new Uint8Array(8e6).fill(i + 1)], { type: 'audio/webm' }) });
+      const blob = await d.backupBlob();
+      const data = JSON.parse(await blob.text());
+      const bk = data.recordings.filter(x => /^bk/.test(x.id));
+      for (let i = 0; i < 3; i++) await st.db.del('recordings', 'bk' + i);
+      return { app: data.app, n: bk.length, ok: bk.every(x => /^data:audio\/webm;base64,/.test(x.audio) && x.audio.length > 1e7), notes: Array.isArray(data.notes) };
+    });
+    assert(r.app === 'caderno-estudos' && r.n === 3 && r.ok && r.notes, 'backup em pedaços: ' + JSON.stringify(r));
+  });
+  await step('Foto para a folha: a IA lê a foto e o conteúdo é escrito nas linhas da anotação', async () => {
+    await nav('all'); await page.click('.card[data-id] >> nth=0'); await wait(900);
+    const n0 = await page.evaluate(async () => (await import('./js/editor.js')).getEditorContext().content.pages.length);
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#ed-import')]);
+    await fc.setFiles(path.join(ROOT, 'icons', 'icon-512.png'));
+    await page.click('.menu-item:has-text("Reescrever o conteúdo na folha")');
+    await wait(2500);
+    const r = await page.evaluate(async () => { const c = (await import('./js/editor.js')).getEditorContext(); return { pages: c.content.pages.length, text: c.content.pages.flatMap(p => p.texts.map(t => t.text)).join(' | ') }; });
+    assert(r.pages >= n0 && /Fotossíntese/.test(r.text) && /6CO2/.test(r.text), 'foto reescrita: ' + JSON.stringify(r));
+    await toastHas('Foto reescrita na folha');
+    const last = gemReqs[gemReqs.length - 1].body.contents[0].parts;
+    assert(last.some(p => p.inline_data && /^image\//.test(p.inline_data.mime_type)), 'a foto devia ir para a IA');
+    await page.click('#ed-back'); await wait(900);
+  });
+  await step('Dois apps abertos juntos: tarefas aparecem nos dois e a mesma anotação junta os traços (sem perder nada, nem no desfazer)', async () => {
+    const A = page, B = await ctx.newPage(); watch(B);
+    await B.goto(base + '?v=tasks'); await B.waitForTimeout(1500);
+    await nav('tasks');
+    await A.fill('#task-title', 'Tarefa da janela A'); await A.press('#task-title', 'Enter');
+    await B.fill('#task-title', 'Tarefa da janela B'); await B.press('#task-title', 'Enter');
+    await wait(1500);
+    assert((await A.textContent('#task-list')).includes('janela B') && (await B.textContent('#task-list')).includes('janela A'), 'as duas janelas deviam mostrar as duas tarefas: ' + JSON.stringify({ A: (await A.textContent('#task-list')).slice(0, 200), B: (await B.textContent('#task-list')).slice(0, 200), db: (await idb('tasks')).filter(t => /janela/.test(t.title)).map(t => t.title) }));
+    const note = (await idb('notes'))[0].id;
+    for (const P of [A, B]) { await P.evaluate(() => document.querySelector('#nav-main [data-k=all]')?.click()); await P.waitForTimeout(400); await P.click(`.card[data-id="${note}"]`); await P.waitForTimeout(900); await P.click('[data-tool=pen]'); await P.selectOption('#ed-auto', 'off').catch(() => {}); }
+    const draw = async (P, x, y) => { const s = await P.locator('#stage').boundingBox(); await P.mouse.move(s.x + x, s.y + y); await P.mouse.down(); for (let i = 0; i < 8; i++) await P.mouse.move(s.x + x + i * 12, s.y + y + (i % 2) * 6); await P.mouse.up(); };
+    const save = P => P.evaluate(async () => (await import('./js/editor.js')).flushSave(true));
+    const inDB = async () => (await idb('pages')).find(p => p.id === note).pages.reduce((n, p) => n + p.strokes.length, 0);
+    const n0 = await inDB();
+    for (let i = 0; i < 4; i++) await Promise.all([draw(A, 150 + i * 25, 250 + i * 40), draw(B, 450 + i * 20, 260 + i * 40)]);
+    await save(A); await save(B); await wait(700); await save(A); await save(B); await wait(700);
+    assert(await inDB() === n0 + 8, `escrevendo nas duas ao mesmo tempo: ${await inDB()} (esperado ${n0 + 8})`);
+    await A.click('#ed-undo'); await save(A); await wait(700);
+    await draw(B, 300, 500); await save(B); await wait(700);
+    assert(await inDB() === n0 + 8, `desfazer numa janela apagou traços da outra: ${await inDB()} (esperado ${n0 + 8})`);
+    const scr = async P => P.evaluate(async () => (await import('./js/editor.js')).getEditorContext().content.pages.reduce((n, p) => n + p.strokes.length, 0));
+    assert(await scr(A) === n0 + 8 && await scr(B) === n0 + 8, 'as duas telas deviam mostrar o mesmo');
+    await B.close(); await A.click('#ed-back'); await wait(900);
+  });
+  await step('Milhares de anotações (3000): Caderno abre na hora, rola, busca e abre a anotação', async () => {
+    await page.evaluate(async () => {
+      const st = await import('./js/store.js'); const notes = [], pages = [];
+      for (let i = 0; i < 3000; i++) { notes.push({ id: 'mil' + i, title: `Aula ${i} ${i === 2777 ? 'quimioterapia' : 'revisão'}`, folderId: '', fav: false, createdAt: Date.now() - i * 1e6, updatedAt: Date.now() - i * 1e6, pageCount: 1, thumb: '' }); pages.push({ id: 'mil' + i, bg: { type: 'lines', color: 'white' }, pages: [{ id: 'mp' + i, strokes: [], texts: [], images: [] }] }); }
+      await st.db.bulkPut('notes', notes); await st.db.bulkPut('pages', pages);
+    });
+    await page.reload(); await wait(2500);
+    await page.evaluate(() => document.querySelectorAll('.modal-back').forEach(m => m._close && m._close()));
+    const t0 = Date.now(); await nav('all'); const ms = Date.now() - t0;
+    const shown = await page.locator('#notes-grid .card[data-id]').count();
+    assert(shown <= 100 && shown >= 80, 'devia mostrar só as primeiras capas: ' + shown);
+    await page.evaluate(async () => { const v = document.getElementById('view-notes'); for (let i = 0; i < 6; i++) { v.scrollTop = v.scrollHeight; await new Promise(r => setTimeout(r, 150)); } });
+    assert(await page.locator('#notes-grid .card[data-id]').count() > shown, 'rolando, devia carregar mais capas');
+    await page.fill('#search', 'quimioterapia'); await wait(400);
+    assert(await page.locator('#notes-grid .card[data-id="mil2777"]').count() === 1, 'a busca devia achar a anotação nº 2777');
+    await page.click('#notes-grid .card[data-id="mil2777"]'); await wait(900);
+    assert(await page.locator('#editor:not([hidden])').count() === 1, 'a anotação devia abrir');
+    await page.click('#ed-back'); await wait(900); await page.fill('#search', ''); await wait(200);
+    console.log(`      (Caderno com 3000 anotações abriu em ${ms} ms)`);
+    await page.evaluate(async () => { const st = await import('./js/store.js'); for (let i = 0; i < 3000; i++) { await st.db.del('notes', 'mil' + i); await st.db.del('pages', 'mil' + i); } });
+    await page.reload(); await wait(2000);
   });
 
   await step('nenhum erro de JavaScript em todo o teste', async () => {

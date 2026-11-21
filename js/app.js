@@ -1,9 +1,9 @@
 // App principal: biblioteca (pastas e anotações), tarefas, ajustes, compartilhamento e backup.
-import { db, settings, saveSettings } from './store.js';
+import { db, settings, saveSettings, onRemoteChange } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
 import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages, insertText, getEditorContext, RESCUE_KEY } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
-import { streamChat, aiConfigured, usingBuiltinKey, hasBuiltinKey } from './ai.js';
+import { streamChat, aiConfigured, usingBuiltinKey, hasBuiltinKey, cleanText } from './ai.js';
 import { initData, DATA_VIEWS, renderData, importBackupFile } from './data.js';
 import { filesToPages } from './importer.js';
 import { initHub, renderHub as renderHubView, leaveHub, hubNewAction as hubNew, HUB_VIEWS as HUB_ONLY, HUB_NEW_LABEL as HUB_LABELS, hubCounts, reloadHub, saveFlashcards, addDays, dayStr, startFocus } from './hub.js';
@@ -14,7 +14,7 @@ import { initQuiz, reloadQuiz, QUIZ_VIEWS, renderQuiz, leaveQuiz } from './quiz.
 import { initNav, SECTIONS, sectionOf, sidebarHTML, navItem, updateBottomBar, renderMap, quickAdd, addTip, tour, initSidebar, toggleMenu } from './nav.js';
 import { initQuick, reloadQuick, QUICK_VIEWS, renderQuick, newQuick, quickToday, addQuick } from './quicknotes.js';
 import { initTutor, reloadTutor, TUTOR_VIEWS, renderTutor, leaveTutor } from './tutor.js';
-import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording, recordingInfo, hasRecording, playAt } from './recorder.js';
+import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording, recordingInfo, hasRecording, playAt, importAudioFiles, isAudioFile } from './recorder.js';
 import { initSuggest, suggestToday } from './suggest.js';
 import { initQuickAdd, quickBarHTML, bindQuickBar, parse as parseQuickText } from './quickadd.js';
 import { describeQuick } from './quickparse.js';
@@ -269,6 +269,13 @@ async function reloadAll() {
   if (appReady && !editorIsOpen()) render();
 }
 const EXTRA_RELOADS = [];
+// outra janela do app (tela dividida) mudou algo: esta recarrega as listas e mostra o mesmo
+let remoteT = 0;
+onRemoteChange(changes => {
+  if (!changes.some(c => !['kv', 'pages', 'recparts', 'snapshots'].includes(c.s))) return;
+  clearTimeout(remoteT);
+  remoteT = setTimeout(() => { if (appReady) reloadAll().catch(() => {}); }, 500);
+});
 
 async function seed() {
   localStorage.setItem('caderno-seeded', '1');
@@ -376,9 +383,27 @@ function imagePage(img) {
 }
 
 async function onImportFiles(e) {
-  const files = [...(e.target.files || [])];
+  let files = [...(e.target.files || [])];
   e.target.value = '';
   if (!files.length) return;
+  // áudio do gravador do celular: vira gravação da anotação aberta
+  const audios = files.filter(isAudioFile);
+  if (audios.length) {
+    const ctx = importMode === 'editor' && editorIsOpen() ? getEditorContext() : null;
+    await importAudioFiles(audios, ctx ? ctx.meta.id : '');
+    files = files.filter(f => !isAudioFile(f));
+    if (!files.length) return;
+  }
+  // foto no caderno aberto: pode virar página e/ou ser reescrita na folha pela IA
+  let photoMode = 'page';
+  if (importMode === 'editor' && editorIsOpen() && files.every(f => /^image\//.test(f.type)) && aiReadyAny()) {
+    photoMode = await menu('Foto no caderno', [
+      { label: 'Reescrever o conteúdo na folha (a IA lê a foto)', icon: 'magic', value: 'text' },
+      { label: 'Colar a foto como página (para escrever por cima)', icon: 'image', value: 'page' },
+      { label: 'Os dois: a foto e o texto reescrito', icon: 'page', value: 'both' },
+    ]);
+    if (!photoMode) return;
+  }
   let res;
   try {
     toast('Importando…', 60000);
@@ -390,8 +415,8 @@ async function onImportFiles(e) {
   if (!res.pages.length) { toast('Nenhuma página encontrada nos arquivos'); return; }
   const extra = res.skipped ? ` (${res.skipped} páginas ignoradas: limite de 60 por PDF)` : '';
   if (importMode === 'editor' && editorIsOpen()) {
-    insertImagePages(res.pages);
-    toast(`${res.pages.length} página(s) importada(s)${extra}`, 3500);
+    if (photoMode !== 'text') { insertImagePages(res.pages); toast(`${res.pages.length} página(s) importada(s)${extra}`, 3500); }
+    if (photoMode !== 'page') await photoToSheet(res.pages);
     return;
   }
   const v = state.view;
@@ -407,6 +432,52 @@ async function onImportFiles(e) {
   render();
   toast(`${res.pages.length} página(s) importada(s) — escreva por cima!${extra}`, 3500);
   openNote(meta.id);
+}
+
+// Foto → folha: a IA lê a foto (quadro, livro, slide, caderno) e o conteúdo é escrito nas linhas da anotação aberta
+const PHOTO_PROMPT = 'Transcreva para o caderno do estudante o conteúdo desta(s) foto(s) (pode ser quadro da sala, livro, apostila, slide, lista de exercícios ou caderno). Copie fielmente o texto, os títulos, as listas, os exercícios e as contas (cada conta em uma linha, ex.: 2x + 3 = 7). Organize com títulos começando com "# " e listas com "- ". Se houver desenho, gráfico ou esquema, descreva numa linha entre colchetes. Não acrescente explicações e não invente: o que estiver ilegível, marque como [ilegível]. Se houver várias fotos, siga a ordem delas.';
+async function photoToSheet(pages) {
+  const imgs = pages.slice(0, 10);
+  const body = h('<div><p class="muted small" id="ps-st">📷 Lendo a foto… (alguns segundos)</p><div class="ai-out" id="ps-out"></div></div>');
+  let stream = null, text = '', cancelled = false;
+  const closeP = modal({ title: 'Reescrevendo a foto na folha', body, wide: true, actions: [{ label: 'Cancelar', value: null }] }).then(() => { cancelled = true; stream && stream.abort(); });
+  try {
+    const blocks = imgs.map(p => ({ type: 'image', source: { media_type: (String(p.src).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(p.src).split(',')[1] } }));
+    stream = streamChat([{ role: 'user', content: [...blocks, { type: 'text', text: PHOTO_PROMPT }] }], t => { text += t; body.querySelector('#ps-out').textContent = text; }, { maxTokens: 8192 });
+    const r = await stream.done;
+    text = cleanText(r.text || text).trim();
+    if (cancelled) return;
+    body.closest('.modal-back')?._close?.(true);
+    if (!text) { toast('Não consegui ler texto nesta foto'); return; }
+    const n = insertText(text, 'new');
+    toast(`✍️ Foto reescrita na folha (${n} página${n > 1 ? 's' : ''}). Use ↶ para desfazer.`, 4500);
+  } catch (err) {
+    if (cancelled || err.aborted || err.name === 'AbortError') return;
+    body.closest('.modal-back')?._close?.(true);
+    toast(err.message || 'A IA não conseguiu ler a foto', 4500);
+  }
+  await closeP;
+}
+
+// Arquivos compartilhados de outro app (gravador do Android → Compartilhar → Caderno; galeria; PDF)
+async function receiveShared() {
+  const kv = await db.get('kv', 'compartilhado').catch(() => null);
+  if (!kv || !Array.isArray(kv.files) || !kv.files.length) return;
+  await db.del('kv', 'compartilhado');
+  const files = kv.files.map(f => { const b = f.blob instanceof Blob ? f.blob : new Blob([]); try { return new File([b], f.name || 'arquivo', { type: f.type || b.type, lastModified: f.lastModified || Date.now() }); } catch { return Object.assign(b, { name: f.name }); } }).filter(f => f.size);
+  const audios = files.filter(isAudioFile), others = files.filter(f => !isAudioFile(f));
+  if (audios.length) {
+    const title = `Aula — ${String(audios[0].name || 'gravação').replace(/\.[^.]+$/, '')}`.slice(0, 80);
+    const now = Date.now();
+    const meta = { id: uid(), title, folderId: '', fav: false, createdAt: now, updatedAt: now, pageCount: 1, thumb: '' };
+    await db.put('pages', { id: meta.id, bg: { type: 'lines', color: 'white' }, pages: [{ id: uid(), strokes: [], texts: [], images: [] }] });
+    await db.put('notes', meta); state.notes.push(meta);
+    await importAudioFiles(audios, meta.id);
+    render();
+    openNote(meta.id);
+    setTimeout(() => openRecordings(meta), 900);
+  }
+  if (others.length) { importMode = 'library'; await onImportFiles({ target: { files: others, value: '' } }); }
 }
 
 // =================== IA fora do editor ===================
@@ -621,21 +692,43 @@ function visibleNotes() {
   return list;
 }
 
-function renderNotes() {
-  const list = visibleNotes();
-  const recs = recCounts();
-  const grid = $('notes-grid');
-  grid.innerHTML = `<button class="card new-card" id="card-new">${ic('plus')}<span>Nova anotação</span></button>` +
-    list.map(n => `
+// Muitas anotações (milhares): as capas aparecem aos poucos, conforme você rola (abrir o Caderno continua instantâneo)
+const NOTES_STEP = 90;
+let notesIO = null;
+const noteCardHTML = (n, recs) => `
     <div class="card" data-id="${n.id}" role="button" tabindex="0">
-      <div class="thumb">${n.locked && hasPin() ? `<div class="thumb-empty thumb-lock">${ic('lock')}</div>` : n.thumb ? `<img src="${n.thumb}" alt="" loading="lazy">` : `<div class="thumb-empty">${ic('page')}</div>`}</div>
+      <div class="thumb">${n.locked && hasPin() ? `<div class="thumb-empty thumb-lock">${ic('lock')}</div>` : n.thumb ? `<img src="${n.thumb}" alt="" loading="lazy" decoding="async">` : `<div class="thumb-empty">${ic('page')}</div>`}</div>
       <div class="card-info">
         <div class="card-title">${esc(n.title)}</div>
         <div class="card-meta">${n.folderId ? `<span class="dot" style="background:${folderColor(n.folderId)}"></span>${esc(folderName(n.folderId))} · ` : ''}${fmtDate(n.updatedAt)} · ${n.pageCount || 1} pág.${recs[n.id] ? ` · <span class="rec-badge" title="${recs[n.id]} gravação(ões)">${ic('mic')}${recs[n.id]}</span>` : ''}</div>
       </div>
       <button class="icon-btn small fav ${n.fav ? 'on' : ''}" data-fav="${n.id}" aria-label="Favoritar">${ic('star')}</button>
       <button class="icon-btn small more" data-more="${n.id}" aria-label="Opções">${ic('more')}</button>
-    </div>`).join('');
+    </div>`;
+function renderNotes() {
+  const list = visibleNotes();
+  const recs = recCounts();
+  const grid = $('notes-grid');
+  // mesma lista (só atualizou): mantém quantas já estavam à mostra; lista nova: começa do início
+  const key = `${state.view.kind}|${state.view.filter}|${state.search}|${settings.sort}`;
+  if (state.notesKey !== key) { state.notesKey = key; state.notesShown = NOTES_STEP; }
+  let shown = Math.min(list.length, Math.max(NOTES_STEP, state.notesShown || NOTES_STEP));
+  grid.innerHTML = `<button class="card new-card" id="card-new">${ic('plus')}<span>Nova anotação</span></button>` +
+    list.slice(0, shown).map(n => noteCardHTML(n, recs)).join('') +
+    (shown < list.length ? `<div class="notes-more" id="notes-more"><span class="muted small">Mostrando ${shown} de ${list.length}…</span></div>` : '');
+  if (notesIO) { notesIO.disconnect(); notesIO = null; }
+  const more = $('notes-more');
+  if (more && 'IntersectionObserver' in window) {
+    notesIO = new IntersectionObserver(ents => {
+      if (!ents.some(e => e.isIntersecting)) return;
+      const next = Math.min(list.length, shown + NOTES_STEP);
+      more.insertAdjacentHTML('beforebegin', list.slice(shown, next).map(n => noteCardHTML(n, recs)).join(''));
+      shown = state.notesShown = next;
+      if (shown >= list.length) { notesIO.disconnect(); notesIO = null; more.remove(); }
+      else more.querySelector('span').textContent = `Mostrando ${shown} de ${list.length}…`;
+    }, { root: $('view-notes'), rootMargin: '1200px' });
+    notesIO.observe(more);
+  }
   $('notes-empty').hidden = list.length > 0;
   $('notes-empty').innerHTML = state.search
     ? `${ic('search')}<p>Nada encontrado para “${esc(state.search)}”.</p>`
@@ -1055,7 +1148,7 @@ async function toggleTask(id) {
     await db.put('tasks', x); await db.put('tasks', next);
     state.tasks.push(next);
     toast(`Concluída ✓ — próxima: ${fmtDue(due)}`);
-  } else if (x.done) toast('Tarefa concluída ✓');
+  } else if (x.done) toast('Tarefa concluída ✓', 5000, { label: 'Desfazer', run: async () => { if (x.done) { await toggleTask(id); toast('Tarefa reaberta'); } } });
   if (x.done) { document.dispatchEvent(new CustomEvent('caderno-tarefa-feita', { detail: { title: x.title } })); try { navigator.vibrate && navigator.vibrate(15); } catch { /* */ } }
   if (!editorIsOpen()) render();
 }
@@ -1064,8 +1157,7 @@ async function toggleTask(id) {
 async function swipeDone(id) {
   const x = state.tasks.find(t => t.id === id);
   if (!x || x.done) return;
-  await toggleTask(id);
-  if (!x.repeat) toast('Tarefa concluída ✓', 5000, { label: 'Desfazer', run: async () => { if (x.done) await toggleTask(id); toast('Tarefa reaberta'); } });
+  await toggleTask(id); // (o aviso com "Desfazer" vem do próprio concluir)
 }
 async function postponeTask(id) {
   const x = state.tasks.find(t => t.id === id);
@@ -1284,7 +1376,8 @@ function routeFromURL() {
   if (a === 'busca') setTimeout(openPalette, 300);
   const kt = q.get('kt');
   if (kt) { state.view = { kind: 'reading' }; setTimeout(() => kindleRetry(+kt), 400); }
-  if (v || a || kt) history.replaceState(null, '', location.pathname);
+  if (q.get('compartilhado')) setTimeout(() => receiveShared().catch(err => toast('Não consegui receber o arquivo: ' + (err.message || err), 4500)), 500);
+  if (v || a || kt || q.get('compartilhado')) history.replaceState(null, '', location.pathname);
 }
 
 // Nenhum erro passa em silêncio: mostra um aviso e mantém o app funcionando

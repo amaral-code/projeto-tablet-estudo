@@ -7,7 +7,7 @@ import { ic, esc, h, toast, modal } from './ui.js';
 const KEY = 'caderno-drive'; // { clientId, fileId, last, auto }
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const NAME = 'Caderno de Estudos — backup.json';
-let A, collectFn, restoreFn, lastWriteFn;
+let A, collectFn, blobFn, restoreFn, lastWriteFn;
 let token = null, tokenExp = 0, busy = false;
 
 const get = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return {}; } };
@@ -16,8 +16,8 @@ export const driveConfigured = () => !!get().clientId;
 export const driveInfo = () => get();
 const hasToken = () => token && Date.now() < tokenExp - 60000;
 
-export function initDrive(api, { collect, restore, lastWrite }) {
-  A = api; collectFn = collect; restoreFn = restore; lastWriteFn = lastWrite;
+export function initDrive(api, { collect, blob, restore, lastWrite }) {
+  A = api; collectFn = collect; blobFn = blob; restoreFn = restore; lastWriteFn = lastWrite;
   // já deixa o código do Google carregado, para a janela de autorização abrir na hora do toque
   if (get().clientId && navigator.onLine) setTimeout(() => loadGIS().catch(() => {}), 4000);
   // saiu do app com mudanças e a autorização ainda vale: atualiza o backup no Drive sozinho
@@ -69,8 +69,7 @@ export async function backupNow({ silent = false } = {}) {
     // autoriza primeiro, ainda "dentro" do toque (o navegador só abre a janela do Google logo após um toque)
     await getToken();
     if (!silent) toast('Enviando o backup para o seu Google Drive…', 30000);
-    const data = await collectFn({ withAudio: true });
-    const body = JSON.stringify(data);
+    const body = blobFn ? await blobFn() : new Blob([JSON.stringify(await collectFn({ withAudio: true }))], { type: 'application/json' });
     const meta = { name: NAME, mimeType: 'application/json' };
     let { fileId } = get();
     const start = async id => api(id ? `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=resumable` : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
@@ -86,7 +85,7 @@ export async function backupNow({ silent = false } = {}) {
     const j = await up.json().catch(() => ({}));
     put({ fileId: j.id || fileId, last: Date.now() });
     try { localStorage.setItem('caderno-ultimo-backup', String(Date.now())); } catch { /* */ }
-    if (!silent) toast(`Backup salvo no seu Google Drive ✓ (${(body.length / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB)`, 4000);
+    if (!silent) toast(`Backup salvo no seu Google Drive ✓ (${(body.size / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB)`, 4000);
     A.onChange(true);
     return true;
   } catch (e) {

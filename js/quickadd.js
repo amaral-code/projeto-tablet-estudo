@@ -41,7 +41,8 @@ export function bindQuickBar(root, { onDone } = {}) {
     const parts = describeQuick(q, { folderName: id => A.folderName(id) });
     prev.innerHTML = `<button type="button" class="qa-kind ${q.kind}" title="Trocar entre tarefa e evento">${q.kind === 'event' ? KIND_LABEL[q.evKind] || KIND_LABEL.outro : '✅ Tarefa'}<span class="qa-swap">⇄</span></button>
       <b class="qa-title">${esc(q.title)}</b>${parts.map(p => `<span class="qa-part">${esc(p)}</span>`).join('')}
-      ${q.kind === 'event' && !q.date ? '<span class="qa-part warn">você escolhe o dia ao salvar</span>' : ''}`;
+      ${q.kind === 'event' && !q.date ? '<span class="qa-part warn">você escolhe o dia ao salvar</span>' : ''}
+      ${q.past ? '<span class="qa-part warn">⚠️ essa data já passou</span>' : ''}${(q.warn || []).map(w => `<span class="qa-part warn">⚠️ ${esc(w)}</span>`).join('')}`;
     prev.querySelector('.qa-kind').onclick = () => { forced = q.kind === 'event' ? 'task' : 'event'; show(); drafts[key] && (drafts[key].forced = forced); };
   };
   const key = form.dataset.key || '';
@@ -56,10 +57,13 @@ export function bindQuickBar(root, { onDone } = {}) {
     if (!inp.value.trim()) { inp.focus(); return; }
     busy = true;
     const q = cur(), kept = drafts[key];
+    // evento sem dia abre a janela do evento: o menu + fecha antes, para não ficar uma janela em cima da outra
+    let closed = false;
+    if (q.kind === 'event' && !q.date && onDone) { onDone(); closed = true; }
     delete drafts[key]; // (a tela se redesenha no meio do salvamento: o texto já salvo não pode voltar)
     try {
       const ok = await saveQuick(q);
-      if (ok) { inp.value = ''; forced = null; show(); onDone && onDone(); }
+      if (ok) { inp.value = ''; forced = null; show(); if (onDone && !closed) onDone(); }
       else if (kept) drafts[key] = kept;
     } catch (err) { if (kept) drafts[key] = kept; throw err; } finally { busy = false; }
   };

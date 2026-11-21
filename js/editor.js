@@ -10,7 +10,7 @@ import { snapShape } from './shapes.js';
 import { TEMPLATES, buildTemplate, mindMapPage } from './templates.js';
 import { openImageSearch } from './imagesearch.js';
 import { groupLines, recognizeStrokes, checkMath, fmtNum } from './recognize.js';
-import { settings, saveSettings } from './store.js';
+import { settings, saveSettings, db, otherWindows, onRemoteChange } from './store.js';
 import { ic, esc, h, toast, modal, confirmBox } from './ui.js';
 import { dictate, canDictate } from './voice.js';
 
@@ -112,12 +112,77 @@ export function initEditor(callbacks) {
 
 export function editorIsOpen() { return !!E; }
 
+// ---------- a mesma anotação aberta em duas janelas: junta os traços das duas, sem apagar nada ----------
+const idsOf = c => ({ pages: new Set(c.pages.map(p => p.id)), items: Object.fromEntries(c.pages.map(p => [p.id, new Set([...p.strokes, ...p.texts, ...p.images].map(x => x.id))])) });
+// o que a outra janela mudou desde o que as duas tinham em comum (base)
+function remoteDelta(remote, base) {
+  const d = { goneItems: new Set(), added: {}, gonePages: new Set(), newPages: [] };
+  const rpages = new Set(remote.pages.map(p => p.id));
+  for (const id of base.pages) if (!rpages.has(id)) d.gonePages.add(id);
+  remote.pages.forEach((p, i) => {
+    const b = base.items[p.id];
+    if (!base.pages.has(p.id)) { d.newPages.push({ page: p, prev: i ? remote.pages[i - 1].id : null }); return; }
+    const rids = new Set();
+    for (const k of ['strokes', 'texts', 'images']) for (const x of p[k] || []) { rids.add(x.id); if (!b || !b.has(x.id)) ((d.added[p.id] ||= { strokes: [], texts: [], images: [] })[k]).push(x); }
+    if (b) for (const id of b) if (!rids.has(id)) d.goneItems.add(id);
+  });
+  return d;
+}
+const deltaEmpty = d => !d.goneItems.size && !d.gonePages.size && !d.newPages.length && !Object.keys(d.added).length;
+// aplica a mudança da outra janela numa lista de páginas (a da tela e as cópias do desfazer)
+function applyDelta(pages, d, inPlace = false) {
+  let out = pages.filter(p => !d.gonePages.has(p.id)).map(p => {
+    const add = d.added[p.id];
+    const q = inPlace ? p : { ...p };
+    for (const k of ['strokes', 'texts', 'images']) {
+      let arr = (p[k] || []).filter(x => !d.goneItems.has(x.id));
+      if (add && add[k].length) { const have = new Set(arr.map(x => x.id)); arr = [...arr, ...add[k].filter(x => !have.has(x.id))]; }
+      q[k] = arr;
+    }
+    return q;
+  });
+  for (const { page, prev } of d.newPages) {
+    if (out.some(p => p.id === page.id)) continue;
+    const pg = { ...page, strokes: page.strokes || [], texts: page.texts || [], images: page.images || [] };
+    const at = prev ? out.findIndex(p => p.id === prev) : -1;
+    out.splice(at + 1, 0, pg);
+  }
+  if (!out.length) out = [{ id: uid(), strokes: [], texts: [], images: [] }];
+  return out;
+}
+async function pullRemote(st) {
+  const remote = await db.get('pages', st.meta.id);
+  if (!remote || !Array.isArray(remote.pages)) return false;
+  const d = remoteDelta(remote, st.base);
+  st.base = idsOf(remote);
+  st.remoteChanged = false;
+  if (deltaEmpty(d)) return false;
+  st.content.pages = applyDelta(st.content.pages, d, true);
+  for (const sn of [...st.undo, ...st.redo]) sn.pages = applyDelta(sn.pages, d); // desfazer não apaga o que a outra janela escreveu
+  if (E === st) { st.pageIndex = Math.min(st.pageIndex, st.content.pages.length - 1); st.sel = null; updateOverlay(); redraw(); updatePageBar(); }
+  return true;
+}
+// salvar e juntar rodam um de cada vez (e, com outra janela aberta, com trava entre as janelas)
+function serial(st, fn) {
+  const run = () => (navigator.locks && otherWindows() ? navigator.locks.request('caderno-nota-' + st.meta.id, fn) : fn());
+  st.q = (st.q || Promise.resolve()).then(run, run);
+  return st.q;
+}
+onRemoteChange(changes => {
+  if (!E || !changes.some(c => (c.s === 'pages' && (c.id === E.meta.id || c.id == null)))) return;
+  const st = E;
+  st.remoteChanged = true;
+  // nada pendente aqui: mostra já o que a outra janela escreveu (com algo pendente, junta ao salvar)
+  serial(st, async () => { if (!st.remoteChanged || st.dirty || act) return; if (await pullRemote(st) && E === st) toast('Atualizado com o que foi escrito na outra janela', 2200); }).catch(() => {});
+});
+
 export function openEditor(meta, content) {
   E = {
     meta, content, pageIndex: 0, view: { s: 1, ox: 0, oy: 0 },
     undo: [], redo: [], sel: null, dirty: false, pending: [], saveTimer: 0, autoTimer: 0, lassoThen: null,
   };
   for (const p of content.pages) { p.strokes ||= []; p.texts ||= []; p.images ||= []; }
+  E.base = idsOf(content);
   $('ed-title').value = meta.title;
   $('editor').hidden = false;
   deskColor = getComputedStyle(document.documentElement).getPropertyValue('--desk').trim() || '#d9dce1';
@@ -1649,7 +1714,16 @@ export async function flushSave(final = false) {
     try { st.meta.thumb = renderPageToCanvas(st.content.pages[0], st.content.bg, 280).toDataURL('image/jpeg', 0.72); st.thumbAt = Date.now(); } catch { /* imagem ainda carregando */ }
   } else st.thumbStale = true;
   try {
-    await cb.onSave(st.meta, st.content);
+    // outra janela do app aberta: junta o que ela gravou antes de gravar (uma janela por vez, com trava)
+    const write = async () => {
+      if (otherWindows() || st.remoteChanged) {
+        const before = st.content.pages.length;
+        if (await pullRemote(st)) { st.meta.pageCount = st.content.pages.length; if (before !== st.content.pages.length) st.meta.searchText = st.content.pages.flatMap(p => p.texts.filter(t => !t.mark).map(t => t.text)).join(' ').replace(/\s+/g, ' ').slice(0, 5000); }
+      }
+      await cb.onSave(st.meta, st.content);
+      st.base = idsOf(st.content);
+    };
+    await serial(st, write);
     st.saving = false; st.saveError = false;
     if (!st.dirty) { clearRescue(st.meta.id); if (E === st) setSaveState('Salvo'); }
   } catch (e) {

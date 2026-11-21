@@ -20,7 +20,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 export function initData(api) {
   A = api;
-  initDrive(api, { collect, restore: importBackupData, lastWrite: () => db.lastWrite() });
+  initDrive(api, { collect, blob: backupBlob, restore: importBackupData, lastWrite: () => db.lastWrite() });
   // cópia automática do dia, alguns segundos depois de abrir (sem atrapalhar o início)
   setTimeout(() => { autoSnapshot().catch(() => {}); }, 6000);
   document.addEventListener('caderno-salvo', () => { const el = document.getElementById('dt-saved'); if (el) el.textContent = 'agora mesmo'; });
@@ -47,6 +47,24 @@ async function collect({ withAudio = true } = {}) {
   }
   return data;
 }
+// Backup em arquivo montado em pedaços: cada gravação entra separada, sem juntar tudo num texto só
+// (com muitas aulas de 2 h, um texto único passaria do limite do navegador e travaria o tablet)
+export async function backupBlob() {
+  const data = await collect({ withAudio: false });
+  const recs = await db.all('recordings');
+  const head = JSON.stringify({ ...data, recordings: undefined }); // (sem a chave; ela entra no fim)
+  const parts = [head.slice(0, -1) + ',"recordings":['];
+  recs.forEach((r, i) => {
+    const { blob, ...rest } = r;
+    parts.push((i ? ',' : '') + JSON.stringify(rest).slice(0, -1) + ',"audio":');
+    parts.push(blob ? blobToDataURL(blob).then(u => JSON.stringify(u)) : 'null');
+    parts.push('}');
+  });
+  parts.push(']}');
+  const out = [];
+  for (const x of parts) out.push(await x); // uma gravação por vez na memória
+  return new Blob(out, { type: 'application/json' });
+}
 const countsOf = data => Object.fromEntries(db.STORES.map(s => [s, (data[s] || []).length]));
 
 // Grava os dados no banco. replace: apaga antes (restauração de cópia); senão junta com o que existe.
@@ -67,8 +85,7 @@ async function restoreData(data, { replace = false } = {}) {
 // ---------- backup para fora (arquivo) ----------
 export async function exportBackup() {
   toast('Gerando backup…', 20000);
-  const data = await collect({ withAudio: true });
-  const file = new File([JSON.stringify(data)], `backup_caderno_${dayStr()}.json`, { type: 'application/json' });
+  const file = new File([await backupBlob()], `backup_caderno_${dayStr()}.json`, { type: 'application/json' });
   const r = await shareFile(file, 'Backup do Caderno de Estudos', '');
   if (r === 'needs-gesture') download(file);
   if (r === 'downloaded' || r === 'needs-gesture') toast(`Backup salvo em Downloads (${mb(file.size)})`);

@@ -1,11 +1,11 @@
 // Banco de dados local (IndexedDB) — tudo fica salvo no próprio tablet, sem precisar de conta.
 const DB_NAME = 'caderno-estudos';
-const VERSION = 10;
+const VERSION = 11;
 // Coleções com os dados do estudante (entram no backup)
 const STORES = ['folders', 'notes', 'pages', 'tasks', 'sessions', 'habits', 'decks', 'cards', 'books', 'reads',
   'grades', 'classes', 'journal', 'goals', 'quizzes', 'quicknotes', 'chats', 'recordings', 'events', 'images', 'errors', 'plans'];
 // Coleções internas
-const INTERNAL = ['snapshots', 'kv']; // kv: dados internos (ex.: avisos já mostrados, lidos também com o app fechado)
+const INTERNAL = ['snapshots', 'kv', 'recparts']; // recparts: pedaços da gravação em andamento (salvos a cada 5 s) // kv: dados internos (ex.: avisos já mostrados, lidos também com o app fechado)
 export const STORE_LABELS = {
   folders: 'Pastas', notes: 'Anotações', pages: 'Páginas das anotações', tasks: 'Tarefas', sessions: 'Sessões de foco',
   habits: 'Hábitos', decks: 'Baralhos', cards: 'Flashcards', books: 'Livros', reads: 'Registros de leitura',
@@ -37,6 +37,31 @@ function open() {
   }
   return dbp;
 }
+
+// ---------- várias janelas do app abertas juntas (tela dividida, duas abas) ----------
+// cada gravação avisa as outras janelas; elas atualizam a tela e juntam o que mudou, sem apagar nada
+const chan = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('caderno-sync') : null;
+const WIN = Math.random().toString(36).slice(2);
+let others = 0; // última vez que outra janela deu sinal
+const syncFns = [];
+let outBox = [], outT = 0;
+function announce(store, id) {
+  if (!chan || store === 'recparts' || store === 'snapshots') return;
+  outBox.push({ s: store, id });
+  if (!outT) outT = setTimeout(() => { outT = 0; const b = outBox; outBox = []; try { chan.postMessage({ from: WIN, changes: b }); } catch { /* */ } }, 60);
+}
+if (chan) {
+  chan.onmessage = e => {
+    const m = e.data || {};
+    if (!m.from || m.from === WIN) return;
+    others = Date.now();
+    if (m.hello) { try { chan.postMessage({ from: WIN, here: 1 }); } catch { /* */ } return; }
+    if (m.changes) for (const fn of syncFns) { try { fn(m.changes); } catch { /* */ } }
+  };
+  try { chan.postMessage({ from: WIN, hello: 1 }); } catch { /* */ }
+}
+export const otherWindows = () => !!others && Date.now() - others < 6 * 3600000;
+export const onRemoteChange = fn => { syncFns.push(fn); };
 
 // hora da última gravação no banco (guardada também fora da memória, no máximo a cada 5 s)
 const LAST_KEY = 'caderno-ultima-gravacao';
@@ -98,18 +123,41 @@ const FIX = {
   errors: x => { x.q = str(x.q); x.answer = str(x.answer); x.mine = str(x.mine); x.ex = str(x.ex); x.times = num(x.times, 1); x.streak = num(x.streak, 0); x.updatedAt = num(x.updatedAt, 0); x.createdAt = num(x.createdAt, 0); if (x.opts && !Array.isArray(x.opts)) x.opts = null; },
   plans: x => { x.name = str(x.name) || 'Plano'; x.exam = str(x.exam); x.perDay = num(x.perDay, 2) || 2; x.weekdays = arr(x.weekdays); x.subjects = arr(x.subjects).map(m => ({ ...obj(m), name: str(obj(m).name), topics: arr(obj(m).topics) })); },
 };
+// Páginas das anotações: cada página vira um texto compacto antes de gravar, montado aos poucos (sem travar a tela).
+// Numa anotação de 100 páginas cheias, salvar passa de ~2,4 s travado para frações de segundo.
+const yieldUI = () => new Promise(r => setTimeout(r, 0));
+async function encodePages(v) {
+  if (!v || !Array.isArray(v.pages)) return v;
+  const list = v.pages.slice(), pj = [];
+  let t = performance.now();
+  for (const p of list) { pj.push(JSON.stringify(p)); if (performance.now() - t > 10) { await yieldUI(); t = performance.now(); } }
+  const { pages, ...rest } = v;
+  return { ...rest, pj };
+}
+const encodePagesNow = v => { if (!v || !Array.isArray(v.pages)) return v; const { pages, ...rest } = v; return { ...rest, pj: pages.map(p => JSON.stringify(p)) }; };
+function decodePages(r) {
+  if (!r || !Array.isArray(r.pj)) return r;
+  const { pj, ...rest } = r;
+  const pages = [];
+  for (const s of pj) { try { pages.push(JSON.parse(s)); } catch { /* página estragada: o reparo cria uma vazia */ } }
+  return { ...rest, pages };
+}
+const dec = (s, x) => (s === 'pages' ? decodePages(x) : x);
 export const fixRecord = (s, x) => { if (x && typeof x === 'object' && FIX[s]) { try { FIX[s](x); } catch { /* */ } } return x; };
 export const db = {
-  all: async s => { const list = await run(s, 'readonly', st => st.getAll()); return FIX[s] ? list.filter(Boolean).map(x => fixRecord(s, x)) : list; },
+  all: async s => { const list = (await run(s, 'readonly', st => st.getAll())).map(x => dec(s, x)); return FIX[s] ? list.filter(Boolean).map(x => fixRecord(s, x)) : list; },
   // como está gravado, sem completar nada (para o "Verificar e reparar" enxergar o que está estragado de verdade)
-  allRaw: s => run(s, 'readonly', st => st.getAll()),
-  get: async (s, id) => fixRecord(s, await run(s, 'readonly', st => st.get(id))),
-  put: (s, v) => run(s, 'readwrite', st => st.put(v)),
-  del: (s, id) => run(s, 'readwrite', st => st.delete(id)),
-  clear: s => run(s, 'readwrite', st => st.clear()),
+  allRaw: async s => (await run(s, 'readonly', st => st.getAll())).map(x => dec(s, x)),
+  get: async (s, id) => fixRecord(s, dec(s, await run(s, 'readonly', st => st.get(id)))),
+  put: async (s, v) => { const w = s === 'pages' ? await encodePages(v) : v; const r = await run(s, 'readwrite', st => st.put(w)); announce(s, v && v.id); return r; },
+  del: (s, id) => run(s, 'readwrite', st => st.delete(id)).then(r => { announce(s, id); return r; }),
+  clear: s => run(s, 'readwrite', st => st.clear()).then(r => { announce(s, null); return r; }),
   count: s => run(s, 'readonly', st => st.count()),
   // grava muitos itens numa única transação (restauração de backup)
-  bulkPut: (s, items) => run(s, 'readwrite', st => { for (const it of items) st.put(it); return null; }),
+  // registros cujo id começa com um prefixo (ex.: pedaços de uma gravação), em ordem
+  getPrefix: (s, p) => run(s, 'readonly', st => st.getAll(IDBKeyRange.bound(p, p + '\uffff'))),
+  delPrefix: (s, p) => run(s, 'readwrite', st => st.delete(IDBKeyRange.bound(p, p + '\uffff'))),
+  bulkPut: (s, items) => run(s, 'readwrite', st => { for (const it of items) st.put(s === 'pages' ? encodePagesNow(it) : it); return null; }).then(r => { announce(s, null); return r; }),
   lastWrite: () => lastWrite || +(localStorage.getItem(LAST_KEY) || 0),
   STORES,
 };

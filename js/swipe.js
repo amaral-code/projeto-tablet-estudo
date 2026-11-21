@@ -22,6 +22,8 @@ export function initSwipe(api) {
     if (!row || !row.closest('#main') || row.classList.contains('done')) return;
     if (e.target.closest('input, select, textarea, a')) return;
     const id = idOf(row); if (!id) return;
+    const t = A.state.tasks.find(x => x.id === id), td = new Date(), today = `${td.getFullYear()}-${String(td.getMonth() + 1).padStart(2, '0')}-${String(td.getDate()).padStart(2, '0')}`;
+    row.dataset.swl = t && t.due && t.due > today ? '⏭️ +1 dia' : '⏭️ Amanhã';
     s = { row, id, pid: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, on: false, w: row.getBoundingClientRect().width };
   }, { passive: true });
   document.addEventListener('pointermove', e => {

@@ -1,22 +1,23 @@
 // Gravador de aula: grava o áudio ligado a uma anotação, salva no banco aos poucos e
 // o Gemini resume ou transcreve a gravação.
 import { ic, esc, h, toast, modal, confirmBox, promptText, richText } from './ui.js';
-import { aiConfigured, streamChat, cleanText } from './ai.js';
+import { aiConfigured, streamChat, cleanText, uploadToGemini } from './ai.js';
 import { speak } from './voice.js';
 
 let A;
 let recs = [];
 let rec = null;    // gravação em andamento
 let pill = null;
-const MAX_AI_BYTES = 14 * 1024 * 1024; // limite para mandar à IA de uma vez (~1 h de aula)
+const INLINE_AI_BYTES = 12 * 1024 * 1024; // até aqui o áudio vai junto do pedido; acima, é enviado antes como arquivo (aulas longas)
+const MAX_AI_BYTES = 900 * 1024 * 1024;   // a IA ouve até ~9 h de áudio
+const partId = (id, seq) => `${id}:${String(seq).padStart(6, '0')}`;
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const mb = n => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : (n / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB');
 
 export async function initRecorder(api) {
   A = api;
   recs = await A.db.all('recordings');
-  // gravações que ficaram pela metade (app fechado durante a gravação) já estão salvas: só tira a marca
-  for (const r of recs.filter(r => r.partial)) { r.partial = false; r.title = r.title + ' (interrompida)'; await A.db.put('recordings', r); }
+  await recoverRecordings().catch(() => {});
   pill = h(`<button id="rec-pill" hidden aria-label="Parar gravação"></button>`);
   pill.onclick = () => stopRecording();
   // o app saiu da tela durante a gravação: salva na hora o que já foi gravado
@@ -27,6 +28,29 @@ export async function initRecorder(api) {
   });
   document.body.appendChild(pill);
   setInterval(tick, 500);
+}
+// O app fechou no meio da gravação (bateria, Android fechou, travou): junta os pedaços salvos e a aula volta inteira
+async function recoverRecordings() {
+  const parts = await A.db.all('recparts').catch(() => []);
+  const byRec = {};
+  for (const p of parts) if (p && p.rec && p.blob) (byRec[p.rec] = byRec[p.rec] || []).push(p);
+  for (const r of recs.filter(r => r.partial)) {
+    const ps = (byRec[r.id] || []).sort((a, b) => a.seq - b.seq);
+    if (ps.length) { r.blob = new Blob(ps.map(p => p.blob), { type: r.mime || 'audio/webm' }); r.size = r.blob.size; r.duration = Math.max(r.duration || 0, (ps[ps.length - 1].seq + 1) * 5); }
+    r.partial = false; r.title = r.title + ' (interrompida)';
+    await A.db.put('recordings', r);
+    delete byRec[r.id];
+    await A.db.delPrefix('recparts', r.id + ':');
+  }
+  // pedaços sem a ficha da gravação (o app fechou nos primeiros segundos)
+  for (const [id, ps] of Object.entries(byRec)) {
+    ps.sort((a, b) => a.seq - b.seq);
+    const f = ps[0];
+    const blob = new Blob(ps.map(p => p.blob), { type: f.mime || 'audio/webm' });
+    const r = { id, noteId: f.noteId || '', title: (f.title || 'Gravação') + ' (interrompida)', createdAt: f.startAt || Date.now(), duration: (ps[ps.length - 1].seq + 1) * 5, mime: f.mime || 'audio/webm', size: blob.size, blob, partial: false };
+    await A.db.put('recordings', r); recs.push(r);
+    await A.db.delPrefix('recparts', id + ':');
+  }
 }
 export async function reloadRecorder() { recs = await A.db.all('recordings'); }
 export const recordingsOf = noteId => recs.filter(r => r.noteId === noteId && !(rec && r.id === rec.id)).sort((a, b) => b.createdAt - a.createdAt);
@@ -51,15 +75,22 @@ export async function startRecording({ noteId, title }) {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
   catch { toast('Permita o uso do microfone para gravar a aula', 4000); return false; }
+  // espaço: uma aula de 2 h ocupa ~22 MB
+  try { const est = await navigator.storage?.estimate?.(); if (est && est.quota && est.quota - est.usage < 150 * 1048576) toast('⚠️ Pouco espaço no tablet: a gravação pode parar. Libere espaço se puder.', 5000); } catch { /* */ }
   const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
   const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : undefined);
-  const r = { id: A.uid(), noteId, title: title || 'Gravação', createdAt: Date.now(), mime: (mr.mimeType || mime || 'audio/webm').split(';')[0], chunks: [], startAt: Date.now(), mr, stream, lastSave: 0 };
+  const r = { id: A.uid(), noteId, title: title || 'Gravação', createdAt: Date.now(), mime: (mr.mimeType || mime || 'audio/webm').split(';')[0], chunks: [], startAt: Date.now(), mr, stream, lastSave: 0, seq: 0, size: 0, q: Promise.resolve(), saveErr: false };
   rec = r;
-  mr.ondataavailable = async e => {
+  mr.ondataavailable = e => {
     if (!e.data || !e.data.size) return;
-    r.chunks.push(e.data);
-    // salva o que já foi gravado a cada ~15 s (se o app fechar, a aula não se perde)
-    if ((Date.now() - r.lastSave > 15000 || r.saveNow) && rec === r) { r.saveNow = false; r.lastSave = Date.now(); await persist(r, true).catch(() => {}); }
+    r.chunks.push(e.data); r.size += e.data.size;
+    // cada pedaço (5 s) vai na hora para o banco: aulas de 2 h ou mais sem pesar e sem perder nada se o app fechar
+    const seq = r.seq++, blob = e.data;
+    r.q = r.q.then(async () => {
+      await A.db.put('recparts', { id: partId(r.id, seq), rec: r.id, seq, blob, mime: r.mime, noteId: r.noteId, title: r.title, startAt: r.startAt });
+      if (Date.now() - r.lastSave > 30000 || r.saveNow) { r.saveNow = false; r.lastSave = Date.now(); await saveMeta(r); }
+      r.saveErr = false;
+    }).catch(err => { if (!r.saveErr) { r.saveErr = true; toast(err && err.name === 'QuotaExceededError' ? '⚠️ Sem espaço: libere espaço no tablet, a gravação está em risco' : '⚠️ Não consegui salvar um pedaço da gravação', 6000); } });
   };
   // o microfone foi cortado (ligação, outro app usando): para e salva o que já foi gravado
   stream.getAudioTracks().forEach(t => t.addEventListener('ended', () => { if (rec === r) { toast('O microfone foi interrompido: gravação salva até aqui', 4000); stopRecording(); } }));
@@ -71,10 +102,15 @@ export async function startRecording({ noteId, title }) {
   tick();
   return true;
 }
+// ficha da gravação em andamento (sem o áudio, que está nos pedaços)
+async function saveMeta(r) {
+  await A.db.put('recordings', { id: r.id, noteId: r.noteId, title: r.title, createdAt: r.createdAt, duration: Math.round((Date.now() - r.startAt) / 1000), mime: r.mime, size: r.size, blob: null, partial: true });
+}
 async function persist(r, partial) {
   const blob = new Blob(r.chunks, { type: r.mime });
   const item = { id: r.id, noteId: r.noteId, title: r.title, createdAt: r.createdAt, duration: Math.round((Date.now() - r.startAt) / 1000), mime: r.mime, size: blob.size, blob, partial };
   await A.db.put('recordings', item);
+  if (!partial) await A.db.delPrefix('recparts', r.id + ':').catch(() => {});
   const i = recs.findIndex(x => x.id === item.id);
   if (i >= 0) recs[i] = item; else recs.push(item);
   return item;
@@ -88,7 +124,8 @@ export async function stopRecording() {
   r.stream.getTracks().forEach(t => t.stop());
   try { wake && wake.release(); } catch { /* */ } wake = null;
   tick();
-  if (!r.chunks.length) { toast('Nada foi gravado'); return null; }
+  await r.q.catch(() => {});
+  if (!r.chunks.length) { toast('Nada foi gravado'); await A.db.delPrefix('recparts', r.id + ':').catch(() => {}); await A.db.del('recordings', r.id).catch(() => {}); return null; }
   const item = await persist(r, false);
   toast(`Gravação salva ✓ (${fmt(item.duration)}, ${mb(item.size)})`, 3500);
   A.onChange(true);
@@ -111,16 +148,22 @@ const PROMPTS = {
 async function aiOnRecording(r, kind) {
   if (!aiConfigured()) { toast('Ligue a IA em Ajustes → Inteligência artificial', 4000); return; }
   if (!r.blob) { toast('Esta gravação não tem áudio salvo'); return; }
-  if (r.size > MAX_AI_BYTES) { toast('Gravação longa demais para a IA de uma vez (máx. ~1 hora).', 4500); return; }
+  if (r.size > MAX_AI_BYTES) { toast('Gravação longa demais para a IA (máx. ~9 horas).', 4500); return; }
   const P = PROMPTS[kind];
   const body = h(`<div><div class="ai-out" id="rc-out">Ouvindo a gravação… isso leva alguns segundos.</div><div class="row wrap" id="rc-acts" style="margin-top:10px"></div></div>`);
   let stream = null, text = '';
   const closeP = modal({ title: `${P.label} — ${r.title}`, body, wide: true, actions: [{ label: 'Fechar', value: true }] });
   const out = body.querySelector('#rc-out');
   try {
-    const data = await blobToB64(r.blob);
-    stream = streamChat([{ role: 'user', content: [{ type: 'audio', source: { media_type: r.mime || 'audio/webm', data } }, { type: 'text', text: P.prompt }] }],
-      t => { text += t; out.innerHTML = richText(cleanText(text)); out.scrollTop = out.scrollHeight; }, { maxTokens: kind === 'transcript' ? 16384 : 8192 });
+    let source;
+    if (r.blob.size > INLINE_AI_BYTES) {
+      // aula longa: o áudio vai antes como arquivo (reaproveita o envio por até ~40 h)
+      if (!(r.gem && Date.now() - r.gem.at < 40 * 3600000)) { r.gem = await uploadToGemini(r.blob, r.mime || 'audio/webm', r.title, msg => { out.textContent = msg; }); await A.db.put('recordings', r); }
+      out.textContent = 'Ouvindo a gravação… aulas longas levam até 1 ou 2 minutos.';
+      source = { media_type: r.mime || 'audio/webm', file_uri: r.gem.uri };
+    } else source = { media_type: r.mime || 'audio/webm', data: await blobToB64(r.blob) };
+    stream = streamChat([{ role: 'user', content: [{ type: 'audio', source }, { type: 'text', text: P.prompt }] }],
+      t => { text += t; out.innerHTML = richText(cleanText(text)); out.scrollTop = out.scrollHeight; }, { maxTokens: kind === 'transcript' ? ((r.duration || 0) > 2400 ? 65536 : 16384) : 8192 });
     const res = await stream.done;
     text = res.text;
     out.innerHTML = richText(cleanText(text) + (res.truncated ? '\n\n(A resposta foi cortada por ser muito longa.)' : ''));
@@ -146,6 +189,34 @@ async function aiOnRecording(r, kind) {
   if (stream) stream.abort();
 }
 
+// Áudio do gravador do próprio Android (grava com a tela apagada, sem limite): entra como gravação da anotação
+const AUDIO_EXT = /\.(m4a|mp3|aac|ogg|oga|opus|wav|amr|3gp|3gpp|webm|weba|flac)$/i;
+export const isAudioFile = f => /^audio\//.test(f.type || '') || AUDIO_EXT.test(f.name || '');
+const mimeOf = f => (f.type && f.type !== 'application/octet-stream' ? f.type : ({ m4a: 'audio/mp4', mp3: 'audio/mpeg', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', amr: 'audio/amr', '3gp': 'audio/3gpp', '3gpp': 'audio/3gpp', webm: 'audio/webm', weba: 'audio/webm', flac: 'audio/flac' })[(f.name || '').split('.').pop().toLowerCase()] || 'audio/mp4');
+const durationOf = blob => new Promise(res => {
+  const u = URL.createObjectURL(blob), a = new Audio();
+  const done = d => { URL.revokeObjectURL(u); res(Number.isFinite(d) ? Math.round(d) : 0); };
+  a.preload = 'metadata'; a.onloadedmetadata = () => done(a.duration); a.onerror = () => done(0);
+  setTimeout(() => done(0), 8000); a.src = u;
+});
+export async function importAudioFiles(files, noteId) {
+  const out = [];
+  for (const f of files.filter(isAudioFile)) {
+    const blob = f.blob || f, mime = mimeOf(f);
+    const typed = blob.type === mime ? blob : new Blob([blob], { type: mime });
+    const r = { id: A.uid(), noteId: noteId || '', title: String(f.name || 'Gravação').replace(/\.[^.]+$/, '') || 'Gravação', createdAt: f.lastModified || Date.now(), duration: await durationOf(typed), mime, size: typed.size, blob: typed, partial: false, imported: true };
+    await A.db.put('recordings', r); recs.push(r); out.push(r);
+  }
+  if (out.length) { toast(`🎙️ ${out.length} gravação(ões) importada(s) ✓`, 3500); A.onChange(true); }
+  else toast('Nenhum arquivo de áudio encontrado');
+  return out;
+}
+const pickAudio = () => new Promise(res => {
+  const inp = h('<input type="file" accept="audio/*,.m4a,.mp3,.aac,.ogg,.wav,.amr,.3gp,.webm" multiple hidden>');
+  inp.onchange = () => { res([...(inp.files || [])]); inp.remove(); };
+  document.body.appendChild(inp); inp.click();
+});
+
 // Lista de gravações de uma anotação
 export async function openRecordings(meta) {
   const urls = [];
@@ -153,7 +224,9 @@ export async function openRecordings(meta) {
   const draw = () => {
     urls.forEach(u => URL.revokeObjectURL(u)); urls.length = 0;
     const list = recordingsOf(meta.id);
-    body.innerHTML = `${rec && rec.noteId === meta.id ? `<div class="rc-live"><span class="rec-dot"></span>Gravando agora… toque no botão vermelho para parar</div>` : ''}
+    body.innerHTML = `<div class="rc-import"><button class="btn" data-imp="1">${ic('upload')}<span>Importar do gravador do celular</span></button>
+      <span class="muted small">Para aulas longas com a tela apagada, grave no gravador do Android e importe aqui (ou, no gravador, toque em Compartilhar → Caderno).</span></div>
+      ${rec && rec.noteId === meta.id ? `<div class="rc-live"><span class="rec-dot"></span>Gravando agora… toque no botão vermelho para parar</div>` : ''}
       ${list.map(r => {
         const u = r.blob ? URL.createObjectURL(r.blob) : ''; if (u) urls.push(u);
         return `<div class="rc-item" data-id="${r.id}">
@@ -170,6 +243,7 @@ export async function openRecordings(meta) {
   };
   draw();
   body.onclick = async e => {
+    if (e.target.closest('[data-imp]')) { const fs = await pickAudio(); if (fs.length) { await importAudioFiles(fs, meta.id); draw(); } return; }
     const item = e.target.closest('.rc-item'); if (!item) return;
     const r = recs.find(x => x.id === item.dataset.id);
     const ai = e.target.closest('[data-ai]');

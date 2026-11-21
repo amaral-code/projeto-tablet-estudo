@@ -104,5 +104,32 @@
         }
       ]
     }
-  ]
+  ],
+  "share_target": {
+    "action": "./compartilhar",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [
+        {
+          "name": "arquivos",
+          "accept": [
+            "audio/*",
+            "image/*",
+            "application/pdf",
+            ".m4a",
+            ".mp3",
+            ".aac",
+            ".ogg",
+            ".wav",
+            ".amr",
+            ".3gp",
+            ".webm"
+          ]
+        }
+      ]
+    }
+  }
 }

@@ -1435,7 +1435,10 @@ label.check { min-height: 40px; }
 .task.sw-on, .mini-task.sw-on { z-index: 2; box-shadow: 0 6px 18px rgba(0,0,0,.12); background: var(--panel); }
 .task.sw-on::after, .mini-task.sw-on::after { position: absolute; top: 50%; transform: translate(var(--swx, 0), -50%); font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; white-space: nowrap; pointer-events: none; opacity: .55; transition: opacity .12s; }
 .task.sw-right::after, .mini-task.sw-right::after { content: '✓ Concluir'; right: calc(100% + 10px); left: auto; background: #dcfce7; color: #166534; transform: translate(0, -50%); }
-.task.sw-left::after, .mini-task.sw-left::after { content: '⏭️ Amanhã'; left: calc(100% + 10px); right: auto; background: #dbeafe; color: #1e40af; transform: translate(0, -50%); }
+.task.sw-left::after, .mini-task.sw-left::after { content: attr(data-swl); left: calc(100% + 10px); right: auto; background: #dbeafe; color: #1e40af; transform: translate(0, -50%); }
 .task.sw-ready::after, .mini-task.sw-ready::after { opacity: 1; }
 .task.sw-right.sw-ready, .mini-task.sw-right.sw-ready { box-shadow: inset 4px 0 0 #16a34a, 0 6px 18px rgba(0,0,0,.12); }
 .task.sw-left.sw-ready, .mini-task.sw-left.sw-ready { box-shadow: inset -4px 0 0 #2563eb, 0 6px 18px rgba(0,0,0,.12); }
+.rc-import { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 10px; border: 1px dashed var(--line); border-radius: 12px; }
+.rc-import .muted { flex: 1 1 240px; }
+.notes-more { grid-column: 1 / -1; text-align: center; padding: 18px 0 30px; }

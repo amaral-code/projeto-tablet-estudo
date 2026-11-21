@@ -1,5 +1,5 @@
 // Service worker: deixa o app funcionando offline.
-const CACHE = 'caderno-v29';
+const CACHE = 'caderno-v30';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/editor.js', 'js/ink.js', 'js/shapes.js', 'js/recognize.js', 'js/store.js', 'js/export.js', 'js/ui.js',
@@ -15,6 +15,8 @@ self.addEventListener('activate', e => {
 // Rede primeiro (para receber atualizações), cache se estiver offline.
 self.addEventListener('fetch', e => {
   const req = e.request;
+  // "Compartilhar" de outro app (gravador do Android, galeria, PDF): guarda os arquivos e abre o app para recebê-los
+  if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/compartilhar')) { e.respondWith(receberCompartilhado(req)); return; }
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(
     fetch(req).then(res => {
@@ -36,6 +38,24 @@ self.addEventListener('notificationclick', e => {
     return c.focus().then(() => { try { c.navigate && c.navigate(url); } catch { /* */ } });
   }));
 });
+async function receberCompartilhado(req) {
+  try {
+    const fd = await req.formData();
+    const files = fd.getAll('arquivos').filter(f => f && f.size).map(f => ({ name: f.name || 'arquivo', type: f.type || '', blob: f, lastModified: f.lastModified || Date.now() }));
+    await new Promise(res => {
+      const r = indexedDB.open('caderno-estudos');
+      r.onerror = () => res();
+      r.onsuccess = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains('kv')) { db.close(); res(); return; }
+        const tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put({ id: 'compartilhado', files, text: String(fd.get('text') || fd.get('title') || ''), at: Date.now() });
+        tx.oncomplete = tx.onerror = () => { db.close(); res(); };
+      };
+    });
+  } catch { /* */ }
+  return Response.redirect('./?compartilhado=1', 303);
+}
 function adiar(d, minutes) {
   return new Promise(res => {
     const r = indexedDB.open('caderno-estudos');

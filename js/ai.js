@@ -146,7 +146,8 @@ export function geminiBody(messages, model = GEMINI_MODEL, opts = {}) {
       ? [{ text: m.content }]
       : m.content.filter(b => ['text', 'image', 'audio'].includes(b.type)).map(b => (b.type === 'text'
         ? { text: b.text }
-        : { inline_data: { mime_type: b.source.media_type, data: b.source.data } })),
+        : b.source.file_uri ? { file_data: { mime_type: b.source.media_type, file_uri: b.source.file_uri } }
+          : { inline_data: { mime_type: b.source.media_type, data: b.source.data } })),
   })).filter(c => c.parts.length);
   const generationConfig = { maxOutputTokens: opts.maxTokens || 8192, temperature: 0.4 };
   // versão rápida: raciocínio baixo no modelo principal e mínimo no último recurso (no reserva, o padrão já é rápido)
@@ -154,6 +155,34 @@ export function geminiBody(messages, model = GEMINI_MODEL, opts = {}) {
   if (model === GEMINI_LAST) generationConfig.thinkingConfig = { thinkingLevel: 'minimal' };
   if (opts.json) generationConfig.responseMimeType = 'application/json';
   return { systemInstruction: { parts: [{ text: opts.system || SYSTEM }] }, contents, generationConfig };
+}
+
+// Arquivos grandes (aula de 2 h): envia antes para o Gemini e usa o endereço no pedido. Vale por ~2 dias.
+export async function uploadToGemini(blob, mime, name = 'aula', onProgress) {
+  if (!aiConfigured()) throw new AIError('Ligue a IA: cole a chave do Gemini em Ajustes → Inteligência artificial.');
+  if (!navigator.onLine) throw new AIError('Sem internet: a IA precisa de conexão.');
+  const key = geminiKey(), base = 'https://generativelanguage.googleapis.com';
+  onProgress && onProgress('Enviando a gravação…');
+  const start = await fetch(`${base}/upload/v1beta/files`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': key, 'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'start', 'X-Goog-Upload-Header-Content-Length': String(blob.size), 'X-Goog-Upload-Header-Content-Type': mime, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: { display_name: String(name).slice(0, 100) } }),
+  });
+  const url = start.headers.get('x-goog-upload-url');
+  if (!start.ok || !url) { let j = {}; try { j = await start.json(); } catch { /* */ } throw geminiError(start.status, j.error && j.error.message, ''); }
+  const up = await fetch(url, { method: 'POST', headers: { 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize' }, body: blob });
+  let j = {}; try { j = await up.json(); } catch { /* */ }
+  if (!up.ok || !j.file) throw geminiError(up.status, j.error && j.error.message, '');
+  let f = j.file;
+  // o Google prepara o arquivo (alguns segundos em áudios longos)
+  for (let i = 0; f.state === 'PROCESSING' && i < 90; i++) {
+    onProgress && onProgress('O Gemini está preparando a gravação…');
+    await new Promise(r => setTimeout(r, 2000));
+    const g = await fetch(`${base}/v1beta/${f.name}`, { headers: { 'x-goog-api-key': key } });
+    if (g.ok) f = await g.json();
+  }
+  if (f.state === 'FAILED') throw new AIError('O Gemini não conseguiu abrir esta gravação.');
+  return { uri: f.uri, name: f.name, at: Date.now() };
 }
 
 function geminiError(status, msg, reason) {

@@ -362,7 +362,7 @@ function renderToolOpts() {
     const pal = tool === 'marker' ? MARKER_PALETTE : PALETTE;
     html += '<div class="swatches">' + pal.map(c =>
       `<button class="sw ${c.toLowerCase() === cfg.color.toLowerCase() ? 'active' : ''}" data-c="${c}" style="--c:${c}" aria-label="Cor ${c}"></button>`).join('') +
-      `<label class="sw custom ${pal.includes(cfg.color) ? '' : 'active'}" style="--c:${cfg.color}" title="Outra cor"><input type="color" value="${cfg.color}"></label></div>`;
+      `<label class="sw custom ${pal.includes(cfg.color) ? '' : 'active'}" style="--c:${cfg.color}" title="Outra cor"><input type="color" value="${cfg.color}" aria-label="Escolher outra cor"></label></div>`;
   }
   const [mn, mx] = SIZE_RANGE[tool];
   html += `<div class="size"><span class="size-dot" style="--d:${Math.min(28, Math.max(3, cfg.size * (tool === 'text' ? 0.35 : tool === 'marker' || tool === 'eraser' ? 0.45 : 1.2)))}px;--c:${cfg.color || '#888'}"></span>

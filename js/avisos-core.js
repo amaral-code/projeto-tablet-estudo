@@ -62,7 +62,7 @@
       }
     }
     if (p.cards) for (const d of [today, addDays(today, 1)]) {
-      const n = (data.cards || []).filter(c => c.due && c.due <= d).length;
+      const n = (data.cards || []).filter(c => !c.due || c.due <= d).length; // sem data = para revisar (igual ao app)
       if (n) add(`cd-${d}`, at(d, p.cardsTime), `🃏 ${n} flashcard${n > 1 ? 's' : ''} para revisar`, 'Leva poucos minutos e ajuda a não esquecer.', './?v=cards', at(d, p.cardsTime) + 3 * HOUR);
     }
     if (p.study) for (let k = 0; k <= 7; k++) {

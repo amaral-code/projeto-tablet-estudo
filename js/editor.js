@@ -102,7 +102,7 @@ export function initEditor(callbacks) {
   new ResizeObserver(() => { if (E) resize(); }).observe(stage);
   document.addEventListener('keydown', onKey);
   // o Android pode fechar o app a qualquer momento quando ele sai da tela: salva tudo na hora
-  const onHide = () => { if (!E) return; commitTextEdit(); rescueSnapshot(); flushSave(); };
+  const onHide = () => { if (!E) return; commitTextEdit(); rescueSnapshot(); flushSave(true); };
   document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); });
   window.addEventListener('pagehide', onHide);
   window.addEventListener('blur', () => { if (E && E.dirty) flushSave(); });
@@ -134,7 +134,8 @@ export async function closeEditor() {
   if (dictSession) dictSession.stop();
   hideConvBar();
   commitTextEdit();
-  await flushSave();
+  if (E.thumbStale) E.dirty = true; // atualiza a miniatura ao sair
+  await flushSave(true);
   clearTimeout(E.autoTimer);
   E = null; act = null; gesture = null; touches.clear();
   overlay.innerHTML = '';
@@ -398,6 +399,22 @@ function redraw() {
   updateZoomLabel();
 }
 
+// Desenha só o traço novo por cima da folha (bem mais rápido que redesenhar tudo numa página cheia).
+// Só quando dá o mesmo resultado: caneta/lápis, sem cruzar textos nem post-its (que ficam por cima/por baixo).
+function drawStrokeOnly(s) {
+  if (!E || s.tool === 'marker' || (gesture && gesture.snap)) return false;
+  const pg = page(), b = s.bbox;
+  const cross = r => !(r.x > b.x + b.w || r.x + r.w < b.x || r.y > b.y + b.h || r.y + r.h < b.y);
+  if (pg.texts.some(t => cross(textBBox(t))) || pg.images.some(i => i.sticky && cross(i))) return false;
+  const c = ctxB, v = V();
+  c.setTransform(dpr * v.s, 0, 0, dpr * v.s, dpr * v.ox, dpr * v.oy);
+  c.save(); c.beginPath(); c.rect(0, 0, PAGE_W, PAGE_H); c.clip();
+  drawStroke(c, s);
+  c.restore();
+  updateOverlay();
+  return true;
+}
+
 function drawLive() {
   const c = ctxL, v = V();
   c.setTransform(1, 0, 0, 1, 0, 0);
@@ -649,7 +666,7 @@ function endDraw() {
   pushUndo();
   page().strokes.push(s);
   markDirty();
-  redraw();
+  if (!drawStrokeOnly(s)) redraw();
   requestLive();
   if (s.tool !== 'marker' && !s.shape) scheduleAuto(s.id);
 }
@@ -1585,7 +1602,7 @@ async function saveNow() {
   if (!E) return;
   commitTextEdit();
   E.dirty = true;
-  await flushSave();
+  await flushSave(true);
   if (E && !E.dirty && !E.saveError) toast('Salvo ✓  (o caderno também salva sozinho a cada traço)', 2500);
 }
 // Cópia de emergência (síncrona) para o caso de o Android fechar o app antes de o banco terminar de gravar.
@@ -1602,8 +1619,10 @@ function rescueSnapshot() {
 function clearRescue(id) {
   try { const r = localStorage.getItem(RESCUE_KEY); if (r && r.includes(`"id":"${id}"`)) localStorage.removeItem(RESCUE_KEY); } catch { /* */ }
 }
-export async function flushSave() {
+export async function flushSave(final = false) {
   if (!E || !E.dirty) return;
+  // caneta encostada na tela: espera levantar (salvar no meio do traço daria um engasgo)
+  if (!final && act && (act.type === 'draw' || act.type === 'erase')) { clearTimeout(E.saveTimer); E.saveTimer = setTimeout(() => flushSave(), 400); return; }
   const st = E;
   clearTimeout(st.saveTimer);
   st.dirty = false;
@@ -1613,9 +1632,10 @@ export async function flushSave() {
   st.meta.pageCount = st.content.pages.length;
   // texto digitado das páginas (inclusive o escrito pela IA) para a busca encontrar pelo conteúdo
   st.meta.searchText = st.content.pages.flatMap(p => p.texts.filter(t => !t.mark).map(t => t.text)).join(' ').replace(/\s+/g, ' ').slice(0, 5000);
-  try {
-    st.meta.thumb = renderPageToCanvas(st.content.pages[0], st.content.bg, 280).toDataURL('image/jpeg', 0.72);
-  } catch { /* imagem ainda carregando */ }
+  // miniatura da anotação: no máximo a cada 20 s (ou ao sair), porque desenhar a página inteira pesa
+  if (final || !st.thumbAt || Date.now() - st.thumbAt > 20000) {
+    try { st.meta.thumb = renderPageToCanvas(st.content.pages[0], st.content.bg, 280).toDataURL('image/jpeg', 0.72); st.thumbAt = Date.now(); } catch { /* imagem ainda carregando */ }
+  } else st.thumbStale = true;
   try {
     await cb.onSave(st.meta, st.content);
     st.saving = false; st.saveError = false;

@@ -560,25 +560,30 @@ function heatmapHTML() {
   for (const d of Object.keys(rv)) active.add(d);
   for (const r of P.reads) if (r.pages > 0) active.add(r.date);
   for (const t of A.state.tasks) if (t.doneAt) active.add(dayStr(new Date(t.doneAt)));
-  for (const hb of H.habits) for (const d of Object.keys(hb.days)) if (hb.days[d]) active.add(d);
+  for (const hb of H.habits) for (const d of Object.keys(hb.days || {})) if (hb.days[d]) active.add(d);
   // começa num domingo, ~52 semanas atrás
   let start = addDays(today, -364);
   while (parseDay(start).getDay() !== 0) start = addDays(start, -1);
   const cells = [];
   let studied = 0, best = 0, totalMin = 0;
-  for (let d = start; d <= today; d = addDays(d, 1)) {
+  // (datas formatadas à mão: formatar 365 datas pelo navegador deixava a tela lenta no tablet)
+  const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const pad = n => String(n).padStart(2, '0');
+  // meio-dia: a troca de horário de verão (que em alguns lugares é à meia-noite) não faz pular o último dia
+  const cur = parseDay(start), end = parseDay(today);
+  cur.setHours(12); end.setHours(12);
+  const monthAt = [];
+  for (let i = 0; cur <= end; i++, cur.setDate(cur.getDate() + 1)) {
+    const d = `${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(cur.getDate())}`;
+    if (i % 7 === 0) monthAt.push(cur.getDate() <= 7 ? MES[cur.getMonth()] : '');
     const m = minutes.get(d) || 0;
     const lvl = m >= 90 ? 4 : m >= 45 ? 3 : m >= 15 ? 2 : (m > 0 || active.has(d)) ? 1 : 0;
     if (lvl) studied++;
     best = Math.max(best, m); totalMin += m;
-    const label = `${parseDay(d).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}: ${m ? fmtMin(m) + ' de foco' : lvl ? 'estudou' : 'sem estudo'}`;
+    const label = `${pad(cur.getDate())} de ${MES[cur.getMonth()]}: ${m ? fmtMin(m) + ' de foco' : lvl ? 'estudou' : 'sem estudo'}`;
     cells.push(`<i class="hm l${lvl}" title="${label}" data-tip="${label}"></i>`);
   }
-  const months = [];
-  for (let w = 0; w * 7 < cells.length; w++) {
-    const d = parseDay(addDays(start, w * 7));
-    months.push(d.getDate() <= 7 ? `<span style="grid-column:${w + 1}">${d.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}</span>` : '');
-  }
+  const months = monthAt.map((m, w) => (m ? `<span style="grid-column:${w + 1}">${m}</span>` : ''));
   return `<div class="panel heat"><h3>${ic('calendar')}Mapa de estudos do ano</h3>
     <p class="muted small"><b>${studied}</b> ${studied === 1 ? "dia" : "dias"} com estudo no último ano · <b>${fmtMin(totalMin)}</b> de foco · recorde: <b>${fmtMin(best)}</b> num dia</p>
     <div class="hm-scroll"><div class="hm-months">${months.join('')}</div><div class="hm-grid" role="img" aria-label="Dias com estudo no último ano">${cells.join('')}</div></div>

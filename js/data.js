@@ -1,7 +1,7 @@
 // Dados e backup: o banco de dados do app à vista — contagens, espaço, proteção do armazenamento,
 // cópias automáticas diárias, exportar/importar, verificar e reparar, apagar tudo.
 import { initDrive, driveHTML, bindDrive } from './drive.js';
-import { db, STORE_LABELS, exportPrefs, importPrefs, settings, saveSettings } from './store.js';
+import { db, fixRecord, STORE_LABELS, exportPrefs, importPrefs, settings, saveSettings } from './store.js';
 import { ic, esc, h, toast, modal, confirmBox } from './ui.js';
 import { shareFile, download } from './export.js';
 
@@ -137,7 +137,18 @@ const checkHTML = r => (r.fixes.length ? `<p><b>${r.total} itens conferidos. Cor
 export async function checkAndRepair() {
   const fixes = [];
   const all = {};
-  for (const s of db.STORES) all[s] = await db.all(s);
+  // lê como está gravado: registros vazios saem e os incompletos são completados de verdade (gravando no banco)
+  for (const s of db.STORES) {
+    const raw = await db.allRaw(s);
+    all[s] = [];
+    for (const r of raw) {
+      if (!r || typeof r !== 'object' || !r.id) { fixes.push(`${STORE_LABELS[s]}: registro vazio ignorado`); continue; }
+      const before = JSON.stringify(r);
+      fixRecord(s, r);
+      if (JSON.stringify(r) !== before) { await db.put(s, r); fixes.push(`${STORE_LABELS[s]}: campos que faltavam foram completados`); }
+      all[s].push(r);
+    }
+  }
   const fids = new Set(all.folders.map(f => f.id));
   const nids = new Set(all.notes.map(n => n.id));
   const pids = new Set(all.pages.map(p => p.id));

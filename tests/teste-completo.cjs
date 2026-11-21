@@ -2138,6 +2138,11 @@ function watch(p) {
     for (const v of ['today', 'tasks', 'calendar', 'avisos', 'plans', 'errors', 'quiz', 'cards', 'habits', 'grades', 'goals', 'reading', 'report', 'journal']) await nav(v === 'report' || v === 'journal' || v === 'grades' || v === 'habits' ? v : v);
     await page.evaluate(async () => { const a = await import('./js/archie.js'); a.snapshot(); });
     assert(errors.length === e0, 'erros com dados incompletos: ' + errors.slice(e0).join(' | '));
+    await nav('calendar');
+    assert(!/Invalid Date|NaN/.test(await page.textContent('#main')), 'evento sem data não pode mostrar "Invalid Date"');
+    // "Verificar e reparar" completa de verdade no banco (não só na memória)
+    const rep = await page.evaluate(async () => { const d = await import('./js/data.js'), st = await import('./js/store.js'); const r = await d.checkAndRepair(); const raw = (await st.db.allRaw('habits')).find(x => x.id === 'w9'); const ev = (await st.db.allRaw('events')).find(x => x.id === 'w4'); return { fixes: r.fixes, days: raw && typeof raw.days, evDate: ev && ev.date }; });
+    assert(rep.days === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(rep.evDate) && rep.fixes.some(f => /completados/.test(f)), 'o reparo devia gravar os campos completados: ' + JSON.stringify(rep));
     await page.evaluate(async W => { const st = await import('./js/store.js'); for (const [k, list] of Object.entries(W)) for (const x of list) await st.db.del(k, x.id); }, W);
     await page.reload(); await wait(1300);
   });

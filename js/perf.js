@@ -488,6 +488,7 @@ const BADGES = [
   ['💪', 'Constância', 'Marque hábitos 50 vezes', t => t.habits >= 50],
   ['📊', 'De olho nas notas', 'Lance 5 notas', t => t.grades >= 5],
 ];
+export function levelInfo() { const t = totals(), xp = xpOf(t); return { ...levelOf(xp), xp, totals: t }; }
 export function levelBadge() {
   const { lvl, into, need } = levelOf(xpOf(totals()));
   return `<button class="level" data-goto="report" title="Ver conquistas"><span>Nível <b>${lvl}</b></span><span class="lvl-bar"><i style="width:${(into / need) * 100}%"></i></span></button>`;
@@ -704,6 +705,7 @@ export async function openPalette() {
       ['Ajustes e IA', 'settings', () => A.settings()],
       ['Nova nota rápida', 'sticky', () => A.quick('quicknote')], ['Novo evento na agenda', 'calendar', () => A.quick('event')], ['Gravar a aula (áudio)', 'mic', () => A.quick('record')],
       ['Perguntar ao tutor IA', 'chat', () => A.goTo({ kind: 'tutor' })],
+      ['Falar com o Archie (mentor)', 'chat', () => A.openArchie()],
       ...Object.entries(A.views()).map(([k, v]) => [`Ir para ${v.title}`, v.icon, () => A.goTo({ kind: k })]),
     ].map(([label, icon, run]) => ({ label, icon, run, kind: 'Ação' }));
     // busca também dentro do conteúdo (texto digitado das anotações, notas rápidas, conversas, flashcards)

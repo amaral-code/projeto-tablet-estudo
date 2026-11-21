@@ -208,6 +208,21 @@ function lessonAudio() {
     await time('err', async () => { let t = ''; await ai.streamChat([{ role: 'user', content: errs.errorPrompt({ q: 'Quanto é 3/4 + 1/4?', opts: ['1', '4/8', '3/16', '2'], c: 0, answer: '1', mine: '4/8' }) }], x => { t += x; }).done; return t; });
     return out;
   });
+  const ar = await page.evaluate(async () => {
+    const ai = await import('./js/ai.js');
+    const archie = await import('./js/archie.js');
+    const d = new Date(Date.now() + 86400000); const amanha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const t0 = performance.now();
+    try {
+      const msgs = [{ role: 'user', content: `RESUMO DO APP (dados atuais do estudante):\n${archie.snapshot()}` }, { role: 'assistant', content: [{ type: 'text', text: '{"resposta":"Entendido.","humor":"feliz","acoes":[]}' }] },
+        { role: 'user', content: 'Archie, cria uma tarefa para amanhã: revisar frações. É prioridade alta.' }];
+      const r = await ai.streamChat(msgs, () => {}, { system: archie.systemPrompt(), json: true }).done;
+      const p = archie.parseArchie(r.text);
+      const t = p.acoes.find(a => a.tipo === 'criar_tarefa');
+      return { secs: ((performance.now() - t0) / 1000).toFixed(1), resposta: p.resposta, tarefa: t, amanha };
+    } catch (e) { return { err: e.message }; }
+  });
+  ok('Archie entende o pedido e devolve a ação de criar tarefa (com a data de amanhã)', ar.tarefa && /fra[cç]/i.test(ar.tarefa.titulo) && ar.tarefa.prazo === ar.amanha && +ar.tarefa.prioridade === 3, ar.err || `${ar.secs}s: "${String(ar.resposta).slice(0, 80)}" · ${JSON.stringify(ar.tarefa)}`);
   ok('simulado ENEM: 5 questões com 5 alternativas, texto-base e gabarito comentado', nv.enem && nv.enem.n >= 4 && nv.enem.five && nv.enem.base >= 4 && nv.enem.ex >= 4, nv.enem ? `${nv.enem.n} questões em ${nv.enem_s}s · "${String(nv.enem.q0).slice(0, 70)}"` : nv.enem_err);
   ok('mapa mental: JSON com tema e ramos', nv.mind && nv.mind.ramos >= 3, nv.mind ? `"${nv.mind.centro}" com ${nv.mind.ramos} ramos em ${nv.mind_s}s` : nv.mind_err || 'não entendi o JSON');
   ok('plano de estudos: a IA sugere assuntos por matéria', nv.topics && nv.topics.mat >= 3 && nv.topics.hist >= 3, nv.topics ? `Matemática ${nv.topics.mat}, História ${nv.topics.hist} em ${nv.topics_s}s` : nv.topics_err);

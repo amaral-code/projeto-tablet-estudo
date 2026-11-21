@@ -115,6 +115,14 @@ function geminiReply(body) {
     return '# Aula de frações\n- Frações representam partes de um inteiro.\n\n# Para lembrar\n- A prova é na sexta.';
   }
   if (/tutor particular/.test(sys)) return has(/^image\//) ? '# Resolução\n1. 2x + 3 = 11\n2. 2x = 8\n3. x = 4' : '# Explicação\n- O denominador mostra em quantas partes o inteiro foi dividido.';
+  if (/Você é o Archie/.test(sys)) {
+    const d = n => { const x = new Date(Date.now() + n * 86400000); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+    if (/tarefa/i.test(txt)) return JSON.stringify({ resposta: 'Feito! Criei a tarefa para amanhã. 💪', humor: 'animado', acoes: [{ tipo: 'criar_tarefa', titulo: 'Estudar frações com o Archie', prazo: d(1), prioridade: 3, materia: 'matematica' }] });
+    if (/prova de/i.test(txt)) return JSON.stringify({ resposta: 'Coloquei a prova na agenda, com aviso na véspera. 🔔', humor: 'planejando', acoes: [{ tipo: 'criar_evento', titulo: 'Prova de História', data: d(5), hora: '08:00', categoria: 'prova', prioridade: 3 }] });
+    if (/abr/i.test(txt)) return JSON.stringify({ resposta: 'Abrindo o caderno de erros!', humor: 'feliz', acoes: [{ tipo: 'abrir_tela', tela: 'errors' }] });
+    if (/procur|busc/i.test(txt)) return JSON.stringify({ resposta: 'Olha o que achei:', humor: 'pensando', acoes: [{ tipo: 'buscar_anotacoes', termo: 'Frações' }] });
+    return JSON.stringify({ resposta: 'Oi! Estou aqui para ajudar. 🦉', humor: 'feliz', acoes: [] });
+  }
   if (/estilo do ENEM/i.test(txt)) return ENEM_JSON;
   if (/mapa mental/i.test(txt)) return JSON.stringify({ centro: 'Frações', ramos: [{ titulo: 'Numerador', itens: ['fica em cima'] }, { titulo: 'Denominador', itens: ['fica embaixo', 'partes do inteiro'] }, { titulo: 'Soma', itens: ['mesmo denominador'] }, { titulo: 'Equivalentes', itens: ['1/2 = 2/4'] }] });
   if (/Traduza/.test(txt)) return 'Eu estou estudando há duas horas.\n\n# Palavras importantes\n- have been studying: presente perfeito contínuo';
@@ -186,7 +194,7 @@ function watch(p) {
   browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write', 'microphone', 'notifications'] });
   await mocks(ctx);
-  await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); } catch { /* */ } });
+  await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); } catch { /* */ } });
   await geminiMock(ctx);
   await wikiMock(ctx);
   page = await ctx.newPage();
@@ -627,7 +635,7 @@ function watch(p) {
   });
   await step('restaura backup num tablet "novo"', async () => {
     const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); } catch { /* */ } });
+    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); } catch { /* */ } });
     const p2 = await c2.newPage(); watch(p2);
     await p2.goto(base); await p2.waitForTimeout(1200);
     await p2.click('#btn-data'); await p2.waitForSelector('#dt-import'); await p2.setInputFiles('#backup-input', backupFile); await p2.waitForSelector('.modal h2:has-text("Restaurar backup")');
@@ -756,7 +764,7 @@ function watch(p) {
     const p3 = await c3.newPage(); watch(p3);
     await p3.goto(base); await p3.waitForSelector('.tour', { timeout: 5000 });
     assert(await p3.locator('.tour .tour-logo').count() === 1, 'o primeiro passo mostra o logo');
-    for (let i = 0; i < 5; i++) { await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(150); }
+    for (let i = 0; i < 6; i++) { await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(150); }
     assert(await p3.textContent('.modal-actions .btn.primary') === 'Começar', 'último passo');
     assert(/IA/.test(await p3.textContent('.tour h3')), 'o último passo fala da IA');
     await p3.click('.modal-actions .btn.primary'); await p3.waitForTimeout(400);
@@ -1310,7 +1318,7 @@ function watch(p) {
   });
   await step('Restaurar em outro tablet traz notas rápidas, conversas e o áudio', async () => {
     const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); } catch { /* */ } });
+    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); } catch { /* */ } });
     const p2 = await c2.newPage(); watch(p2);
     await p2.goto(base); await p2.waitForTimeout(1200);
     await p2.click('#btn-data'); await p2.waitForSelector('#dt-import');
@@ -1831,6 +1839,83 @@ function watch(p) {
     await page.evaluate(() => { localStorage.removeItem('caderno-drive'); delete window.google; });
   });
 
+  // ================= ARCHIE =================
+  console.log('Archie, o mentor');
+  await step('Archie: aparece com a expressão do momento, some no caderno e dá dica', async () => {
+    await page.goto(base); await wait(1500);
+    assert(await page.locator('#archie-btn').isVisible(), 'o Archie devia aparecer');
+    const mood = await page.getAttribute('#archie-btn', 'data-mood');
+    assert(['neutro', 'feliz', 'cansado', 'surpreso', 'pensando', 'confiante'].includes(mood) && (await page.getAttribute('#archie-btn img', 'src')).endsWith(`/${mood}.webp`), 'expressão: ' + mood);
+    const img = await page.evaluate(async () => { const r = await fetch('icons/archie/lendario.webp'); return r.ok && (await r.blob()).size > 2000; });
+    assert(img, 'imagens do Archie');
+    await nav('all'); await page.click('.card[data-id] >> nth=0'); await wait(700);
+    assert(await page.locator('#archie-btn').isHidden(), 'no caderno o Archie não pode atrapalhar a escrita');
+    await page.click('#ed-back'); await wait(900);
+    assert(await page.locator('#archie-btn').isVisible(), 'o Archie volta depois do caderno');
+    await page.evaluate(async () => { (await import('./js/archie.js')).say('Teste de dica', 3000, () => document.body.dataset.dica = 'ok'); });
+    await page.click('#archie-say span'); await wait(200);
+    assert(await page.evaluate(() => document.body.dataset.dica) === 'ok', 'tocar na dica faz a ação');
+  });
+  await step('Archie: conversa vendo os dados do app e age (cria tarefa, põe prova na agenda, busca, abre telas)', async () => {
+    await page.click('#archie-btn'); await page.waitForSelector('.archie-panel');
+    assert(/Eu sou o Archie/.test(await page.textContent('#ar-log')) || await page.locator('.ar-msg.bot').count() >= 1, 'saudação');
+    await page.click('.ar-quick [data-q="O que faço agora?"]'); await wait(300);
+    assert(await page.locator('.ar-done.sug').count() >= 1, 'sugestões do que fazer agora');
+    const n0 = gemReqs.length;
+    await page.fill('#ar-q', 'Crie uma tarefa: estudar frações amanhã, é importante'); await page.press('#ar-q', 'Enter');
+    await page.waitForSelector('.ar-done:has-text("Tarefa criada")', { timeout: 8000 });
+    const req = gemReqs[n0].body;
+    const ctxTxt = req.contents[0].parts.map(p => p.text).join(' ');
+    assert(/Você é o Archie/.test(req.systemInstruction.parts[0].text) && /RESUMO DO APP/.test(ctxTxt) && /Tarefas pendentes/.test(ctxTxt) && /Matérias \(pastas\): .*Matemática/.test(ctxTxt), 'o Archie devia receber o resumo do app');
+    assert(req.generationConfig.responseMimeType === 'application/json', 'resposta em JSON');
+    assert(req.contents.every((c, i) => !i || c.role !== req.contents[i - 1].role), 'as falas devem alternar');
+    const t = (await idb('tasks')).find(x => x.title === 'Estudar frações com o Archie');
+    const mat = (await idb('folders')).find(f => f.name === 'Matemática');
+    assert(t && t.due === dayP(1) && t.prio === 3 && t.folderId === mat.id, 'tarefa criada com prazo, prioridade e matéria: ' + JSON.stringify(t));
+    await page.fill('#ar-q', 'Marca a prova de história daqui a 5 dias às 8h'); await page.press('#ar-q', 'Enter');
+    await page.waitForSelector('.ar-done:has-text("Evento na agenda")', { timeout: 8000 });
+    assert((await idb('events')).some(e => e.title === 'Prova de História' && e.date === dayP(5) && e.time === '08:00' && e.kind === 'prova'), 'evento criado');
+    await page.fill('#ar-q', 'Procura minhas anotações de frações'); await page.press('#ar-q', 'Enter');
+    await page.waitForSelector('.ar-done:has-text("Achei")', { timeout: 8000 });
+    assert(await page.locator('.ar-done[data-n]').count() >= 1, 'anotações achadas para abrir');
+    await page.fill('#ar-q', 'Abre o caderno de erros'); await page.press('#ar-q', 'Enter');
+    await page.waitForFunction(() => document.getElementById('view-title').textContent === 'Caderno de erros', null, { timeout: 8000 });
+    assert(await page.locator('.archie-panel').count() === 0, 'abriu a tela e fechou a conversa');
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('caderno-archie-chat')).length);
+    assert(saved >= 8, 'a conversa fica guardada');
+  });
+  await step('Archie: comemora tarefa concluída, fica focado no foco e evolui com o nível', async () => {
+    await nav('tasks');
+    await page.click('.task:has-text("Estudar frações com o Archie") .task-check'); await wait(300);
+    assert(await page.getAttribute('#archie-btn', 'data-mood') === 'concluiu', 'comemora a tarefa');
+    assert(/Mandou bem|Mais uma|Isso aí|Boa!/.test(await page.textContent('#archie-say')), 'balão de parabéns');
+    await page.evaluate(async () => { (await import('./js/hub.js')).startFocus(); (await import('./js/archie.js')).react('focado', 1); });
+    await wait(200); await page.evaluate(async () => (await import('./js/archie.js')).refresh());
+    assert(await page.getAttribute('#archie-btn', 'data-mood') === 'focado', 'focado durante o foco');
+    await nav('focus'); await page.click('#fc-stop').catch(() => {}); await wait(300);
+    // ganha XP (400 min de foco) e evolui
+    await page.evaluate(async () => { const st = await import('./js/store.js'); const d = new Date(); const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; await st.db.put('sessions', { id: 'xp-archie', date: day, start: Date.now(), minutes: 400, folderId: '' }); localStorage.setItem('caderno-archie-skin', 'iniciante'); });
+    await page.reload(); await page.waitForSelector('.modal h2:has-text("O Archie evoluiu")', { timeout: 8000 });
+    assert(/Estudante|Analista|Mentor/.test(await page.textContent('.modal')), 'nova forma do Archie');
+    await page.click('.modal .btn.primary'); await wait(300);
+    await page.click('#archie-btn'); await page.waitForSelector('.archie-panel');
+    assert(!/Iniciante/.test(await page.textContent('.ar-tag')), 'o painel mostra a forma nova');
+    await page.click('#ar-close');
+  });
+  await step('Archie sem IA: responde o básico com os dados do app', async () => {
+    await page.evaluate(async () => { const { settings, saveSettings } = await import('./js/store.js'); window.__k = settings.geminiKey; settings.geminiKey = ''; saveSettings(); });
+    const builtin = await page.evaluate(async () => (await import('./js/ai.js')).hasBuiltinKey());
+    if (!builtin) {
+      await page.click('#archie-btn'); await page.click('#ar-clear');
+      await page.click('.ar-quick [data-q="Como estou na semana?"]'); await wait(300);
+      assert(/Seus últimos 7 dias/.test(await page.textContent('#ar-log')), 'resumo da semana sem IA');
+      await page.fill('#ar-q', 'qualquer coisa'); await page.press('#ar-q', 'Enter'); await wait(300);
+      assert(/ligue a IA/i.test(await page.textContent('#ar-log')), 'explica como ligar a IA');
+      await page.click('#ar-close');
+    }
+    await page.evaluate(async () => { const { settings, saveSettings } = await import('./js/store.js'); settings.geminiKey = window.__k; saveSettings(); });
+  });
+
   // ================= POST-IT, GRIFO E GRAVAÇÃO =================
   console.log('Post-it, grifo e gravação');
   await step('Post-it: escolhe a cor, cola na folha, escreve dentro e o desenho cobre o que estava embaixo', async () => {
@@ -1997,7 +2082,7 @@ function watch(p) {
     const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
     const listed = new Set([...sw.matchAll(/'((?:js|fonts|icons|css)\/[^']+)'/g)].map(m => m[1]));
     const missing = [];
-    for (const d of ['js', 'js/vendor', 'fonts', 'css', 'icons']) for (const f of fs.readdirSync(path.join(ROOT, d))) {
+    for (const d of ['js', 'js/vendor', 'fonts', 'css', 'icons', 'icons/archie']) for (const f of fs.readdirSync(path.join(ROOT, d))) {
       const rel = `${d}/${f}`;
       if (fs.statSync(path.join(ROOT, rel)).isFile() && !f.endsWith('.txt') && !listed.has(rel)) missing.push(rel);
     }

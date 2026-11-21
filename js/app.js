@@ -23,6 +23,7 @@ import { initSubjects, weakSubject } from './subjects.js';
 import { initInkIndex, scheduleIndex, inkSearchText } from './inkindex.js';
 import { requireUnlock, isUnlocked, hasPin, lockSettings } from './lock.js';
 import { driveDue, backupNow as driveBackupNow } from './drive.js';
+import { initArchie, refresh as archieRefresh, checkEvolution as archieEvolution, openArchie } from './archie.js';
 import { initTools, TOOL_VIEWS, renderTools, translateDialog } from './tools.js';
 import { initPlans, reloadPlans, PLAN_VIEWS, renderPlans, planDialog } from './plan.js';
 import { initErrors, reloadErrors, ERROR_VIEWS, renderErrors, addError, errorsCount, leaveErrors } from './errors.js';
@@ -149,6 +150,7 @@ async function init() {
     reloadAll,
     addError: e => addError(e).catch(() => {}),
     createNoteWith,
+    openArchie: q => openArchie(q),
     driveDue, driveBackup: () => driveBackupNow(),
     openNoteId: () => (editorIsOpen() && getEditorContext() ? getEditorContext().meta.id : null),
     weakSubject: () => { try { return weakSubject(); } catch { return null; } },
@@ -175,6 +177,7 @@ async function init() {
   await initPlans(api);
   initInkIndex(api);
   initTools(api);
+  initArchie(api);
   EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder, EVM.reloadEvents, reloadErrors, reloadPlans);
   initData(api);
   appReady = true;
@@ -472,7 +475,8 @@ function setView(v) {
 function folderName(id) { return state.folders.find(f => f.id === id)?.name || ''; }
 function folderColor(id) { return state.folders.find(f => f.id === id)?.color || '#9aa0a6'; }
 
-function render() { renderSidebar(); renderMain(); }
+let archieT = 0;
+function render() { renderSidebar(); renderMain(); clearTimeout(archieT); archieT = setTimeout(() => { archieRefresh(); archieEvolution(); }, 400); }
 
 function renderSidebar() {
   const v = state.view;
@@ -757,6 +761,7 @@ async function openNote(id) {
   const content = await loadContent(id);
   history.pushState({ editor: id }, '');
   document.body.classList.add('editing');
+  archieRefresh();
   openEditor(meta, content);
 }
 
@@ -765,6 +770,7 @@ async function closeNote() {
   await closeEditor();
   document.body.classList.remove('editing');
   render();
+  archieRefresh();
 }
 
 async function saveNote(meta, content) {
@@ -989,6 +995,7 @@ async function toggleTask(id) {
     state.tasks.push(next);
     toast(`Concluída ✓ — próxima: ${fmtDue(due)}`);
   } else if (x.done) toast('Tarefa concluída ✓');
+  if (x.done) document.dispatchEvent(new CustomEvent('caderno-tarefa-feita', { detail: { title: x.title } }));
   if (!editorIsOpen()) render();
 }
 

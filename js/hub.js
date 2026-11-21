@@ -813,6 +813,7 @@ function logReview() {
 export function reviewsByDay() { try { return JSON.parse(localStorage.getItem(RKEY) || '{}'); } catch { return {}; } }
 export function hubData() { return H; }
 export function focusCfg() { return T.cfg; }
+export const focusRunning = () => !!T.running;
 export function startFocus() { if (!T.running) startT(); }
 // Começa um foco já com a matéria e a tarefa escolhidas (usado pelo "O que fazer agora")
 // Abre a Agenda já no dia escolhido

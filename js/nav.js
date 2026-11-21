@@ -236,6 +236,7 @@ const TOUR = [
   ['🗂️', '3 áreas, fácil de achar', '<b>Planejar</b>: Hoje, Tarefas, Notas rápidas, Agenda, Avisos, Horário e Metas.<br><b>Estudar</b>: Caderno, Foco, Flashcards, Simulado, Fórmulas, Tutor IA e Leitura.<br><b>Acompanhar</b>: Hábitos, Diário, Notas e provas e Relatório.'],
   ['➕', 'O botão + cria qualquer coisa', 'Fica no canto de qualquer tela: anotação, tarefa, evento, foco, flashcard, nota… Com o tablet em pé, a barra de baixo leva às partes principais, e “Mais” mostra todas. A 🔍 lá em cima acha qualquer coisa.'],
   ['✍️', 'No caderno', 'Escreva com a caneta. Em <b>Ao escrever → Organizar nas linhas</b>, sua letra vira texto certinho na pauta (o ponto final começa outro parágrafo). O botão <b>Imagem</b> busca fotos na internet e o roxo <b>IA</b> explica, resume e cria flashcards.'],
+  ['archie', 'Conheça o Archie 🦉', 'A corujinha no canto da tela é o seu mentor. Ele vê suas tarefas, agenda, planos e erros, dá dicas e <b>faz coisas por você</b>: “crie uma tarefa para sexta”, “monte meu plano para a prova”, “o que faço agora?”. Ele evolui junto com o seu nível!'],
   ['🔔', 'Avisos na hora certa', 'Provas, eventos da agenda, tarefas, aulas e flashcards avisam no tablet, até com o app fechado. Em <b>Avisos</b> você escolhe o que avisar e a que horas.'],
   ['ai', '', ''],
 ];
@@ -250,7 +251,7 @@ export function tour(force) {
     if (e === 'ai') [e, t, d] = aiConfigured()
       ? ['✨', 'A IA já está ligada', 'Use o <b>Tutor IA</b> para tirar dúvidas (até por foto ou voz) e o botão roxo <b>IA</b> no caderno. Bons estudos!']
       : ['✨', 'Ligue a IA (grátis)', 'Em <b>Ajustes → Inteligência artificial</b>, cole a chave do Gemini criada em aistudio.google.com/apikey e toque em <b>Testar</b>.'];
-    body.innerHTML = `<div class="tour-emoji">${e === 'logo' ? '<img class="tour-logo" src="icons/icon.svg" alt="">' : e}</div><h3>${t}</h3><p>${d}</p>
+    body.innerHTML = `<div class="tour-emoji">${e === 'logo' ? '<img class="tour-logo" src="icons/icon.svg" alt="">' : e === 'archie' ? '<img class="tour-logo archie-tour" src="icons/archie/feliz.webp" alt="">' : e}</div><h3>${t}</h3><p>${d}</p>
       <div class="tour-dots">${TOUR.map((_, j) => `<span class="${j === i ? 'on' : ''}"></span>`).join('')}</div>`;
     const acts = body.closest('.modal')?.querySelectorAll('.modal-actions .btn');
     if (acts) { acts[0].textContent = i ? 'Voltar' : 'Pular'; acts[1].textContent = i === TOUR.length - 1 ? 'Começar' : 'Próximo'; }

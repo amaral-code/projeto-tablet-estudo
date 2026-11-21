@@ -19,6 +19,12 @@ export async function initRecorder(api) {
   for (const r of recs.filter(r => r.partial)) { r.partial = false; r.title = r.title + ' (interrompida)'; await A.db.put('recordings', r); }
   pill = h(`<button id="rec-pill" hidden aria-label="Parar gravação"></button>`);
   pill.onclick = () => stopRecording();
+  // o app saiu da tela durante a gravação: salva na hora o que já foi gravado
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden || !rec || rec.mr.state !== 'recording') return;
+    rec.saveNow = true;
+    try { rec.mr.requestData(); } catch { /* */ }
+  });
   document.body.appendChild(pill);
   setInterval(tick, 500);
 }
@@ -50,9 +56,11 @@ export async function startRecording({ noteId, title }) {
   mr.ondataavailable = async e => {
     if (!e.data || !e.data.size) return;
     r.chunks.push(e.data);
-    // salva o que já foi gravado a cada ~30 s (se o app fechar, a aula não se perde)
-    if (Date.now() - r.lastSave > 30000 && rec === r) { r.lastSave = Date.now(); await persist(r, true).catch(() => {}); }
+    // salva o que já foi gravado a cada ~15 s (se o app fechar, a aula não se perde)
+    if ((Date.now() - r.lastSave > 15000 || r.saveNow) && rec === r) { r.saveNow = false; r.lastSave = Date.now(); await persist(r, true).catch(() => {}); }
   };
+  // o microfone foi cortado (ligação, outro app usando): para e salva o que já foi gravado
+  stream.getAudioTracks().forEach(t => t.addEventListener('ended', () => { if (rec === r) { toast('O microfone foi interrompido: gravação salva até aqui', 4000); stopRecording(); } }));
   const stopped = new Promise(res => { mr.onstop = res; });
   r.stopped = stopped;
   mr.start(5000);

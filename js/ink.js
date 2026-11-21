@@ -213,9 +213,15 @@ export function textBBox(t) {
 }
 export function drawText(ctx, t) {
   ctx.save();
-  ctx.fillStyle = t.color;
   ctx.font = textFont(t);
   ctx.textBaseline = 'top';
+  if (t.hl) {
+    // grifo: faixa de marca-texto atrás de cada linha do texto
+    ctx.fillStyle = t.hl; ctx.globalAlpha = 0.42;
+    String(t.text).split('\n').forEach((l, i) => { const w = ctx.measureText(l).width; ctx.fillRect(t.x - 4, t.y + i * t.size * 1.25 + t.size * 0.12, w + 8, t.size * 1.02); });
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = t.color;
   String(t.text).split('\n').forEach((l, i) => ctx.fillText(l, t.x, t.y + i * t.size * 1.25));
   ctx.restore();
 }
@@ -234,13 +240,43 @@ function getImg(src) {
   }
   return im;
 }
+// Post-it: papel colorido com sombra e fita adesiva em cima (desenhado, fica nítido em qualquer zoom e no PDF)
+export const STICKY_COLORS = {
+  amarelo: ['#fff59d', '#fbe77a'], rosa: ['#ffc1dc', '#fba8cb'], azul: ['#bfe3ff', '#a5d4fb'],
+  verde: ['#c8f2b4', '#b0e698'], laranja: ['#ffd3a1', '#fcc082'], lilas: ['#e3d2ff', '#d3bcfc'],
+};
+export function drawSticky(ctx, it) {
+  const [c0, c1] = STICKY_COLORS[it.sticky] || STICKY_COLORS.amarelo;
+  const { x, y, w, h } = it;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = Math.max(6, w * 0.04); ctx.shadowOffsetY = Math.max(3, w * 0.015);
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, c0); g.addColorStop(1, c1);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  // canto de baixo levemente levantado, como papel de verdade
+  ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h - h * 0.03);
+  ctx.quadraticCurveTo(x + w * 0.55, y + h + h * 0.012, x, y + h); ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // fita adesiva no alto, um pouco torta
+  ctx.save();
+  const tw = w * 0.42, th = Math.max(16, h * 0.1);
+  ctx.translate(x + w / 2, y + th * 0.15);
+  ctx.rotate(-0.035);
+  ctx.fillStyle = 'rgba(255, 245, 170, .72)';
+  ctx.strokeStyle = 'rgba(200, 180, 60, .25)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.rect(-tw / 2, -th / 2, tw, th); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
 export function drawImageItem(ctx, it) {
+  if (it.sticky) { drawSticky(ctx, it); return; }
   const im = getImg(it.src);
   if (im.complete && im.naturalWidth) ctx.drawImage(im, it.x, it.y, it.w, it.h);
   else { ctx.fillStyle = 'rgba(0,0,0,.06)'; ctx.fillRect(it.x, it.y, it.w, it.h); }
 }
 export function loadPageImages(page) {
-  return Promise.all((page.images || []).map(it => new Promise(res => {
+  return Promise.all((page.images || []).filter(it => !it.sticky).map(it => new Promise(res => {
     const im = getImg(it.src);
     if (im.complete) return res();
     im.addEventListener('load', res, { once: true });
@@ -249,12 +285,28 @@ export function loadPageImages(page) {
 }
 
 // ---------- Página ----------
+// Um post-it cobre o que já estava na folha; o que foi escrito nele depois de colado fica por cima
+const centerIn = (b, r) => { const cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h; };
+export function stickyOf(page, kind, it) {
+  let top = null;
+  for (const n of page.images) if (n.sticky && (it.at || 0) > (n.at || 0) && centerIn(kind === 'strokes' ? it.bbox : textBBox(it), n)) top = n;
+  return top;
+}
+function drawLayer(ctx, page, skipIds, keep) {
+  for (const s of page.strokes) if (s.tool === 'marker' && !skipIds?.has(s.id) && keep('strokes', s)) drawStroke(ctx, s);
+  for (const s of page.strokes) if (s.tool !== 'marker' && !skipIds?.has(s.id) && keep('strokes', s)) drawStroke(ctx, s);
+  for (const t of page.texts) if (!skipIds?.has(t.id) && keep('texts', t)) drawText(ctx, t);
+}
 export function renderPage(ctx, page, bg, skipIds) {
   drawPaper(ctx, bg);
-  for (const it of page.images) if (!skipIds?.has(it.id)) drawImageItem(ctx, it);
-  for (const s of page.strokes) if (s.tool === 'marker' && !skipIds?.has(s.id)) drawStroke(ctx, s);
-  for (const s of page.strokes) if (s.tool !== 'marker' && !skipIds?.has(s.id)) drawStroke(ctx, s);
-  for (const t of page.texts) if (!skipIds?.has(t.id)) drawText(ctx, t);
+  const notes = page.images.filter(i => i.sticky && !skipIds?.has(i.id));
+  for (const it of page.images) if (!it.sticky && !skipIds?.has(it.id)) drawImageItem(ctx, it);
+  if (!notes.length) { drawLayer(ctx, page, skipIds, () => true); return; }
+  // folha → post-its → o que foi escrito em cada post-it
+  const owner = new Map();
+  for (const kind of ['strokes', 'texts']) for (const it of page[kind]) { const n = stickyOf(page, kind, it); if (n && !skipIds?.has(n.id)) owner.set(it, n); }
+  drawLayer(ctx, page, skipIds, (k, it) => !owner.has(it));
+  for (const n of notes) { drawSticky(ctx, n); drawLayer(ctx, page, skipIds, (k, it) => owner.get(it) === n); }
 }
 
 export function renderPageToCanvas(page, bg, width) {

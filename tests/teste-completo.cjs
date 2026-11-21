@@ -1602,6 +1602,90 @@ function watch(p) {
     assert(await page.textContent('#view-title') === 'Fórmulas' && await page.locator('.fm-card.open[data-fid="ohm"]').count() === 1, 'não abriu a lei de Ohm');
   });
 
+  // ================= POST-IT, GRIFO E GRAVAÇÃO =================
+  console.log('Post-it, grifo e gravação');
+  await step('Post-it: escolhe a cor, cola na folha, escreve dentro e o desenho cobre o que estava embaixo', async () => {
+    await nav('all'); await page.click('#btn-new'); await page.fill('#n-title', 'Com post-it'); await page.click('.modal-actions .btn.primary'); await wait(1000);
+    await page.selectOption('#ed-auto', 'off');
+    await page.click('#ed-sticky'); await page.click('.sticky-sw[data-c=rosa]'); await wait(300);
+    assert(await page.locator('[data-tool=pen].active').count() === 1, 'depois de colar, a caneta devia estar pronta');
+    const b = await stageBox(), cx = b.width / 2, cy = b.height / 2;
+    await draw([[cx - 60, cy - 20], [cx - 30, cy + 20], [cx, cy - 20], [cx + 30, cy + 20]]);
+    await saved();
+    const pg = (await contentOf('Com post-it')).pages[0];
+    const note = pg.images.find(i => i.sticky === 'rosa');
+    assert(note && !note.src && note.at, 'post-it não foi salvo: ' + JSON.stringify(pg.images));
+    const st = pg.strokes[pg.strokes.length - 1];
+    assert(st.at > note.at && st.bbox.x > note.x && st.bbox.x + st.bbox.w < note.x + note.w, 'a escrita devia ficar dentro do post-it');
+    // o post-it cobre o texto antigo e mostra o que foi escrito nele depois
+    const px = await page.evaluate(async () => {
+      const ink = await import('./js/ink.js');
+      const dark = (texts) => { const c = ink.renderPageToCanvas({ strokes: [], images: [{ id: 'n', sticky: 'amarelo', x: 100, y: 100, w: 300, h: 300, at: 1000 }], texts }, { type: 'blank', color: 'white' }, ink.PAGE_W); const d = c.getContext('2d').getImageData(150, 220, 200, 60).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 90 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; };
+      const T = at => [{ id: 't', x: 150, y: 220, text: 'MMMMMM', size: 48, color: '#000', at }];
+      return { old: dark(T(0)), novo: dark(T(2000)) };
+    });
+    assert(px.old === 0 && px.novo > 200, 'camadas do post-it: ' + JSON.stringify(px));
+  });
+  await step('Post-it: com "Organizar nas linhas", o que é escrito no post-it fica à mão; tocar com o laço leva tudo junto', async () => {
+    await page.selectOption('#ed-auto', 'flow');
+    const b = await stageBox(), cx = b.width / 2, cy = b.height / 2;
+    recogQueue.push('lembrete');
+    await draw([[cx - 40, cy + 60], [cx + 40, cy + 60]]); await wait(2300);
+    const pg = (await contentOf('Com post-it')).pages[0];
+    assert(pg.strokes.length === 2 && !pg.texts.some(t => t.flow), 'a escrita do post-it foi para as linhas');
+    recogQueue.length = 0;
+    await page.selectOption('#ed-auto', 'off');
+    await page.click('[data-tool=lasso]');
+    await page.mouse.click(b.x + cx + 120, b.y + cy + 120); await wait(300);
+    await page.click('.selbar [data-a=del]'); await saved();
+    const after = (await contentOf('Com post-it')).pages[0];
+    assert(!after.images.length && !after.strokes.length, 'apagar o post-it devia levar o que estava escrito nele');
+    await page.click('#ed-undo'); await saved();
+    assert((await contentOf('Com post-it')).pages[0].images.length === 1, 'desfazer não trouxe o post-it');
+  });
+  await step('Grifar: texto digitado ganha grifo (e tira com outro toque); letra à mão ganha grifo reto', async () => {
+    const b = await stageBox();
+    await page.click('[data-tool=text]'); await page.mouse.click(b.x + 160, b.y + 120); await wait(200);
+    await page.keyboard.type('Importante para a prova'); await page.click('[data-tool=lasso]'); await wait(200);
+    await page.mouse.click(b.x + 200, b.y + 120 + 8); await wait(300);
+    await page.click('.selbar [data-a=hl]'); await saved();
+    let t = (await contentOf('Com post-it')).pages[0].texts.find(x => x.text === 'Importante para a prova');
+    assert(t && t.hl, 'o texto não foi grifado');
+    await page.click('.selbar [data-a=hl]'); await saved();
+    t = (await contentOf('Com post-it')).pages[0].texts.find(x => x.text === 'Importante para a prova');
+    assert(t && !t.hl, 'o segundo toque devia tirar o grifo');
+    // escrita à mão: circula com o laço e grifa
+    await page.click('[data-tool=pen]');
+    await draw([[120, 560], [140, 530], [160, 560], [180, 530], [200, 560]]);
+    await page.click('[data-tool=lasso]');
+    await draw([[100, 500], [240, 500], [240, 590], [100, 590], [100, 500]]); await wait(300);
+    await page.click('.selbar [data-a=hl]'); await saved();
+    const mk = (await contentOf('Com post-it')).pages[0].strokes.filter(x => x.tool === 'marker');
+    assert(mk.length === 1 && mk[0].points.length === 2 && mk[0].points[0][1] === mk[0].points[1][1], 'grifo da letra à mão: ' + JSON.stringify(mk.map(x => x.points.length)));
+    // marca-texto feito à mão, quase reto, vira grifo reto
+    await page.click('#overlay', { position: { x: 5, y: 5 } }).catch(() => {});
+    await page.click('[data-tool=marker]');
+    await draw([[120, 430], [220, 435], [320, 427], [400, 432]]); await saved();
+    const mk2 = (await contentOf('Com post-it')).pages[0].strokes.filter(x => x.tool === 'marker');
+    const last = mk2[mk2.length - 1];
+    assert(mk2.length === 2 && last.points.length === 2 && last.points[0][1] === last.points[1][1], 'marca-texto não ficou reto');
+    await page.click('[data-tool=pen]');
+  });
+  await step('Gravação: quando o app sai da tela, o áudio gravado até ali já fica salvo', async () => {
+    await page.click('#ed-rec'); await page.waitForSelector('#rec-pill:not([hidden])', { timeout: 8000 });
+    await wait(2500);
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await wait(1500);
+    const note = await noteByTitle('Com post-it');
+    const part = (await idb('recordings')).find(r => r.noteId === note.id);
+    await page.evaluate(() => { delete document.hidden; });
+    assert(part && part.partial && part.size > 500, 'não salvou ao sair da tela: ' + JSON.stringify(part && { p: part.partial, s: part.size }));
+    await page.click('#rec-pill'); await toastHas('Gravação salva', 8000);
+    const fin = (await idb('recordings')).find(r => r.noteId === note.id);
+    assert(fin && !fin.partial && fin.size >= part.size, 'gravação final');
+    await page.click('#ed-back'); await wait(900);
+  });
+
   // ================= SALVAMENTO =================
   console.log('Salvamento: nada se perde');
   await step('Caderno: botão Salvar, título salva enquanto digita e salva mesmo escrevendo sem parar', async () => {

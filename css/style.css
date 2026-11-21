@@ -1198,3 +1198,16 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
 @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .modal-keep { background: #3a2b10; color: #ffd48a; border-color: #7a5a1c; } }
 :root[data-theme=dark] .modal-keep { background: #3a2b10; color: #ffd48a; border-color: #7a5a1c; }
+
+/* Post-it */
+.sticky-btn .ic { color: #d4a300; }
+.sticky-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+.sticky-sw { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px; border-radius: 14px; border: 2px solid transparent; background: var(--panel-2); font-weight: 600; font-size: 14px; color: var(--text); }
+.sticky-sw.on { border-color: var(--accent); }
+.sticky-sw i { position: relative; width: 64px; height: 64px; background: linear-gradient(var(--c0), var(--c1)); box-shadow: 0 3px 8px rgba(0,0,0,.18); }
+.sticky-sw i::before { content: ""; position: absolute; left: 50%; top: -6px; width: 28px; height: 12px; transform: translateX(-50%) rotate(-3deg); background: rgba(255, 245, 170, .8); }
+@media (max-width: 900px) { .sticky-btn span { display: none; } }
+/* Notas rápidas com cara de post-it: fita adesiva no alto e cantos retos */
+.qn-card { position: relative; border-radius: 4px 4px 10px 4px; margin-top: 10px; }
+.qn-card::before { content: ""; position: absolute; left: 50%; top: -9px; width: 70px; height: 18px; transform: translateX(-50%) rotate(-2.5deg); background: rgba(255, 248, 190, .78); box-shadow: 0 1px 2px rgba(0,0,0,.08); pointer-events: none; }
+.qn-card:nth-child(even)::before { transform: translateX(-50%) rotate(2deg); }

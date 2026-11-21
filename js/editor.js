@@ -2,7 +2,7 @@
 // zoom/arrastar, formas perfeitas e correção de escrita/contas.
 import {
   PAGE_W, PAGE_H, PAPER_COLORS, PAPER_TYPES, uid, renderPage, drawStroke, makeStroke, strokeHit,
-  eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit,
+  eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit, distToSeg, STICKY_COLORS,
   setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine, HAND_FONTS, loadHandFonts, LINE0, LINE_STEP,
 } from './ink.js';
 import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine, layoutFlow } from './flow.js';
@@ -81,6 +81,7 @@ export function initEditor(callbacks) {
   $('pg-label').onclick = openPageOverview;
   $('ed-ai').onclick = () => cb.onAI();
   $('ed-imgsearch').onclick = () => openImageSearch({ onPick: insertPicture });
+  $('ed-sticky').onclick = stickyDialog;
   $('ed-rec').onclick = () => cb.onRecord(E.meta);
   $('ed-recs').onclick = () => cb.onRecordings(E.meta);
   $('ed-import').onclick = () => cb.onImport();
@@ -624,13 +625,28 @@ function endDraw() {
   clearTimeout(a.hold);
   act = null;
   const { bbox, ...b } = a.stroke;
-  const s = makeStroke(b, a.stroke.points);
+  if (b.tool === 'marker') b.points = straightenMarker(a.stroke.points);
+  b.at = Date.now();
+  const s = makeStroke(b, b.points || a.stroke.points);
   pushUndo();
   page().strokes.push(s);
   markDirty();
   redraw();
   requestLive();
   if (s.tool !== 'marker' && !s.shape) scheduleAuto(s.id);
+}
+
+// Grifo reto: um risco de marca-texto quase reto vira uma faixa reta (deitada, se estava quase deitada)
+function straightenMarker(pts) {
+  if (pts.length < 3) return pts;
+  const [ax, ay] = pts[0], [bx, by] = pts[pts.length - 1];
+  const len = Math.hypot(bx - ax, by - ay);
+  if (len < 40) return pts;
+  let dev = 0;
+  for (const p of pts) dev = Math.max(dev, distToSeg(p[0], p[1], ax, ay, bx, by));
+  if (dev > Math.max(10, len * 0.09)) return pts; // era um desenho, não um grifo
+  if (Math.abs(by - ay) < Math.abs(bx - ax) * 0.18) { const y = r1(pts.reduce((n, p) => n + p[1], 0) / pts.length); return [[ax, y, 0.5], [bx, y, 0.5]]; }
+  return [[ax, ay, 0.5], [bx, by, 0.5]];
 }
 
 // ----- borracha -----
@@ -715,6 +731,7 @@ function endLasso() {
     for (const i of pg.images) if (!i.locked && pointInPoly(i.x + i.w / 2, i.y + i.h / 2, pts)) sel.images.add(i.id);
   }
   if (!sel.strokes.size && !sel.texts.size && !sel.images.size) { clearSel(); return; }
+  withStickyContents(pg, sel);
   E.sel = sel;
   computeSelBBox();
   updateOverlay();
@@ -723,6 +740,17 @@ function endLasso() {
     runOnSelection(what);
   }
 }
+// O que está escrito em cima de um post-it vai junto quando ele é selecionado (para mover, aumentar, apagar)
+const insideBox = (b, r) => { const cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h; };
+function withStickyContents(pg, sel) {
+  const notes = pg.images.filter(i => i.sticky && sel.images.has(i.id));
+  for (const n of notes) {
+    for (const st of pg.strokes) if (insideBox(st.bbox, n)) sel.strokes.add(st.id);
+    for (const t of pg.texts) if (insideBox(textBBox(t), n)) sel.texts.add(t.id);
+  }
+  return sel;
+}
+const inSticky = (pg, b) => pg.images.some(i => i.sticky && insideBox(b, i));
 function selItems(kind) { const ids = E.sel[kind]; return page()[kind].filter(it => ids.has(it.id)); }
 function selOriginals() {
   const m = {};
@@ -778,6 +806,26 @@ function duplicateSel() {
   }
   E.sel = sel; computeSelBBox(); markDirty(); redraw();
 }
+// Grifar: textos ganham faixa de marca-texto atrás; letra à mão ganha um grifo reto em cada linha.
+// Tocar de novo em textos já grifados tira o grifo.
+function highlightSel() {
+  if (!E.sel) return;
+  const pg = page();
+  const color = (toolCfg.marker && toolCfg.marker.color) || MARKER_PALETTE[0];
+  const texts = selItems('texts').filter(t => !t.credit);
+  const ink = selItems('strokes').filter(st => st.tool !== 'marker');
+  if (!texts.length && !ink.length) { toast('Selecione um texto ou uma escrita para grifar'); return; }
+  pushUndo();
+  const unmark = texts.length && texts.every(t => t.hl);
+  if (texts.length) pg.texts = pg.texts.map(t => (E.sel.texts.has(t.id) && !t.credit ? { ...t, hl: unmark ? undefined : color } : t));
+  if (ink.length) for (const L of groupLines(ink)) {
+    const size = Math.min(70, Math.max(18, L.h * 0.85)), y = r1(L.y + L.h * 0.55);
+    const st = makeStroke({ id: uid(), tool: 'marker', color, size, at: Math.max(...L.strokes.map(x => x.at || 0)) }, [[r1(L.x - 4), y, 0.5], [r1(L.x + L.w + 4), y, 0.5]]);
+    pg.strokes.unshift(st); E.sel.strokes.add(st.id);
+  }
+  computeSelBBox(); markDirty(); redraw();
+  toast(unmark ? 'Grifo tirado' : 'Grifado ✓', 1500);
+}
 function recolorSel() {
   if (!E.sel) return;
   const color = (toolCfg[['pen', 'pencil', 'marker', 'text'].includes(tool) ? tool : 'pen'] || toolCfg.pen).color;
@@ -814,6 +862,7 @@ function updateOverlay() {
     bar = h(`<div class="selbar">
       <button data-a="convert">${ic('magic')}<span>Corrigir escrita</span></button>
       <button data-a="check">${ic('calc')}<span>Verificar conta</span></button>
+      <button data-a="hl" title="Grifar o que é importante">${ic('marker')}<span>Grifar</span></button>
       <button data-a="color" title="Cor">${ic('drop')}</button>
       <button data-a="dup" title="Duplicar">${ic('copy')}</button>
       <button data-a="del" title="Apagar" class="danger">${ic('trash')}</button></div>`);
@@ -822,6 +871,7 @@ function updateOverlay() {
       const a = b.dataset.a;
       if (a === 'convert') runOnSelection('convert');
       else if (a === 'check') runOnSelection('check');
+      else if (a === 'hl') highlightSel();
       else if (a === 'color') recolorSel();
       else if (a === 'dup') duplicateSel();
       else if (a === 'del') deleteSel();
@@ -891,7 +941,7 @@ function commitTextEdit() {
   ta && ta.remove();
   const pg = page();
   if (isNew) {
-    if (text) { pushUndo(); pg.texts.push({ ...orig, text }); markDirty(); }
+    if (text) { pushUndo(); pg.texts.push({ ...orig, text, at: Date.now() }); markDirty(); }
   } else if (text !== orig.text) {
     pushUndo();
     pg.texts = text ? pg.texts.map(t => (t.id === id ? { ...t, text } : t)) : pg.texts.filter(t => t.id !== id);
@@ -972,6 +1022,44 @@ export function insertPicture({ src, w: nw, h: nh, title, credit, withName = tru
   redraw();
 }
 
+// =================== Post-it ===================
+const STICKY_NAMES = { amarelo: 'Amarelo', rosa: 'Rosa', azul: 'Azul', verde: 'Verde', laranja: 'Laranja', lilas: 'Lilás' };
+const STICKY_KEY = 'caderno-postit-cor';
+function stickyDialog() {
+  if (!E) return;
+  let last = 'amarelo'; try { last = localStorage.getItem(STICKY_KEY) || last; } catch { /* */ }
+  modal({
+    title: 'Colar um post-it',
+    body: h(`<div><div class="sticky-pick">${Object.entries(STICKY_COLORS).map(([k, [c0, c1]]) =>
+      `<button type="button" class="sticky-sw ${k === last ? 'on' : ''}" data-c="${k}" style="--c0:${c0};--c1:${c1}"><i></i><span>${STICKY_NAMES[k]}</span></button>`).join('')}</div>
+      <p class="muted small">Depois de colar, escreva nele com a caneta ou toque com o <b>T</b> para digitar. Para mover ou aumentar, use o <b>laço</b> e toque no post-it: o que está escrito vai junto.</p></div>`),
+    actions: [{ label: 'Cancelar', value: null }],
+    onOpen: (el, close) => el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { close(null); insertSticky(b.dataset.c); }),
+  });
+}
+export function insertSticky(color = 'amarelo') {
+  if (!E) return;
+  try { localStorage.setItem(STICKY_KEY, color); } catch { /* */ }
+  const v = V();
+  const w = 330, hh = 330;
+  const cx = (W / 2 - v.ox) / v.s, cy = (H / 2 - v.oy) / v.s;
+  // cada post-it novo fica um pouco deslocado para não cobrir o anterior
+  const n = page().images.filter(i => i.sticky).length % 5;
+  const item = {
+    id: uid(), sticky: STICKY_COLORS[color] ? color : 'amarelo', w, h: hh, at: Date.now(),
+    x: Math.round(Math.max(20, Math.min(PAGE_W - w - 20, cx - w / 2 + n * 24))),
+    y: Math.round(Math.max(20, Math.min(PAGE_H - hh - 20, cy - hh / 2 + n * 24))),
+  };
+  pushUndo();
+  page().images.push(item);
+  markDirty();
+  clearSel();
+  if (!['pen', 'pencil', 'marker', 'text'].includes(tool)) selectTool('pen');
+  redraw();
+  toast('Post-it colado ✓ Escreva nele com a caneta', 2600);
+  return item;
+}
+
 // =================== Correção de escrita e contas ===================
 function runOnSelection(what) {
   if (!E) return;
@@ -1010,7 +1098,8 @@ function lineToText(pg, line, text) {
     geom: { ...g, left: Math.min(g.left, x), bottom: PAGE_H - 30 },
   });
   // vira texto comum (não entra na escrita organizada)
-  pg.texts.push(...items.map(({ flow, para, ord, ...t }) => t));
+  const at = Math.max(Date.now(), ...line.strokes.map(x => x.at || 0));
+  pg.texts.push(...items.map(({ flow, para, ord, ...t }) => ({ ...t, at })));
 }
 
 async function convertSelection() {
@@ -1070,7 +1159,7 @@ function addMark(pg, line, res, showMissing) {
   removeMarksNear(pg, line);
   pg.texts.push({
     id: uid(), x: line.x + line.w + size * 0.6, y: line.y + line.h / 2 - (size * 1.25) / 2,
-    text, color, size, bold: true, mark: true,
+    text, color, size, bold: true, mark: true, at: Date.now(),
   });
   return text;
 }
@@ -1126,7 +1215,8 @@ async function runAuto() {
   if (!strokes.length) return;
   const mode = settings.autoMode;
   let lines = groupLines(strokes);
-  if (mode === 'flow') return runFlow(pg, lines.filter(l => l.strokes.some(s => s.tool !== 'marker')));
+  // dentro de um post-it a letra fica à mão (não vai para as linhas)
+  if (mode === 'flow') return runFlow(pg, lines.filter(l => l.strokes.some(s => s.tool !== 'marker') && !inSticky(pg, l)));
   if (mode === 'math') lines = lines.map(l => expandLine(pg, l));
   for (const l of lines) {
     let cands;

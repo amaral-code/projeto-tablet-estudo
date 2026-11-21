@@ -177,6 +177,7 @@ function fillIcons() {
   $('btn-import').innerHTML = `${ic('upload')}<span>Importar PDF</span>`;
   $('ed-ai').innerHTML = `${ic('magic')}<span>IA</span>`;
   $('ed-imgsearch').innerHTML = `${ic('image')}<span>Imagem</span>`;
+  $('ed-sticky').innerHTML = `${ic('sticky')}<span>Post-it</span>`;
   $('ed-import').innerHTML = ic('upload');
   $('ed-rec').innerHTML = ic('mic');
   $('ed-recs').innerHTML = ic('play');

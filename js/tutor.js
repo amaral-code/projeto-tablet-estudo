@@ -92,7 +92,7 @@ export function renderTutor(el) {
         <textarea id="tt-q" rows="1" placeholder="${aiConfigured() ? 'Escreva sua dúvida…' : 'Ligue a IA em Ajustes para conversar'}"></textarea>
         <button class="btn primary" type="submit" id="tt-send" aria-label="Enviar">${ic(busy ? 'stop' : 'send')}</button>
       </form>
-      <input type="file" id="tt-file" accept="image/*" capture="environment" hidden>
+      <input type="file" id="tt-file" accept="image/*" hidden>
     </section></div>`;
   const msgs = el.querySelector('#tt-msgs');
   msgs.scrollTop = msgs.scrollHeight;

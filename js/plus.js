@@ -1,6 +1,7 @@
 // Mais produtividade: Horário de aulas, Diário de estudos, Revisão espaçada de anotações,
 // e as visões Quadro (Kanban) e Matriz de prioridades das tarefas.
 import { ic, esc, h, toast, modal, confirmBox, menu, richText } from './ui.js';
+import { journalLocked, isUnlocked, lockedScreen } from './lock.js';
 import { dayStr, addDays } from './hub.js';
 import { aiConfigured, streamChat, cleanText } from './ai.js';
 
@@ -136,6 +137,7 @@ function journalStreak() {
 }
 let journalAI = null;
 function renderJournal(el) {
+  if (journalLocked() && !isUnlocked()) { lockedScreen(el, 'O Diário', () => renderJournal(el)); return; }
   const today = dayStr();
   const e = X.journal.find(j => j.id === today) || { id: today, mood: 0, learned: '', hard: '', tomorrow: '' };
   const past = X.journal.filter(j => j.id !== today).sort((a, b) => (a.id < b.id ? 1 : -1));

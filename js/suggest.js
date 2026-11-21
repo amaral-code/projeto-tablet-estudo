@@ -70,6 +70,13 @@ export function suggestions(now = new Date()) {
   const hasData = A.state.notes.length + A.state.tasks.length >= 8;
   if (hasData && Date.now() - lastBk > 30 * 86400000) add(lastBk ? 34 : 26, 'database', lastBk ? 'Fazer um backup novo' : 'Fazer o primeiro backup', lastBk ? `O último foi há ${Math.floor((Date.now() - lastBk) / 86400000)} dias · guarde no Google Drive` : 'Guarde uma cópia no Google Drive: se o tablet der problema, nada se perde', 'Fazer backup', () => A.go('data'));
   out.sort((a, b) => b.score - a.score);
+  // backup diário no Google Drive (1 toque)
+  if (A.driveDue && A.driveDue()) add(36, 'drive', 'Backup no Google Drive', 'Um toque guarda tudo na sua conta do Google', 'Fazer backup', () => A.driveBackup(), 'green');
+  // caderno de erros e matéria mais fraca
+  const nErr = A.errorsCount ? A.errorsCount() : 0;
+  if (nErr) add(nErr >= 5 ? 58 : 44, 'alert', `Revisar ${nErr} erro${nErr > 1 ? 's' : ''}`, 'Do caderno de erros: acerte 2 vezes para resolver', 'Revisar', () => A.go('errors'), 'red');
+  const weak = A.weakSubject ? A.weakSubject() : null;
+  if (weak) add(40, 'chart', `Reforçar ${weak.name}`, weak.why, 'Focar', () => { startFocusFor({ folderId: weak.folderId }); A.go('focus'); });
   if (!out.length) add(1, 'quiz', 'Tudo em dia! 🎉', 'Que tal um simulado rápido para testar o que você sabe?', 'Fazer simulado', () => A.go('quiz'), 'green');
   return out.slice(0, 4);
 }

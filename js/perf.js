@@ -7,6 +7,8 @@ import { aiConfigured, streamChat, cleanText, extractTasks } from './ai.js';
 import { quickData } from './quicknotes.js';
 import { chatsData, openChat } from './tutor.js';
 import { FORMULAS, openFormula } from './formulas.js';
+import { subjectsHTML } from './subjects.js';
+import { inkSearchText } from './inkindex.js';
 
 let A;
 const P = { books: [], reads: [], grades: [] };
@@ -615,6 +617,7 @@ function renderReport(el) {
         <div class="badges">${BADGES.map(([e, n, d, f]) => `<div class="badge ${f(t) ? 'on' : ''}" title="${esc(d)}"><span>${e}</span><b>${esc(n)}</b><small>${esc(d)}</small></div>`).join('')}</div>
       </div>
     </div>
+    ${subjectsHTML()}
     <div class="panel ai-report" ${aiReport ? '' : 'hidden'}><h3>${ic('magic')}Análise da IA</h3><div class="ai-out" id="rp-out"></div><div class="row wrap" id="rp-actions"></div></div>
     ${heatmapHTML()}`;
   el.querySelector('#rp-week').onclick = e => { const b = e.target.closest('[data-w]'); if (b) { reportWeek = +b.dataset.w; renderReport(el); } };
@@ -704,7 +707,7 @@ export async function openPalette() {
       ...Object.entries(A.views()).map(([k, v]) => [`Ir para ${v.title}`, v.icon, () => A.goTo({ kind: k })]),
     ].map(([label, icon, run]) => ({ label, icon, run, kind: 'Ação' }));
     // busca também dentro do conteúdo (texto digitado das anotações, notas rápidas, conversas, flashcards)
-    const notes = A.state.notes.map(n => ({ label: n.title, text: n.searchText || '', icon: 'page', kind: 'Anotação', run: () => A.openNote(n.id) }));
+    const notes = A.state.notes.map(n => ({ label: n.title, text: n.locked ? '' : inkSearchText(n), icon: 'page', kind: 'Anotação', run: () => A.openNote(n.id) }));
     const tasks = A.state.tasks.filter(t => !t.done).map(t => ({ label: t.title, text: [t.notes, ...(t.subtasks || []).map(x => x.title)].join(' '), icon: 'tasks', kind: 'Tarefa', run: () => A.taskDialog(t) }));
     const quick = quickData().map(q => ({ label: q.text.split('\n')[0].replace(/^\s*\[( |x)\]\s*/i, '').slice(0, 60) || 'Nota rápida', text: q.text, icon: 'sticky', kind: 'Nota rápida', run: () => A.goTo({ kind: 'quick' }) }));
     const chats = chatsData().map(c => ({ label: c.title, text: c.messages.map(m => m.text || '').join(' ').slice(0, 6000), icon: 'chat', kind: 'Conversa', run: () => openChat(c.id) }));

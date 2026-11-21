@@ -1,6 +1,7 @@
 // Interface do Assistente IA: painel lateral no editor e janela para pastas/anotações.
 import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTasks, parseFlashcards, maxPages } from './ai.js';
-import { getEditorContext, insertText } from './editor.js';
+import { getEditorContext, insertText, insertMindMap } from './editor.js';
+import { parseMindMap, MINDMAP_PROMPT } from './templates.js';
 import { shareText } from './export.js';
 import { ic, esc, h, toast, modal, keepDraft } from './ui.js';
 import { speak, stopSpeak } from './voice.js';
@@ -117,11 +118,11 @@ async function runAction(key) {
   const src = pagesForScope();
   if (!src) return;
   if (src.pages.length > maxPages()) toast(`Só as primeiras ${maxPages()} páginas serão enviadas`);
-  conv = { messages: [], turns: [], action: key };
+  conv = { messages: [], turns: [], action: key, json: !!a.json };
   conv.turns.push({ role: 'user', text: `${a.label} — ${scopeLabel(src)}` });
   renderLog();
   let content;
-  try { content = await buildContent({ ...src, prompt: a.prompt }); }
+  try { content = await buildContent({ ...src, prompt: a.prompt === 'MINDMAP' ? MINDMAP_PROMPT : a.prompt }); }
   catch (e) { conv.turns.push({ role: 'error', text: 'Não consegui preparar as páginas: ' + e.message }); renderLog(); return; }
   send({ role: 'user', content });
 }
@@ -157,7 +158,7 @@ function send(userMsg) {
   c.turns.push(turn);
   renderLog();
   let s;
-  try { s = streamChat(c.messages, t => { turn.text += t; scheduleTurnUpdate(); }); }
+  try { s = streamChat(c.messages, t => { turn.text += t; scheduleTurnUpdate(); }, c.json && c.messages.length === 1 ? { json: true } : {}); }
   catch (e) { c.messages.pop(); turn.streaming = false; turn.role = 'error'; turn.text = e.message; renderLog(); return; }
   busy = s;
   setBusy(true);
@@ -166,6 +167,11 @@ function send(userMsg) {
     turn.streaming = false;
     turn.truncated = res.truncated;
     c.messages.push({ role: 'assistant', content: res.message.content });
+    // mapa mental: desenha sozinho numa página nova
+    if (c.action === 'mindmap' && c.messages.length === 2) {
+      const tree = parseMindMap(res.text);
+      if (tree) { turn.tree = tree; insertMindMap(tree); }
+    }
   }).catch(e => {
     c.messages.pop();
     turn.streaming = false;
@@ -221,7 +227,10 @@ function renderLog() {
   conv.turns.forEach((t, i) => {
     const last = i === conv.turns.length - 1;
     const el = h(`<div class="ai-turn ${t.role} ${t.streaming ? 'streaming' : ''}"><div class="ai-text"></div></div>`);
-    if (t.role === 'assistant') el.querySelector('.ai-text').innerHTML = rich(cleanText(t.text)) || (t.streaming ? '' : '(sem resposta)');
+    const tree = t.role === 'assistant' && conv.action === 'mindmap' ? (t.tree || (!t.streaming && parseMindMap(t.text))) : null;
+    if (tree) el.querySelector('.ai-text').innerHTML = `<span class="ai-h">🧠 ${esc(tree.centro)}</span>\n${tree.ramos.map(r => `• <b>${esc(r.titulo)}</b>${r.itens.length ? ': ' + r.itens.map(esc).join('; ') : ''}`).join('\n')}`;
+    else if (t.role === 'assistant' && conv.action === 'mindmap' && t.streaming) el.querySelector('.ai-text').textContent = 'Montando o mapa mental…';
+    else if (t.role === 'assistant') el.querySelector('.ai-text').innerHTML = rich(cleanText(t.text)) || (t.streaming ? '' : '(sem resposta)');
     else el.querySelector('.ai-text').textContent = t.text;
     if (t.streaming) el.appendChild(h('<div class="ai-typing"><i></i><i></i><i></i></div>'));
     if (t.role === 'assistant' && !t.streaming && t.text) {
@@ -234,6 +243,7 @@ function renderLog() {
         <button class="chip small" data-r="share">${ic('share')}<span>Enviar</span></button></div>`);
       const tasks = last && conv.action === 'plan' ? extractTasks(t.text) : [];
       const fcs = last && conv.action === 'flashcards' ? parseFlashcards(t.text) : [];
+      if (tree) bar.prepend(h(`<button class="chip small on" data-r="mind">${ic('network')}<span>Desenhar de novo</span></button>`));
       if (fcs.length) bar.prepend(h(`<button class="chip small on" data-r="cards">${ic('cards')}<span>Salvar ${fcs.length} flashcards</span></button>`));
       if (tasks.length) {
         const tb = h(`<button class="chip small on" data-r="tasks">${ic('tasks')}<span>Criar ${tasks.length} tarefas</span></button>`);
@@ -242,6 +252,7 @@ function renderLog() {
       bar.onclick = async e => {
         const b = e.target.closest('[data-r]'); if (!b) return;
         const txt = cleanText(t.text);
+        if (b.dataset.r === 'mind') { insertMindMap(tree); return; }
         if (b.dataset.r === 'new' || b.dataset.r === 'here') {
           const n = insertText(txt, b.dataset.r);
           toast(n > 1 ? `Texto escrito em ${n} páginas ✓` : 'Texto escrito na folha ✓');

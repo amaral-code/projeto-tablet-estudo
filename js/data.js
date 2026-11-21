@@ -1,5 +1,6 @@
 // Dados e backup: o banco de dados do app à vista — contagens, espaço, proteção do armazenamento,
 // cópias automáticas diárias, exportar/importar, verificar e reparar, apagar tudo.
+import { initDrive, driveHTML, bindDrive } from './drive.js';
 import { db, STORE_LABELS, exportPrefs, importPrefs, settings, saveSettings } from './store.js';
 import { ic, esc, h, toast, modal, confirmBox } from './ui.js';
 import { shareFile, download } from './export.js';
@@ -19,6 +20,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 export function initData(api) {
   A = api;
+  initDrive(api, { collect, restore: importBackupData, lastWrite: () => db.lastWrite() });
   // cópia automática do dia, alguns segundos depois de abrir (sem atrapalhar o início)
   setTimeout(() => { autoSnapshot().catch(() => {}); }, 6000);
   document.addEventListener('caderno-salvo', () => { const el = document.getElementById('dt-saved'); if (el) el.textContent = 'agora mesmo'; });
@@ -77,6 +79,9 @@ export async function exportBackup() {
 export async function importBackupFile(f) {
   let data;
   try { data = JSON.parse(await f.text()); } catch { toast('Esse arquivo não é um backup válido', 4000); return false; }
+  return importBackupData(data);
+}
+export async function importBackupData(data) {
   if (!data || data.app !== 'caderno-estudos') { toast('Esse arquivo não é um backup do Caderno de Estudos', 4000); return false; }
   const c = countsOf(data);
   const mode = await modal({
@@ -231,6 +236,7 @@ export async function renderData(el) {
           <span class="muted small"> · ${esc(s.reason)} · ${pl(s.counts.notes, 'anotação', 'anotações')}, ${pl(s.counts.tasks, 'tarefa', 'tarefas')}, ${pl(s.counts.cards, 'flashcard', 'flashcards')} · ${mb(s.size)}</span></span>
           <button class="chip small" data-snap="${s.id}">${ic('undo')}<span>Restaurar</span></button></div>`).join('') || '<p class="muted small">Nenhuma cópia ainda. A primeira é feita sozinha hoje.</p>'}</div>
     </div>
+    ${driveHTML()}
     <div class="panel"><h3>${ic('download')}Backup em arquivo</h3>
       <p class="muted small">Para guardar fora do tablet (Google Drive, e-mail…) ou levar para outro tablet. Inclui tudo, até as gravações. A chave da IA não vai junto, por segurança. Último backup: <b>${ago(lastBk)}</b>.</p>
       <div class="row wrap"><button class="btn primary" id="dt-export">${ic('download')}<span>Exportar backup</span></button>
@@ -272,4 +278,5 @@ export async function renderData(el) {
     btn.disabled = false;
   };
   el.querySelector('#dt-wipe').onclick = wipeAll;
+  bindDrive(el, () => { if (A.currentView() === 'data') renderData(el); });
 }

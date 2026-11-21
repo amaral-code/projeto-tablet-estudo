@@ -54,6 +54,10 @@ export const ACTIONS = {
     label: 'Flashcards', icon: 'copy',
     prompt: 'Crie de 10 a 15 flashcards para memorizar o conteúdo destas anotações. Use exatamente este formato, um por bloco, separados por uma linha em branco:\nP: pergunta curta\nR: resposta curta',
   },
+  mindmap: {
+    label: 'Mapa mental', icon: 'network', json: true,
+    prompt: 'MINDMAP',
+  },
   plan: {
     label: 'Plano de estudo', icon: 'calendar',
     prompt: 'Com base nestas anotações, monte um plano de estudo para a próxima semana: o que revisar em cada dia (em sessões de 25 a 40 minutos), quais exercícios fazer e como verificar se aprendeu. Termine com uma lista "# Tarefas" com 3 a 7 tarefas curtas, uma por linha começando com "- ".',

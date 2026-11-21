@@ -628,7 +628,11 @@ function renderReview(el) {
     logReview();
     r.queue.shift();
     r.shown = false;
-    if (g === 0) { r.queue.push(c.id); c.missed = true; }
+    if (g === 0) {
+      r.queue.push(c.id); c.missed = true;
+      // errou essa carta de novo (2ª vez ou mais): vai para o caderno de erros
+      if ((c.lapses || 0) >= 2 && A.addError) { const dk = H.decks.find(d => d.id === c.deckId); A.addError({ src: 'card', ref: c.id, folderId: dk ? dk.folderId : '', subject: dk ? dk.name : '', q: c.front, answer: c.back }); }
+    }
     else { r.done++; if (!c.missed) r.right++; delete c.missed; }
     renderReview(el);
   });

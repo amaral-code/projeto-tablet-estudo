@@ -32,6 +32,8 @@ export async function reloadRecorder() { recs = await A.db.all('recordings'); }
 export const recordingsOf = noteId => recs.filter(r => r.noteId === noteId && !(rec && r.id === rec.id)).sort((a, b) => b.createdAt - a.createdAt);
 export const recCounts = () => { const m = {}; for (const r of recs) if (r.noteId) m[r.noteId] = (m[r.noteId] || 0) + 1; return m; };
 export const isRecording = () => !!rec;
+export const recordingInfo = () => (rec ? { id: rec.id, noteId: rec.noteId, startAt: rec.startAt } : null);
+export const hasRecording = id => recs.some(r => r.id === id) || !!(rec && rec.id === id);
 export const recordingNote = () => (rec ? rec.noteId : null);
 
 function tick() {
@@ -182,4 +184,24 @@ export async function openRecordings(meta) {
   };
   await modal({ title: `🎙️ Gravações — ${meta.title}`, body, wide: true, actions: [{ label: 'Fechar', value: true, primary: true }] });
   urls.forEach(u => URL.revokeObjectURL(u));
+}
+
+// Ouvir a aula a partir do momento em que um traço foi escrito (gravação ligada à escrita)
+let player = null;
+export async function playAt(recId, t) {
+  const r = recs.find(x => x.id === recId) || await A.db.get('recordings', recId);
+  if (!r || !r.blob) { toast(rec && rec.id === recId ? 'A gravação ainda está acontecendo: pare para ouvir' : 'Essa gravação não existe mais'); return null; }
+  if (player) player.close();
+  const url = URL.createObjectURL(r.blob);
+  const bar = h(`<div class="rec-player" role="region" aria-label="Ouvindo a aula"><span class="rp-t">🎧 ${esc(r.title)}</span>
+    <audio controls preload="auto" src="${url}"></audio><button class="icon-btn small" aria-label="Fechar">${ic('close')}</button></div>`);
+  const au = bar.querySelector('audio');
+  const close = () => { try { au.pause(); } catch { /* */ } bar.remove(); URL.revokeObjectURL(url); if (player && player.bar === bar) player = null; };
+  bar.querySelector('button').onclick = close;
+  document.body.appendChild(bar);
+  const start = Math.max(0, t - 3); // começa 3 s antes, para pegar o começo da frase
+  const go = () => { try { au.currentTime = start; } catch { /* */ } au.play().catch(() => {}); };
+  if (au.readyState >= 1) go(); else au.addEventListener('loadedmetadata', go, { once: true });
+  player = { bar, au, close, start };
+  return player;
 }

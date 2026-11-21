@@ -146,14 +146,15 @@ function lessonAudio() {
   ok('rapidão no app: 3 respostas, cada uma em menos de 8 s', pings.every(p => p.ok && p.secs < 8), pings.map(p => p.ok ? `${p.secs.toFixed(1)}s (${p.model === built.model ? 'principal' : 'reserva'})` : p.err).join(' · '));
 
   // os dois primeiros modelos "sem cota" (429 simulado): o app tem que cair no terceiro de verdade
-  await page.route(u => /models\/(gemini-flash-lite-latest|gemini-3\.1-flash-lite):/.test(u.href), r => r.fulfill({ status: 429, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota' } }) }));
+  const semCota = u => /models\/(gemini-flash-lite-latest|gemini-3\.1-flash-lite):/.test(u.href);
+  await page.route(semCota, r => r.fulfill({ status: 429, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota' } }) }));
   const last = await page.evaluate(async () => {
     const ai = await import('./js/ai.js');
     const t0 = performance.now(); let txt = '';
     try { const res = await ai.streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; }).done; return { ok: /tudo certo/i.test(txt), model: res.model, secs: (performance.now() - t0) / 1000 }; }
     catch (e) { return { ok: false, err: e.message }; }
   });
-  await page.unroute(u => /models\/(gemini-flash-lite-latest|gemini-3\.1-flash-lite):/.test(u.href));
+  await page.unroute(semCota);
   ok('sem cota nos dois primeiros: o app responde pelo terceiro modelo', last.ok && last.model === built.last, last.ok ? `${last.secs.toFixed(1)}s (${last.model})` : last.err);
 
   const r = await page.evaluate(async () => {
@@ -186,6 +187,32 @@ function lessonAudio() {
   });
   ok('simulado: perguntas válidas em JSON', qz.ok && qz.n >= 4, qz.ok ? `${qz.n} perguntas em ${qz.secs}s` : qz.err);
   if (qz.ok && qz.first) ok('simulado: pergunta sobre o conteúdo da página', /fotoss|glicose|clorof|oxig|luz|cloroplast/i.test(qz.first.q + qz.first.opts.join(' ')), qz.first.q);
+
+  // recursos novos que usam a IA
+  console.log('\nRecursos novos (ENEM, mapa mental, plano, tradutor, caderno de erros):');
+  const nv = await page.evaluate(async () => {
+    const ai = await import('./js/ai.js');
+    const quiz = await import('./js/quiz.js');
+    const tpl = await import('./js/templates.js');
+    const plan = await import('./js/plan.js');
+    const tools = await import('./js/tools.js');
+    const errs = await import('./js/errors.js');
+    const out = {};
+    const time = async (k, fn) => { const t0 = performance.now(); try { out[k] = await fn(); out[k + '_s'] = ((performance.now() - t0) / 1000).toFixed(1); } catch (e) { out[k + '_err'] = e.message; } };
+    await time('enem', async () => { const r = await ai.streamChat([{ role: 'user', content: quiz.enemPrompt(5, 'natureza', 'ecologia') }], () => {}, { json: true, maxTokens: 16000 }).done; const qs = quiz.parseQuiz(r.text); return { n: qs.length, five: qs.every(q => q.opts.length === 5), base: qs.filter(q => q.base).length, ex: qs.filter(q => q.ex).length, q0: qs[0] && qs[0].q }; });
+    const T = (y, text) => ({ id: 't' + y, x: 110, y, text, size: 30, color: '#1d1d1f' });
+    const pg = { id: 'p', strokes: [], images: [], texts: [T(100, 'Frações'), T(160, 'Numerador em cima, denominador embaixo.'), T(220, 'Para somar, o denominador precisa ser igual.'), T(280, '1/2 = 2/4 (frações equivalentes)')] };
+    await time('mind', async () => { const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Frações', prompt: tpl.MINDMAP_PROMPT }); const r = await ai.streamChat([{ role: 'user', content }], () => {}, { json: true }).done; const t = tpl.parseMindMap(r.text); return t ? { centro: t.centro, ramos: t.ramos.length } : null; });
+    await time('topics', async () => { const txt = await ai.askGemini(plan.topicsPrompt('prova bimestral', ['Matemática', 'História']), { json: true }); const o = plan.parseTopics(txt); return { mat: (o['Matemática'] || []).length, hist: (o['História'] || []).length }; });
+    await time('tr', async () => { let t = ''; await ai.streamChat([{ role: 'user', content: tools.translatePrompt('I have been studying for two hours.', 'en') }], x => { t += x; }).done; return t; });
+    await time('err', async () => { let t = ''; await ai.streamChat([{ role: 'user', content: errs.errorPrompt({ q: 'Quanto é 3/4 + 1/4?', opts: ['1', '4/8', '3/16', '2'], c: 0, answer: '1', mine: '4/8' }) }], x => { t += x; }).done; return t; });
+    return out;
+  });
+  ok('simulado ENEM: 5 questões com 5 alternativas, texto-base e gabarito comentado', nv.enem && nv.enem.n >= 4 && nv.enem.five && nv.enem.base >= 4 && nv.enem.ex >= 4, nv.enem ? `${nv.enem.n} questões em ${nv.enem_s}s · "${String(nv.enem.q0).slice(0, 70)}"` : nv.enem_err);
+  ok('mapa mental: JSON com tema e ramos', nv.mind && nv.mind.ramos >= 3, nv.mind ? `"${nv.mind.centro}" com ${nv.mind.ramos} ramos em ${nv.mind_s}s` : nv.mind_err || 'não entendi o JSON');
+  ok('plano de estudos: a IA sugere assuntos por matéria', nv.topics && nv.topics.mat >= 3 && nv.topics.hist >= 3, nv.topics ? `Matemática ${nv.topics.mat}, História ${nv.topics.hist} em ${nv.topics_s}s` : nv.topics_err);
+  ok('tradutor: inglês → português com palavras importantes', nv.tr && /estud/i.test(nv.tr) && /hora/i.test(nv.tr), nv.tr ? `${nv.tr_s}s: ${JSON.stringify(nv.tr.split('\n')[0].slice(0, 80))}` : nv.tr_err);
+  ok('caderno de erros: a IA explica o erro (3/4 + 1/4 = 1)', nv.err && /\b1\b|um inteiro|4\/4/.test(nv.err), nv.err ? `${nv.err_s}s` : nv.err_err);
 
   // 4) Tutor IA de verdade: foto de um exercício
   console.log('\nTutor IA com foto do exercício:');

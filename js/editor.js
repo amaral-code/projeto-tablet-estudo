@@ -7,10 +7,12 @@ import {
 } from './ink.js';
 import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine, layoutFlow } from './flow.js';
 import { snapShape } from './shapes.js';
+import { TEMPLATES, buildTemplate, mindMapPage } from './templates.js';
 import { openImageSearch } from './imagesearch.js';
 import { groupLines, recognizeStrokes, checkMath, fmtNum } from './recognize.js';
 import { settings, saveSettings } from './store.js';
 import { ic, esc, h, toast, modal, confirmBox } from './ui.js';
+import { dictate, canDictate } from './voice.js';
 
 const $ = id => document.getElementById(id);
 const KINDS = ['strokes', 'texts', 'images'];
@@ -76,12 +78,15 @@ export function initEditor(callbacks) {
   $('pg-prev').onclick = () => gotoPage(E.pageIndex - 1);
   $('pg-next').onclick = () => gotoPage(E.pageIndex + 1);
   $('pg-add').onclick = addPage;
+  $('pg-tpl').onclick = templateDialog;
   $('pg-del').onclick = deletePage;
   $('pg-zoom').onclick = () => { fitWidth(); redraw(); };
   $('pg-label').onclick = openPageOverview;
   $('ed-ai').onclick = () => cb.onAI();
   $('ed-imgsearch').onclick = () => openImageSearch({ onPick: insertPicture });
   $('ed-sticky').onclick = stickyDialog;
+  $('ed-dictate').innerHTML = `${ic('mic')}<span>Ditar</span>`;
+  $('ed-dictate').onclick = toggleDictation;
   $('ed-rec').onclick = () => cb.onRecord(E.meta);
   $('ed-recs').onclick = () => cb.onRecordings(E.meta);
   $('ed-import').onclick = () => cb.onImport();
@@ -126,6 +131,7 @@ export function openEditor(meta, content) {
 
 export async function closeEditor() {
   if (!E) return;
+  if (dictSession) dictSession.stop();
   commitTextEdit();
   await flushSave();
   clearTimeout(E.autoTimer);
@@ -627,6 +633,9 @@ function endDraw() {
   const { bbox, ...b } = a.stroke;
   if (b.tool === 'marker') b.points = straightenMarker(a.stroke.points);
   b.at = Date.now();
+  // gravando a aula desta anotação: o traço lembra em que segundo da gravação foi escrito
+  const ri = cb.recInfo && cb.recInfo();
+  if (ri && ri.noteId === E.meta.id) b.rec = { id: ri.id, t: Math.max(0, Math.round((Date.now() - ri.startAt) / 100) / 10) };
   const s = makeStroke(b, b.points || a.stroke.points);
   pushUndo();
   page().strokes.push(s);
@@ -806,6 +815,32 @@ function duplicateSel() {
   }
   E.sel = sel; computeSelBBox(); markDirty(); redraw();
 }
+// Gravação ligada à escrita: o traço mais antigo da seleção diz de onde ouvir
+function selRec() {
+  if (!E || !E.sel) return null;
+  const withRec = selItems('strokes').filter(st => st.rec && st.rec.id && (!cb.hasRecording || cb.hasRecording(st.rec.id)));
+  if (!withRec.length) return null;
+  return withRec.reduce((a, b) => (b.rec.t < a.rec.t ? b : a)).rec;
+}
+// Traduzir: texto digitado vai direto; letra à mão é lida antes (precisa de internet)
+async function translateSel() {
+  if (!E || !E.sel) return;
+  const texts = selItems('texts').filter(t => !t.credit && !t.mark).sort((a, b) => a.y - b.y || a.x - b.x).map(t => t.text);
+  const ink = selItems('strokes').filter(st => st.tool !== 'marker');
+  let txt = texts.join(' ');
+  if (ink.length) {
+    try { const parts = []; for (const l of groupLines(ink)) { const c = await recognizeStrokes(l.strokes, settings.lang); if (c && c[0]) parts.push(c[0]); } txt = [txt, ...parts].join(' ').trim(); }
+    catch (e) { recogError(e); if (!txt) return; }
+  }
+  if (!txt.trim()) { toast('Selecione um texto ou uma escrita para traduzir'); return; }
+  cb.onTranslate && cb.onTranslate(txt.trim());
+}
+function listenSel() {
+  const r = selRec();
+  if (!r) { toast('Este trecho não foi escrito durante uma gravação'); return; }
+  cb.onPlayAt && cb.onPlayAt(r.id, r.t);
+}
+
 // Grifar: textos ganham faixa de marca-texto atrás; letra à mão ganha um grifo reto em cada linha.
 // Tocar de novo em textos já grifados tira o grifo.
 function highlightSel() {
@@ -862,6 +897,8 @@ function updateOverlay() {
     bar = h(`<div class="selbar">
       <button data-a="convert">${ic('magic')}<span>Corrigir escrita</span></button>
       <button data-a="check">${ic('calc')}<span>Verificar conta</span></button>
+      <button data-a="listen" title="Ouvir a aula a partir deste trecho">${ic('headphones')}<span>Ouvir daqui</span></button>
+      <button data-a="translate" title="Traduzir o trecho">${ic('languages')}<span>Traduzir</span></button>
       <button data-a="hl" title="Grifar o que é importante">${ic('marker')}<span>Grifar</span></button>
       <button data-a="color" title="Cor">${ic('drop')}</button>
       <button data-a="dup" title="Duplicar">${ic('copy')}</button>
@@ -872,6 +909,8 @@ function updateOverlay() {
       if (a === 'convert') runOnSelection('convert');
       else if (a === 'check') runOnSelection('check');
       else if (a === 'hl') highlightSel();
+      else if (a === 'listen') listenSel();
+      else if (a === 'translate') translateSel();
       else if (a === 'color') recolorSel();
       else if (a === 'dup') duplicateSel();
       else if (a === 'del') deleteSel();
@@ -889,6 +928,7 @@ function updateOverlay() {
   const hasInk = E.sel.strokes.size > 0;
   bar.querySelector('[data-a=convert]').hidden = !hasInk;
   bar.querySelector('[data-a=check]').hidden = !hasInk;
+  bar.querySelector('[data-a=listen]').hidden = !selRec();
   const bw = bar.offsetWidth || 300, bh = bar.offsetHeight || 44;
   let top = p0.y - pad - bh - 10;
   if (top < 6) top = Math.min(H - bh - 6, p1.y + pad + 10);
@@ -1022,6 +1062,42 @@ export function insertPicture({ src, w: nw, h: nh, title, credit, withName = tru
   redraw();
 }
 
+// =================== Ditado no caderno ===================
+// Você fala e o texto vai para as linhas da folha, com a letra manuscrita (como no "Organizar nas linhas").
+// Diga "ponto" para terminar a frase (começa um parágrafo novo), "vírgula", "interrogação" ou "exclamação".
+export function spokenToText(t) {
+  let x = ' ' + String(t).trim() + ' ';
+  x = x.replace(/\s+(ponto de interroga[çc][ãa]o|interroga[çc][ãa]o)\b/gi, '?').replace(/\s+(ponto de exclama[çc][ãa]o|exclama[çc][ãa]o)\b/gi, '!')
+    .replace(/\s+(ponto final|ponto par[áa]grafo|novo par[áa]grafo|ponto)\b/gi, '.').replace(/\s+v[íi]rgula\b/gi, ',').replace(/\s+dois pontos\b/gi, ':');
+  x = x.replace(/\s+/g, ' ').trim();
+  // maiúscula no começo e depois de . ? !
+  return x.replace(/(^|[.?!]\s+)([a-zà-ú])/g, (m, a, b) => a + b.toUpperCase());
+}
+let dictSession = null;
+function toggleDictation() {
+  const btn = $('ed-dictate');
+  if (dictSession) { dictSession.stop(); return; }
+  if (!canDictate()) { toast('Este navegador não tem ditado. No tablet, use o Chrome.', 3500); return; }
+  let used = '';
+  const color = (toolCfg.pen && toolCfg.pen.color) || '#1d1d1f';
+  const font = HAND_FONTS[settings.handFont] ? settings.handFont : 'caveat';
+  const put = fin => {
+    if (!E) return;
+    const novo = fin.slice(used.length).trim();
+    if (!novo) return;
+    used = fin;
+    pushUndo();
+    flowAppend([{ text: spokenToText(novo), color, font }]);
+    markDirty(); redraw();
+  };
+  dictSession = dictate({
+    onText: fin => put(fin),
+    onEnd: fin => { put(fin || ''); dictSession = null; btn.classList.remove('on'); btn.innerHTML = `${ic('mic')}<span>Ditar</span>`; },
+    onError: err => { dictSession = null; btn.classList.remove('on'); btn.innerHTML = `${ic('mic')}<span>Ditar</span>`; toast(err === 'not-allowed' ? 'Permita o uso do microfone para ditar' : err === 'network' ? 'O ditado precisa de internet' : 'Não consegui ouvir. Tente de novo.', 3500); },
+  });
+  if (dictSession) { btn.classList.add('on'); btn.innerHTML = `${ic('stop')}<span>Parar ditado</span>`; toast('Pode falar: o texto vai para as linhas. Diga "ponto" para terminar a frase.', 3500); }
+}
+
 // =================== Post-it ===================
 const STICKY_NAMES = { amarelo: 'Amarelo', rosa: 'Rosa', azul: 'Azul', verde: 'Verde', laranja: 'Laranja', lilas: 'Lilás' };
 const STICKY_KEY = 'caderno-postit-cor';
@@ -1153,7 +1229,12 @@ function addMark(pg, line, res, showMissing) {
   let text, color;
   if (res.hasAnswer) {
     if (res.ok) { text = '✓'; color = '#1f9d4a'; }
-    else { text = `✗ certo: ${fmtNum(res.value)}`; color = '#e5352b'; }
+    else {
+      text = `✗ certo: ${fmtNum(res.value)}`; color = '#e5352b';
+      // conta errada vai para o caderno de erros
+      const conta = String(res.text || '').replace(/\s+/g, '');
+      if (cb.onMistake && conta) cb.onMistake({ src: 'conta', ref: `${E.meta.id}:${conta}`, noteId: E.meta.id, folderId: E.meta.folderId || '', subject: E.meta.title, q: `Quanto dá ${conta.split('=')[0]}?`, mine: conta.split('=').slice(1).join('=') || conta, answer: `${conta.split('=')[0]} = ${fmtNum(res.value)}` });
+    }
   } else if (showMissing) { text = `= ${fmtNum(res.value)}`; color = '#0a6cff'; }
   else return null;
   removeMarksNear(pg, line);
@@ -1291,6 +1372,30 @@ function gotoPage(i) {
   updatePageBar();
   redraw();
 }
+// Página nova (depois da atual) já com conteúdo: modelos e mapa mental
+export function insertPageWith({ strokes = [], texts = [] }, msg) {
+  if (!E) return;
+  pushUndo();
+  const pg = { id: uid(), strokes, texts, images: [] };
+  // página atual vazia: usa ela mesma
+  if (isEmptyPage(page())) E.content.pages[E.pageIndex] = pg;
+  else { E.content.pages.splice(E.pageIndex + 1, 0, pg); }
+  markDirty();
+  gotoPage(E.content.pages.indexOf(pg));
+  fitWidth(); redraw();
+  if (msg) toast(msg, 3000);
+  return pg;
+}
+export const insertMindMap = tree => insertPageWith(mindMapPage(tree, HAND_FONTS[settings.handFont] ? settings.handFont : 'patrick'), 'Mapa mental desenhado ✓ Dá para mover, apagar e escrever por cima');
+function templateDialog() {
+  modal({
+    title: 'Página com modelo',
+    body: h(`<div class="tpl-grid">${Object.entries(TEMPLATES).map(([k, t]) => `<button type="button" class="tpl-item" data-t="${k}"><span class="tpl-e">${t.emoji}</span><b>${t.name}</b><small>${t.desc}</small></button>`).join('')}</div>`),
+    actions: [{ label: 'Cancelar', value: null }],
+    onOpen: (el, close) => el.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { close(null); insertPageWith(buildTemplate(b.dataset.t), `Modelo “${TEMPLATES[b.dataset.t].name}” na página ✓`); }),
+  });
+}
+
 function addPage() {
   pushUndo();
   E.content.pages.splice(E.pageIndex + 1, 0, { id: uid(), strokes: [], texts: [], images: [] });

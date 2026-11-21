@@ -14,11 +14,18 @@ import { initQuiz, reloadQuiz, QUIZ_VIEWS, renderQuiz, leaveQuiz } from './quiz.
 import { initNav, SECTIONS, sectionOf, sidebarHTML, navItem, updateBottomBar, renderMap, quickAdd, addTip, tour, initSidebar, toggleMenu } from './nav.js';
 import { initQuick, reloadQuick, QUICK_VIEWS, renderQuick, newQuick, quickToday, addQuick } from './quicknotes.js';
 import { initTutor, reloadTutor, TUTOR_VIEWS, renderTutor, leaveTutor } from './tutor.js';
-import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording } from './recorder.js';
+import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording, recordingInfo, hasRecording, playAt } from './recorder.js';
 import { initSuggest, suggestToday } from './suggest.js';
 import * as EVM from './events.js';
 import { initFormulas, FORMULA_VIEWS, renderFormulas } from './formulas.js';
 import { initNotify, NOTIFY_VIEWS, renderAvisos } from './notify.js';
+import { initSubjects, weakSubject } from './subjects.js';
+import { initInkIndex, scheduleIndex, inkSearchText } from './inkindex.js';
+import { requireUnlock, isUnlocked, hasPin, lockSettings } from './lock.js';
+import { driveDue, backupNow as driveBackupNow } from './drive.js';
+import { initTools, TOOL_VIEWS, renderTools, translateDialog } from './tools.js';
+import { initPlans, reloadPlans, PLAN_VIEWS, renderPlans, planDialog } from './plan.js';
+import { initErrors, reloadErrors, ERROR_VIEWS, renderErrors, addError, errorsCount, leaveErrors } from './errors.js';
 import { hubData } from './hub.js';
 import { perfData } from './perf.js';
 import { classesData } from './plus.js';
@@ -39,6 +46,9 @@ reg(QUICK_VIEWS, (k, el) => renderQuick(el), { quick: 'Nova nota' }, () => newQu
 reg(TUTOR_VIEWS, (k, el) => renderTutor(el), { tutor: '' });
 reg(FORMULA_VIEWS, (k, el) => renderFormulas(el), { formulas: '' });
 reg(NOTIFY_VIEWS, (k, el) => renderAvisos(el), { avisos: '' });
+reg(ERROR_VIEWS, (k, el) => renderErrors(el), { errors: '' });
+reg(TOOL_VIEWS, (k, el) => renderTools(el), { tools: '' });
+reg(PLAN_VIEWS, (k, el) => renderPlans(el), { plans: 'Novo plano' }, () => planDialog());
 const HUB_VIEWS = VIEW_REG;
 const renderHub = (kind, el) => {
   if (!VIEW_REG[kind].isHub) leaveHub();
@@ -88,6 +98,11 @@ async function init() {
     onImport: () => pickImport('editor'),
     onRecord: meta => toggleRecording(meta),
     onRecordings: meta => openRecordings(meta),
+    recInfo: () => recordingInfo(),
+    hasRecording: id => hasRecording(id),
+    onPlayAt: (id, t) => playAt(id, t),
+    onTranslate: text => translateDialog(text),
+    onMistake: e => addError(e).then(() => renderSidebar()).catch(() => {}),
   });
   initAIPanel({
     onSettings: settingsDialog,
@@ -132,6 +147,12 @@ async function init() {
       return { label, where: viewTitle(), run: () => $('btn-new').click() };
     },
     reloadAll,
+    addError: e => addError(e).catch(() => {}),
+    createNoteWith,
+    driveDue, driveBackup: () => driveBackupNow(),
+    openNoteId: () => (editorIsOpen() && getEditorContext() ? getEditorContext().meta.id : null),
+    weakSubject: () => { try { return weakSubject(); } catch { return null; } },
+    errorsCount,
     currentView: () => state.view.kind,
     afterTour: () => { if (!aiReadyAny()) toast('Dica: ligue a IA em Ajustes → Inteligência artificial', 4000); },
   };
@@ -149,7 +170,12 @@ async function init() {
   initFormulas(api);
   await initNotify(api);
   initSuggest(api);
-  EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder, EVM.reloadEvents);
+  await initErrors(api);
+  initSubjects(api);
+  await initPlans(api);
+  initInkIndex(api);
+  initTools(api);
+  EXTRA_RELOADS.push(reloadQuick, reloadTutor, reloadRecorder, EVM.reloadEvents, reloadErrors, reloadPlans);
   initData(api);
   appReady = true;
   routeFromURL();
@@ -193,6 +219,7 @@ function fillIcons() {
   $('pg-prev').innerHTML = ic('left');
   $('pg-next').innerHTML = ic('right');
   $('pg-add').innerHTML = ic('plus');
+  $('pg-tpl').innerHTML = ic('template');
   $('pg-del').innerHTML = ic('trash');
 }
 
@@ -404,7 +431,7 @@ function navCounts() {
   const hc = hubCounts(), pc = perfCounts(), xc = plusCounts();
   return {
     tasks: state.tasks.filter(t => !t.done).length, cards: hc.cards, habits: hc.habits, grades: pc.exams,
-    notes: state.notes.length, goals: goalsCount(), running: hc.running, today: xc.review,
+    notes: state.notes.length, goals: goalsCount(), running: hc.running, today: xc.review, errors: errorsCount(),
   };
 }
 const aiReadyAny = () => aiConfigured();
@@ -526,7 +553,7 @@ function visibleNotes() {
   const f = state.view.filter, q = state.search;
   let list = state.notes.filter(n =>
     f === 'all' ? true : f === 'fav' ? n.fav : f === 'none' ? !n.folderId : n.folderId === f);
-  if (q) list = list.filter(n => n.title.toLowerCase().includes(q) || folderName(n.folderId).toLowerCase().includes(q) || (n.searchText || '').toLowerCase().includes(q));
+  if (q) list = list.filter(n => n.title.toLowerCase().includes(q) || folderName(n.folderId).toLowerCase().includes(q) || (!n.locked || isUnlocked()) && inkSearchText(n).toLowerCase().includes(q));
   const s = settings.sort;
   list.sort((a, b) => s === 'title' ? a.title.localeCompare(b.title, 'pt-BR') : s === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt);
   return list;
@@ -539,7 +566,7 @@ function renderNotes() {
   grid.innerHTML = `<button class="card new-card" id="card-new">${ic('plus')}<span>Nova anotação</span></button>` +
     list.map(n => `
     <div class="card" data-id="${n.id}" role="button" tabindex="0">
-      <div class="thumb">${n.thumb ? `<img src="${n.thumb}" alt="" loading="lazy">` : `<div class="thumb-empty">${ic('page')}</div>`}</div>
+      <div class="thumb">${n.locked && hasPin() ? `<div class="thumb-empty thumb-lock">${ic('lock')}</div>` : n.thumb ? `<img src="${n.thumb}" alt="" loading="lazy">` : `<div class="thumb-empty">${ic('page')}</div>`}</div>
       <div class="card-info">
         <div class="card-title">${esc(n.title)}</div>
         <div class="card-meta">${n.folderId ? `<span class="dot" style="background:${folderColor(n.folderId)}"></span>${esc(folderName(n.folderId))} · ` : ''}${fmtDate(n.updatedAt)} · ${n.pageCount || 1} pág.${recs[n.id] ? ` · <span class="rec-badge" title="${recs[n.id]} gravação(ões)">${ic('mic')}${recs[n.id]}</span>` : ''}</div>
@@ -697,6 +724,16 @@ async function newNoteDialog(folderId) {
 }
 
 // Cria uma anotação vazia e abre no editor (usado pelo Horário de aulas)
+// anotação nova já com uma página pronta (ex.: gráfico das Ferramentas), sem abrir o editor
+async function createNoteWith(title, page, { folderId = '', bg = { type: 'blank', color: 'white' } } = {}) {
+  const now = Date.now();
+  const meta = { id: uid(), title, folderId, fav: false, createdAt: now, updatedAt: now, pageCount: 1, thumb: '', searchText: page.texts.map(t => t.text).join(' ') };
+  await db.put('pages', { id: meta.id, bg, pages: [page] });
+  await db.put('notes', meta);
+  state.notes.push(meta);
+  renderSidebar();
+  return meta;
+}
 async function createNote({ title, folderId = '', bg = { type: 'lines', color: 'white' } }) {
   const now = Date.now();
   const meta = { id: uid(), title, folderId, fav: false, createdAt: now, updatedAt: now, pageCount: 1, thumb: '', review: newReview() };
@@ -716,6 +753,7 @@ async function loadContent(id) {
 async function openNote(id) {
   const meta = noteById(id);
   if (!meta) return;
+  if (meta.locked && hasPin() && !(await requireUnlock('esta anotação'))) return;
   const content = await loadContent(id);
   history.pushState({ editor: id }, '');
   document.body.classList.add('editing');
@@ -732,6 +770,7 @@ async function closeNote() {
 async function saveNote(meta, content) {
   await db.put('pages', content);
   await db.put('notes', meta);
+  scheduleIndex(meta, content); // lê a letra à mão para a busca
 }
 
 async function noteMenu(id) {
@@ -747,6 +786,7 @@ async function noteMenu(id) {
     { label: 'Criar tarefa', icon: 'tasks', value: 'task' },
     { label: recCounts()[n.id] ? `Gravações da aula (${recCounts()[n.id]})` : 'Gravações da aula', icon: 'mic', value: 'recs' },
     { label: n.review && !n.review.done ? 'Desligar revisões programadas' : 'Programar revisões (1, 3, 7, 14, 30 dias)', icon: 'repeat', value: 'review' },
+    { label: n.locked ? 'Destrancar (tirar a senha desta anotação)' : 'Trancar com senha', icon: 'lock', value: 'lock' },
     { label: 'Duplicar', icon: 'copy', value: 'dup' },
     { label: 'Excluir', icon: 'trash', value: 'del', danger: true },
   ]);
@@ -767,6 +807,12 @@ async function noteMenu(id) {
   else if (a === 'task') taskDialog({ noteId: n.id, folderId: n.folderId });
   else if (a === 'recs') openRecordings(n);
   else if (a === 'review') toggleReview(n);
+  else if (a === 'lock') {
+    if (!hasPin()) { toast('Primeiro crie a sua senha', 2500); await lockSettings(); if (!hasPin()) return; }
+    if (n.locked && !(await requireUnlock('esta anotação'))) return;
+    n.locked = !n.locked; await db.put('notes', n); render();
+    toast(n.locked ? '🔒 Anotação trancada: só abre com a senha' : 'Anotação destrancada');
+  }
   else if (a === 'dup') {
     const c = await loadContent(id);
     const nid = uid(), now = Date.now();
@@ -1066,6 +1112,7 @@ async function settingsDialog() {
     <p class="muted small">Tudo fica salvo automaticamente no banco de dados do tablet, com cópias automáticas diárias.${est ? ` Espaço usado: ${(est.usage / 1048576).toFixed(1)} MB.` : ''}${persisted ? ' Armazenamento protegido ✓' : ''}</p>
     <div class="row wrap">
       <button class="btn" id="s-data" type="button">${ic('database')}<span>Abrir Dados e backup</span></button>
+      <button class="btn" id="s-lock" type="button">${ic('lock')}<span>Cadeado (senha)</span></button>
     </div>
     <hr>
     <details><summary><b>Como usar</b></summary>
@@ -1086,6 +1133,7 @@ async function settingsDialog() {
     </details>
   </div>`);
   body.querySelector('#s-data').onclick = () => { body.closest('.modal-back')?._close?.(); setView({ kind: 'data' }); };
+  body.querySelector('#s-lock').onclick = () => { body.closest('.modal-back')?._close?.(); lockSettings(); };
   body.querySelector('#s-theme').onclick = e => {
     const b = e.target.closest('[data-t]'); if (!b) return;
     settings.theme = b.dataset.t; saveSettings(); applyLook();
@@ -1133,8 +1181,8 @@ $('backup-input').addEventListener('change', async e => {
   await importBackupFile(f);
 });
 
-async function addTask({ title, due = '', prio = 2, folderId = '', noteId = '', notes = '' }) {
-  const t = { id: uid(), title, done: false, due, prio, folderId, noteId, notes, createdAt: Date.now() };
+async function addTask({ title, due = '', prio = 2, folderId = '', noteId = '', notes = '', planId }) {
+  const t = { id: uid(), title, done: false, due, prio, folderId, noteId, notes, createdAt: Date.now(), ...(planId ? { planId } : {}) };
   await db.put('tasks', t);
   state.tasks.push(t);
   return t;

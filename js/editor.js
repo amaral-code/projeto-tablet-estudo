@@ -42,6 +42,7 @@ let tool = 'pen';
 let E = null;           // estado da anotação aberta
 let cb = {};            // callbacks do app
 let stage, base, live, overlay, ctxB, ctxL;
+let penDown = false, lastPenAt = 0; // rejeição de palma
 let dpr = 1, W = 0, H = 0, deskColor = '#d9dce1';
 let act = null;         // ação atual de desenho/seleção
 const touches = new Map();
@@ -456,6 +457,9 @@ function onDown(e) {
   clearTimeout(E.autoTimer);
 
   if (e.pointerType === 'touch') {
+    // rejeição de palma: com a caneta escrevendo (ou logo depois), a mão apoiada na tela é ignorada
+    // (se o Android perder o "levantar" da caneta, a regra se desfaz sozinha em 3 s sem movimento)
+    if (settings.penSeen && Date.now() - lastPenAt < (penDown ? 3000 : 700)) { try { stage.releasePointerCapture(e.pointerId); } catch { /* */ } return; }
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touches.size >= 2) {
       if (act && act.ptype === 'touch') cancelAction();
@@ -467,6 +471,12 @@ function onDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) {
       if (e.button === 1) startPan(e);
       return;
+    }
+    if (e.pointerType === 'pen') {
+      penDown = true; lastPenAt = Date.now();
+      // a palma encostou antes da caneta: cancela o movimento/zoom que ela começou
+      if (act && act.ptype === 'touch') cancelAction();
+      if (gesture) { gesture = null; touches.clear(); requestRedraw(); }
     }
     if (e.pointerType === 'pen' && !settings.penSeen) {
       settings.penSeen = true;
@@ -490,6 +500,7 @@ function onDown(e) {
 
 function onMove(e) {
   if (!E) return;
+  if (e.pointerType === 'pen') lastPenAt = Date.now();
   if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (gesture) { moveGesture(); return; }
   if (panPid === e.pointerId) {
@@ -511,6 +522,7 @@ function onMove(e) {
 
 function onUp(e) {
   if (!E) return;
+  if (e.pointerType === 'pen') { penDown = false; lastPenAt = Date.now(); }
   if (e.pointerType === 'touch') {
     const had = touches.delete(e.pointerId);
     if (gesture) {

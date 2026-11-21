@@ -253,6 +253,12 @@ export async function renderData(el) {
       <div class="row wrap"><button class="btn primary" id="dt-export">${ic('download')}<span>Exportar backup</span></button>
         <button class="btn" id="dt-import">${ic('upload')}<span>Restaurar de um arquivo</span></button></div>
     </div>
+    <div class="panel diag"><h3>${ic('alert')}Diagnóstico</h3>
+      ${(errs => errs.length ? `<p class="small">O app registrou <b>${errs.length}</b> problema(s) (o mais recente ${ago(errs[0].at)}). Copie o relatório e me mande para eu corrigir.</p>
+        <div class="diag-list">${errs.slice(0, 5).map(e => `<div class="diag-item"><b>${esc(e.where || '—')}</b> ${esc(e.msg)}${e.n > 1 ? ` <span class="muted">(${e.n}×)</span>` : ''}</div>`).join('')}</div>
+        <div class="row wrap"><button class="btn" id="dg-copy">${ic('copy')}<span>Copiar relatório</span></button><button class="btn" id="dg-clear">${ic('trash')}<span>Limpar</span></button></div>`
+        : `<p class="status good">${ic('check')} Nenhum problema registrado</p>`)(A.errorLog ? A.errorLog() : [])}
+      <p class="muted small">Versão ${esc(A.version || '')} · ${navigator.onLine ? 'com internet' : 'sem internet'} · ${esc(navigator.userAgent.match(/Android [\d.]+/)?.[0] || '')}</p></div>
     <div class="panel"><h3>${ic('settings')}Manutenção</h3>
       <p class="muted small">Confere se as informações estão ligadas corretamente (por exemplo, tarefas de anotações apagadas) e corrige sozinho.</p>
       <div class="row wrap"><button class="btn" id="dt-check">${ic('check')}<span>Verificar e reparar</span></button>
@@ -290,4 +296,9 @@ export async function renderData(el) {
   };
   el.querySelector('#dt-wipe').onclick = wipeAll;
   bindDrive(el, () => { if (A.currentView() === 'data') renderData(el); });
+  el.querySelector('#dg-copy')?.addEventListener('click', async () => {
+    const txt = `Caderno de Estudos ${A.version}\n${navigator.userAgent}\n\n` + A.errorLog().map(e => `${new Date(e.at).toLocaleString('pt-BR')} [${e.where}] ${e.msg}${e.n > 1 ? ` (${e.n}x)` : ''}\n   ${e.stack}`).join('\n');
+    try { await navigator.clipboard.writeText(txt); toast('Relatório copiado ✓ Cole na conversa comigo'); } catch { toast('Não consegui copiar'); }
+  });
+  el.querySelector('#dg-clear')?.addEventListener('click', () => { A.clearErrorLog(); toast('Registro de problemas limpo'); renderData(el); });
 }

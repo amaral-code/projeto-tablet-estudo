@@ -25,8 +25,8 @@ import { requireUnlock, isUnlocked, hasPin, lockSettings } from './lock.js';
 import { driveDue, backupNow as driveBackupNow } from './drive.js';
 import { initArchie, refresh as archieRefresh, checkEvolution as archieEvolution, openArchie } from './archie.js';
 import { initTools, TOOL_VIEWS, renderTools, translateDialog } from './tools.js';
-import { initPlans, reloadPlans, PLAN_VIEWS, renderPlans, planDialog } from './plan.js';
-import { initErrors, reloadErrors, ERROR_VIEWS, renderErrors, addError, errorsCount, leaveErrors } from './errors.js';
+import { initPlans, reloadPlans, PLAN_VIEWS, renderPlans, planDialog, plansData } from './plan.js';
+import { initErrors, reloadErrors, ERROR_VIEWS, renderErrors, addError, errorsCount, leaveErrors, errorsData } from './errors.js';
 import { hubData } from './hub.js';
 import { perfData } from './perf.js';
 import { classesData } from './plus.js';
@@ -55,7 +55,16 @@ const renderHub = (kind, el) => {
   if (!VIEW_REG[kind].isHub) leaveHub();
   if (kind !== 'quiz') leaveQuiz();
   if (kind !== 'tutor') leaveTutor();
-  VIEW_REG[kind].render(el);
+  // proteção por tela: se uma tela der erro, ela mostra um aviso com "Tentar de novo" (o resto do app continua)
+  const fail = err => {
+    logError(err, kind);
+    el.innerHTML = `<div class="panel view-fail"><div class="vf-ic">${ic('alert')}</div><h3>Esta tela teve um problema</h3>
+      <p class="muted">Seus dados estão salvos. Tente de novo; se continuar, envie o relatório de erros (em Dados e backup → Diagnóstico).</p>
+      <div class="row wrap center"><button class="btn primary" id="vf-retry">${ic('repeat')}<span>Tentar de novo</span></button><button class="btn" id="vf-home">${ic('home')}<span>Ir para Hoje</span></button></div></div>`;
+    el.querySelector('#vf-retry').onclick = () => renderHub(kind, el);
+    el.querySelector('#vf-home').onclick = () => setView({ kind: 'today' });
+  };
+  try { const r = VIEW_REG[kind].render(el); if (r && typeof r.catch === 'function') r.catch(fail); } catch (err) { fail(err); }
 };
 const hubNewAction = kind => VIEW_REG[kind].newAction();
 // cartões extras do painel Hoje (aulas, revisões, metas, diário, provas, leitura, atalhos)
@@ -136,7 +145,7 @@ async function init() {
     journalMissing: () => plusCounts().journal === 1,
     ev: EVM,
     // dados que a Central de Avisos usa (os mesmos que o service worker lê do banco com o app fechado)
-    notifyData: () => ({ grades: perfData().grades, classes: classesData(), cards: hubData().cards, habits: hubData().habits }),
+    notifyData: () => ({ grades: perfData().grades, classes: classesData(), cards: hubData().cards, habits: hubData().habits, sessions: hubData().sessions, errors: errorsData(), plans: plansData() }),
     // navegação
     go: k => { if (editorIsOpen()) history.back(); setView(k === 'notes' ? { kind: 'notes', filter: 'all' } : { kind: k }); },
     counts: navCounts,
@@ -150,6 +159,7 @@ async function init() {
     reloadAll,
     addError: e => addError(e).catch(() => {}),
     createNoteWith,
+    errorLog: () => errorLog(), clearErrorLog: () => clearErrorLog(), version: APP_VERSION,
     openArchie: q => openArchie(q),
     driveDue, driveBackup: () => driveBackupNow(),
     openNoteId: () => (editorIsOpen() && getEditorContext() ? getEditorContext().meta.id : null),
@@ -201,6 +211,15 @@ async function init() {
     });
   }
   document.addEventListener('pointerdown', () => navigator.storage?.persist?.().catch(() => {}), { once: true });
+  // vigia de espaço: avisa antes de o tablet ficar sem espaço para salvar
+  setTimeout(async () => {
+    try {
+      const est = await navigator.storage?.estimate?.();
+      if (!est || !est.quota) return;
+      const pct = est.usage / est.quota;
+      if (pct > 0.8) toast(`⚠️ O espaço do app está ${Math.round(pct * 100)}% cheio. Em Dados e backup, exporte e apague gravações antigas para continuar salvando.`, 9000, { label: 'Abrir', run: () => setView({ kind: 'data' }) });
+    } catch { /* */ }
+  }, 12000);
 }
 
 function fillIcons() {
@@ -525,6 +544,7 @@ function viewTitle() {
   return folderName(v.filter) || 'Pasta';
 }
 
+let lastViewKind = null;
 function renderMain() {
   const kind = state.view.kind;
   const isTasks = kind === 'tasks', isHub = !!HUB_VIEWS[kind];
@@ -538,6 +558,12 @@ function renderMain() {
   $('view-hub').hidden = !isHub;
   // o Tutor ocupa a altura toda (a conversa rola por dentro, a caixa de texto fica sempre à vista)
   $('view-hub').classList.toggle('fill', kind === 'tutor');
+  // troca de tela com uma entrada suave (só quando muda de tela, não a cada atualização)
+  if (kind !== lastViewKind) {
+    lastViewKind = kind;
+    const box = isTasks ? $('view-tasks') : isHub ? $('view-hub') : $('view-notes');
+    box.classList.remove('view-anim'); void box.offsetWidth; box.classList.add('view-anim');
+  }
   document.body.classList.toggle('in-tutor', kind === 'tutor');
   $('sort').hidden = isTasks || isHub;
   document.querySelector('.search').hidden = isHub;
@@ -1006,7 +1032,7 @@ async function toggleTask(id) {
     state.tasks.push(next);
     toast(`Concluída ✓ — próxima: ${fmtDue(due)}`);
   } else if (x.done) toast('Tarefa concluída ✓');
-  if (x.done) document.dispatchEvent(new CustomEvent('caderno-tarefa-feita', { detail: { title: x.title } }));
+  if (x.done) { document.dispatchEvent(new CustomEvent('caderno-tarefa-feita', { detail: { title: x.title } })); try { navigator.vibrate && navigator.vibrate(15); } catch { /* */ } }
   if (!editorIsOpen()) render();
 }
 
@@ -1222,10 +1248,28 @@ function routeFromURL() {
 
 // Nenhum erro passa em silêncio: mostra um aviso e mantém o app funcionando
 let lastErr = 0;
-function reportError(err) {
+// Registro de erros (fica no tablet; dá para copiar e me enviar em Dados e backup → Diagnóstico)
+export const APP_VERSION = '2026.11.21';
+const ERR_KEY = 'caderno-erros-app';
+export function errorLog() { try { return JSON.parse(localStorage.getItem(ERR_KEY) || '[]'); } catch { return []; } }
+export function clearErrorLog() { try { localStorage.removeItem(ERR_KEY); } catch { /* */ } }
+function logError(err, where) {
   const msg = String(err && (err.message || err.reason || err) || 'erro desconhecido');
   if (/ResizeObserver loop|AbortError|Cancelado/i.test(msg)) return;
   console.error(err);
+  try {
+    const stack = String((err && err.stack) || '').split('\n').slice(0, 3).map(x => x.trim().replace(/https?:\/\/[^/]+/g, '')).join(' | ');
+    const list = errorLog();
+    const last = list[0];
+    if (last && last.msg === msg && Date.now() - last.at < 60000) { last.n = (last.n || 1) + 1; }
+    else list.unshift({ at: Date.now(), msg: msg.slice(0, 300), where: where || (state.view && state.view.kind) || '', stack: stack.slice(0, 500), v: APP_VERSION });
+    localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(0, 30)));
+  } catch { /* */ }
+}
+function reportError(err) {
+  const msg = String(err && (err.message || err.reason || err) || 'erro desconhecido');
+  if (/ResizeObserver loop|AbortError|Cancelado/i.test(msg)) return;
+  logError(err);
   if (Date.now() - lastErr < 3000) return;
   lastErr = Date.now();
   toast('Ops, algo deu errado: ' + msg.slice(0, 120) + '. Seus dados estão salvos.', 5000);

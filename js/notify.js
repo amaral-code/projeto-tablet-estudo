@@ -38,7 +38,7 @@ async function show(r) {
   if (perm() !== 'granted') return false;
   try {
     const reg = await navigator.serviceWorker?.ready;
-    const opts = { body: r.body, tag: r.id, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { url: r.url }, vibrate: [200, 100, 200] };
+    const opts = { body: r.body, tag: r.id, icon: C.ICON, badge: 'icons/badge-96.png', data: { url: r.url, id: r.id, title: r.title, body: r.body }, vibrate: [200, 100, 200], actions: C.ACTIONS };
     if (reg) await reg.showNotification(r.title, opts); else new Notification(r.title, opts);
     return true;
   } catch { return false; }
@@ -50,14 +50,27 @@ export async function tick(now = Date.now()) {
   ticking = true;
   try {
     const kv = await kvGet();
-    const due = C.due(upcomingAvisos(now), kv.fired, now);
+    const due = C.due(C.withSnoozes(upcomingAvisos(now), kv.snoozed, now), kv.fired, now);
     if (!due.length) return 0;
-    for (const r of due) { await show(r); kv.fired[r.id] = now; }
+    // só conta como entregue se apareceu (notificação do Android ou aviso na tela aberta)
+    const seen = [];
+    for (const r of due) { if ((await show(r)) || !document.hidden) { kv.fired[r.id] = now; seen.push(r); } }
+    if (!seen.length) return 0;
     kv.fired = C.prune(kv.fired, now);
+    kv.snoozed = C.cleanSnoozes(kv.snoozed, kv.fired, now);
+    kv.history = C.logHistory(kv.history, seen, now);
     await A.db.put('kv', kv);
-    if (!document.hidden) toast(due.map(r => r.title).join('\n'), 7000);
-    return due.length;
+    if (!document.hidden) toast(seen.map(r => r.title).join('\n'), 8000, { label: 'Adiar 15 min', run: () => Promise.all(seen.map(r => snoozeAviso(r, 15))).then(() => toast('Vou te lembrar de novo em 15 minutos ⏰')) });
+    return seen.length;
   } finally { ticking = false; }
+}
+// Adiar: o mesmo aviso volta daqui a alguns minutos (a notificação do Android também tem esse botão)
+export async function snoozeAviso(r, minutes = 15, now = Date.now()) {
+  const kv = await kvGet();
+  kv.snoozed = kv.snoozed || {};
+  const base = String(r.id).replace(/^z-/, '').replace(/-\d+$/, '');
+  kv.snoozed[`z-${base}-${now}`] = { at: now + minutes * 60000, title: r.title, body: r.body || '', url: r.url || './' };
+  await A.db.put('kv', kv);
 }
 // Um evento recém-criado não precisa avisar do que já passou (ex.: criou hoje um evento de hoje)
 export async function skipPastFor(id, now = Date.now()) {
@@ -130,7 +143,7 @@ export async function renderAvisos(el) {
   const p = avisoPrefs(), st = perm();
   const kv = await kvGet();
   const now = Date.now();
-  const next = upcomingAvisos(now).filter(r => r.at > now || (r.until >= now && !kv.fired[r.id])).slice(0, 25);
+  const next = C.withSnoozes(upcomingAvisos(now), kv.snoozed, now).filter(r => r.at > now || (r.until >= now && !kv.fired[r.id])).slice(0, 25);
   el.innerHTML = `<div class="av-wrap">
     <div class="panel av-status ${st === 'granted' ? 'ok' : 'warn'}">
       <div class="av-big">${ic('bell')}</div>
@@ -145,17 +158,35 @@ export async function renderAvisos(el) {
     <div class="av-grid">
       <div class="panel"><h3>${ic('settings')}O que avisar</h3>
         ${sw('events', p.events, '📅 Eventos da agenda', 'Na véspera e no dia', `<label>Véspera às ${timeIn('eveTime', p.eveTime)}</label><label>No dia (sem hora) às ${timeIn('dayTime', p.dayTime)}</label><label>Com hora: ${sel('beforeMin', p.beforeMin, [[0, 'na hora'], [15, '15 min antes'], [30, '30 min antes'], [60, '1 h antes'], [120, '2 h antes']])}</label>`)}
-        ${sw('tasks', p.tasks, '✅ Tarefas com prazo', 'Resumo das tarefas do dia', `<label>Às ${timeIn('tasksTime', p.tasksTime)}</label>`)}
+        ${p.briefing ? `<div class="av-row"><label class="switch"><input type="checkbox" disabled checked><span><b>✅ Tarefas com prazo</b><small>Já vêm no ☀️ resumo da manhã (em Automações)</small></span></label></div>` : sw('tasks', p.tasks, '✅ Tarefas com prazo', 'Resumo das tarefas do dia', `<label>Às ${timeIn('tasksTime', p.tasksTime)}</label>`)}
         ${sw('exams', p.exams, '📝 Provas', '3 dias antes e na véspera (no horário da véspera)')}
         ${sw('classes', p.classes, '🏫 Aulas do horário', 'Antes de cada aula', `<label>${sel('classMin', p.classMin, [[0, 'na hora'], [5, '5 min antes'], [10, '10 min antes'], [15, '15 min antes'], [30, '30 min antes']])}</label>`)}
         ${sw('cards', p.cards, '🃏 Flashcards para revisar', 'Só quando há cartas vencidas', `<label>Às ${timeIn('cardsTime', p.cardsTime)}</label>`)}
         ${sw('habits', p.habits, '🔥 Hábitos', 'Se faltar algum hábito no dia', `<label>Às ${timeIn('habitsTime', p.habitsTime)}</label>`)}
         ${sw('study', p.study, '📚 Hora de estudar', 'Um lembrete por dia nos dias escolhidos', `<label>Às ${timeIn('studyTime', p.studyTime)}</label><div class="av-days">${DAYS.map((d, i) => `<button type="button" class="chip small ${(p.studyDays || []).map(Number).includes(i) ? 'on' : ''}" data-day="${i}">${d}</button>`).join('')}</div>`)}
       </div>
+      <div class="panel av-auto"><h3>${ic('magic')}Automações</h3>
+        ${sw('briefing', p.briefing, '☀️ Resumo da manhã', 'Um aviso só com o dia: eventos, tarefas, plano, flashcards e provas chegando', `<label>Às ${timeIn('briefingTime', p.briefingTime)}</label>`)}
+        ${sw('streak', p.streak, '🔥 Proteger a sequência', 'Se você estudou nos últimos dias e ainda não estudou hoje', `<label>Às ${timeIn('streakTime', p.streakTime)}</label>`)}
+        ${sw('planLate', p.planLate, '🗺️ Plano de estudos atrasado', 'Quando sessões do plano ficaram para trás', `<label>Às ${timeIn('planTime', p.planTime)}</label>`)}
+        ${sw('errorsRem', p.errorsRem, '📒 Caderno de erros', 'Quando há 5 ou mais erros para revisar (dia sim, dia não)', `<label>Às ${timeIn('errorsTime', p.errorsTime)}</label>`)}
+        ${sw('weekly', p.weekly, '📊 Resumo da semana', 'Todo domingo: foco, tarefas e provas da semana que vem', `<label>Às ${timeIn('weeklyTime', p.weeklyTime)}</label>`)}
+        ${sw('quiet', p.quiet, '🌙 Horário de silêncio', 'Nada toca nesse horário: o aviso espera o fim do silêncio (se ainda fizer sentido)', `<label>Das ${timeIn('quietFrom', p.quietFrom)}</label><label>às ${timeIn('quietTo', p.quietTo)}</label>`)}
+        <p class="muted small">Cada notificação tem os botões <b>⏰ Adiar 15 min</b> e <b>Abrir</b>.</p>
+      </div>
       <div class="panel"><h3>${ic('clock')}Próximos avisos</h3>
-        <div class="av-next">${next.map(r => `<div class="av-item ${r.at <= now ? 'now' : ''}"><span class="av-when">${r.at <= now ? 'agora' : whenLabel(r.at)}</span><span class="grow"><b>${esc(r.title)}</b>${r.body ? `<small>${esc(r.body.split('\n')[0])}</small>` : ''}</span></div>`).join('') || '<p class="muted small">Nenhum aviso nos próximos dias. Crie eventos na Agenda, tarefas com prazo ou ligue a “Hora de estudar”.</p>'}</div>
+        <div class="av-next">${next.map(r => `<div class="av-item ${r.at <= now ? 'now' : ''}"><span class="av-when">${r.at <= now ? 'agora' : whenLabel(r.at)}${r.quiet ? ' 🌙' : ''}${r.snoozed ? ' ⏰' : ''}</span><span class="grow"><b>${esc(r.title)}</b>${r.body ? `<small>${esc(r.body.split('\n')[0])}</small>` : ''}</span></div>`).join('') || '<p class="muted small">Nenhum aviso nos próximos dias. Crie eventos na Agenda, tarefas com prazo ou ligue a “Hora de estudar”.</p>'}</div>
+      </div>
+      <div class="panel av-hist"><h3>${ic('bell')}Avisos já enviados</h3>
+        <div class="av-next">${(kv.history || []).slice(0, 15).map(r => `<div class="av-item done"><span class="av-when">${whenLabel(r.at)}</span><span class="grow"><b>${esc(r.title)}</b></span></div>`).join('') || '<p class="muted small">Os avisos que já tocaram aparecem aqui.</p>'}</div>
       </div>
     </div></div>`;
+  // horário marcado dentro do silêncio: avisa (senão o lembrete ficaria mudo sem você saber)
+  if (p.quiet) el.querySelectorAll('.av-time[data-p]').forEach(inp => {
+    if (/^quiet/.test(inp.dataset.p) || !inp.value) return;
+    const t = C.at(C.day(new Date()), inp.value);
+    if (C.quietShift(t, p.quietFrom, p.quietTo) !== t) (inp.closest('label') || inp.parentElement).insertAdjacentHTML('beforeend', ` <span class="av-quiet" title="Dentro do horário de silêncio">🌙 no silêncio: toca às ${esc(p.quietTo)} (se ainda fizer sentido)</span>`);
+  });
   const rerender = () => renderAvisos(el);
   el.querySelector('#av-test').onclick = async () => { await testNotification(); rerender(); };
   el.querySelector('#av-ics').onclick = () => {

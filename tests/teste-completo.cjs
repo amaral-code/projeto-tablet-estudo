@@ -194,7 +194,7 @@ function watch(p) {
   browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true, acceptDownloads: true, locale: 'pt-BR', permissions: ['clipboard-read', 'clipboard-write', 'microphone', 'notifications'] });
   await mocks(ctx);
-  await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); } catch { /* */ } });
+  await ctx.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); if (!localStorage.getItem('caderno-avisos')) localStorage.setItem('caderno-avisos', JSON.stringify({ quiet: false })); } catch { /* */ } });
   await geminiMock(ctx);
   await wikiMock(ctx);
   page = await ctx.newPage();
@@ -635,7 +635,7 @@ function watch(p) {
   });
   await step('restaura backup num tablet "novo"', async () => {
     const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); } catch { /* */ } });
+    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); if (!localStorage.getItem('caderno-avisos')) localStorage.setItem('caderno-avisos', JSON.stringify({ quiet: false })); } catch { /* */ } });
     const p2 = await c2.newPage(); watch(p2);
     await p2.goto(base); await p2.waitForTimeout(1200);
     await p2.click('#btn-data'); await p2.waitForSelector('#dt-import'); await p2.setInputFiles('#backup-input', backupFile); await p2.waitForSelector('.modal h2:has-text("Restaurar backup")');
@@ -1318,7 +1318,7 @@ function watch(p) {
   });
   await step('Restaurar em outro tablet traz notas rápidas, conversas e o áudio', async () => {
     const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); } catch { /* */ } });
+    await c2.addInitScript(() => { try { localStorage.setItem('caderno-tour-visto', '1'); localStorage.setItem('caderno-indice-off', '1'); localStorage.setItem('caderno-archie-dica', String(Date.now())); if (!localStorage.getItem('caderno-avisos')) localStorage.setItem('caderno-avisos', JSON.stringify({ quiet: false })); } catch { /* */ } });
     const p2 = await c2.newPage(); watch(p2);
     await p2.goto(base); await p2.waitForTimeout(1200);
     await p2.click('#btn-data'); await p2.waitForSelector('#dt-import');
@@ -1533,9 +1533,13 @@ function watch(p) {
     await page.evaluate(() => localStorage.removeItem('caderno-avisos'));
     await nav('avisos');
     assert((await page.textContent('.av-status h3')).includes('ligados'), 'status dos avisos');
-    assert(await page.locator('.av-row input[type=checkbox]').count() === 7, 'tipos de aviso');
+    assert(await page.locator('.av-row input[type=checkbox]').count() === 13, 'tipos de aviso: ' + await page.locator('.av-row input[type=checkbox]').count());
     await page.check('.av-row input[data-p=study]'); await wait(300);
     await page.fill('.av-row input[data-p=studyTime]', '23:58'); await page.dispatchEvent('.av-row input[data-p=studyTime]', 'change'); await wait(300);
+    // 23:58 cai no horário de silêncio (ligado de fábrica): a tela avisa e o lembrete não toca de madrugada
+    assert(/no silêncio/.test(await page.textContent('label:has(input[data-p=studyTime])')), 'devia avisar que 23:58 está no horário de silêncio');
+    assert(!(await page.locator('.av-item b').allTextContents()).some(t => t.includes('Hora de estudar')), 'no silêncio, o lembrete das 23:58 não devia estar na lista');
+    await page.uncheck('.av-row input[data-p=quiet]'); await wait(300);
     const list = await page.locator('.av-item b').allTextContents();
     assert(list.some(t => t.includes('Hora de estudar')), 'lista: ' + list.slice(0, 6).join(' | '));
     const prefs = await page.evaluate(() => JSON.parse(localStorage.getItem('caderno-avisos')));
@@ -1560,7 +1564,7 @@ function watch(p) {
       // o app não avisa este (eventos desligados nele); o service worker lê as preferências do banco
       localStorage.setItem('caderno-avisos', JSON.stringify({ events: false }));
       const kv = (await st.db.get('kv', 'avisos')) || { id: 'avisos', fired: {} };
-      kv.prefs = { eveTime: '00:00', tasks: false, cards: false, habits: false, classes: false, exams: false, study: false };
+      kv.prefs = { eveTime: '00:00', tasks: false, cards: false, habits: false, classes: false, exams: false, study: false, quiet: false, briefing: false, streak: false, weekly: false, errorsRem: false, planLate: false };
       await st.db.put('kv', kv);
     }, dplus(1));
     const n = await page.evaluate(() => new Promise(res => {
@@ -2145,6 +2149,126 @@ function watch(p) {
     assert(rep.days === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(rep.evDate) && rep.fixes.some(f => /completados/.test(f)), 'o reparo devia gravar os campos completados: ' + JSON.stringify(rep));
     await page.evaluate(async W => { const st = await import('./js/store.js'); for (const [k, list] of Object.entries(W)) for (const x of list) await st.db.del(k, x.id); }, W);
     await page.reload(); await wait(1300);
+  });
+
+  // ================= AUTOMAÇÃO DE AVISOS, BLINDAGEM E TABLET =================
+  console.log('Automação de avisos, blindagem e tablet');
+  await step('Avisos (motor): resumo da manhã, sequência, semana, erros, plano atrasado e horário de silêncio', async () => {
+    require(path.join(ROOT, 'js/avisos-core.js'));
+    const C = globalThis.AvisosCore;
+    // domingo, 05:00
+    const base = new Date(2026, 10, 22, 5, 0, 0).getTime(), d = C.day(new Date(base));
+    const y = C.addDays(d, -1), y2 = C.addDays(d, -2);
+    const data = {
+      tasks: [{ id: 't1', title: 'Lista de física', due: d }, { id: 't2', title: 'Sessão do plano', due: y, planId: 'p1' }, { id: 't3', title: 'Feita', done: true, doneAt: base - 3600000 }],
+      plans: [{ id: 'p1', name: 'Prova de física' }], sessions: [{ date: y, minutes: 40 }, { date: y2, minutes: 25 }],
+      errors: Array.from({ length: 6 }, (_, i) => ({ id: 'e' + i })), cards: [{ due: d }], events: [{ id: 'ev', title: 'Feira', date: d, time: '10:00', prio: 2 }],
+      habits: [{ id: 'h', name: 'Ler', days: {} }], grades: [{ id: 'g', title: 'Prova 3', date: C.addDays(d, 2), score: null }],
+    };
+    const list = C.compute(data, {}, base);
+    const byId = k => list.find(r => r.id.startsWith(k + '-' + d) || r.id === `${k}-${d}`);
+    const bf = byId('bf');
+    assert(bf && /Feira às 10:00/.test(bf.body) && /1 tarefa · ⚠️ 1 atrasada/.test(bf.body) && /flashcard/.test(bf.body) && /Prova 3/.test(bf.body) && new Date(bf.at).getHours() === 7, 'resumo da manhã: ' + JSON.stringify(bf));
+    assert(!list.some(r => r.id.startsWith('tk-')), 'com o resumo da manhã, as tarefas não podem chegar duas vezes');
+    assert(byId('sq') && /2 dias/.test(byId('sq').title), 'sequência');
+    assert(byId('wk') && /1 h 5 min/.test(byId('wk').body) && /1 tarefa/.test(byId('wk').body), 'resumo da semana (domingo): ' + JSON.stringify(byId('wk')));
+    assert(byId('pl') && /Prova de física/.test(byId('pl').body), 'plano atrasado');
+    const even = Math.floor(C.at(d, '12:00') / 86400000) % 2 === 0;
+    assert(!!byId('er') === even, 'lembrete do caderno de erros dia sim, dia não');
+    // hábitos às 23:00: dentro do silêncio e não faz sentido amanhã → não toca; sem silêncio → toca
+    const hb = C.compute(data, { habitsTime: '23:00' }, base).find(r => r.id === `hb-${d}`);
+    const hbNoQuiet = C.compute(data, { habitsTime: '23:00', quiet: false }, base).find(r => r.id === `hb-${d}`);
+    assert(!hb && hbNoQuiet, 'silêncio: hábito das 23:00 não pode tocar de madrugada');
+    const sq = C.compute(data, { streakTime: '23:00', quietFrom: '22:30', quietTo: '06:30' }, base).find(r => r.id === `sq-${d}`);
+    assert(!sq, 'aviso da sequência às 23:00 cai no silêncio e perde o sentido no dia seguinte');
+    const t23 = new Date(2026, 10, 22, 23, 0).getTime(), t12 = new Date(2026, 10, 22, 12, 0).getTime();
+    assert(new Date(C.quietShift(t23, '22:30', '06:30')).getHours() === 6 && C.quietShift(t12, '22:30', '06:30') === t12 && new Date(C.quietShift(t12, '11:00', '13:00')).getHours() === 13, 'contas do horário de silêncio');
+    // adiar e histórico
+    const sn = C.withSnoozes([], { 'z-x-1': { at: base + 60000, title: 'Adiado' } }, base);
+    assert(sn.length === 1 && sn[0].snoozed && C.due(sn, {}, base + 120000).length === 1, 'aviso adiado volta na hora');
+    assert(Object.keys(C.cleanSnoozes({ 'z-x-1': { at: base } }, { 'z-x-1': base }, base)).length === 0, 'adiado que já tocou sai da fila');
+    let hist = []; for (let i = 0; i < 50; i++) hist = C.logHistory(hist, [{ id: 'a' + i, title: 'A' + i }], base);
+    assert(hist.length === 40 && hist[0].title === 'A49', 'histórico guarda os 40 mais recentes');
+  });
+  await step('Avisos: adiar 15 min (no app e com o app fechado) e histórico do que já tocou', async () => {
+    const n = await page.evaluate(async () => {
+      const nt = await import('./js/notify.js'), st = await import('./js/store.js');
+      await nt.snoozeAviso({ id: 'ev-h-teste', title: 'Teste adiado', body: 'volta depois', url: './?v=calendar' }, 15);
+      const a = await nt.tick(Date.now() + 5 * 60000); // antes da hora: nada
+      const b = await nt.tick(Date.now() + 16 * 60000); // depois: toca
+      const kv = await st.db.get('kv', 'avisos');
+      return { a, b, hist: (kv.history || []).map(h => h.title), left: Object.keys(kv.snoozed || {}).length };
+    });
+    assert(n.a === 0 && n.b >= 1 && n.hist.includes('Teste adiado') && n.left === 0, 'adiar no app: ' + JSON.stringify(n));
+    await nav('avisos');
+    assert(/Teste adiado/.test(await page.textContent('.av-hist')), 'o histórico aparece na tela Avisos');
+    assert(await page.locator('.av-auto .av-row').count() === 6, 'as 6 automações aparecem');
+    // com o app fechado: o service worker confere o adiado. Sem permissão de notificação (como aqui no teste),
+    // ele NÃO pode sumir nem entrar no histórico: fica guardado para tocar depois.
+    await page.evaluate(async () => { const st = await import('./js/store.js'); const kv = await st.db.get('kv', 'avisos'); window.__prefs = kv.prefs; kv.prefs = { ...kv.prefs, events: false, tasks: false, cards: false, habits: false, classes: false, exams: false, study: false, briefing: false, streak: false, weekly: false, errorsRem: false, planLate: false, quiet: false }; kv.snoozed = { 'z-sw-teste-1': { at: Date.now() - 1000, title: 'Adiado no service worker', body: '', url: './' } }; await st.db.put('kv', kv); });
+    const sw = await page.evaluate(() => new Promise(res => { navigator.serviceWorker.addEventListener('message', e => res(e.data), { once: true }); navigator.serviceWorker.controller.postMessage('conferir-avisos'); setTimeout(() => res(null), 8000); }));
+    const kv2 = await page.evaluate(async () => (await (await import('./js/store.js')).db.get('kv', 'avisos')));
+    assert(sw && sw.avisos === 1 && sw.mostrados === 0 && kv2.snoozed['z-sw-teste-1'] && !(kv2.history || []).some(h => h.title === 'Adiado no service worker'), 'service worker com adiado: ' + JSON.stringify(sw));
+    // e quando o app abre, ele entrega o que ficou guardado
+    assert(await page.evaluate(async () => (await import('./js/notify.js')).tick()) >= 1, 'o app devia entregar o adiado guardado');
+    const kv3 = await page.evaluate(async () => (await (await import('./js/store.js')).db.get('kv', 'avisos')));
+    assert(!Object.keys(kv3.snoozed || {}).length && kv3.history.some(h => h.title === 'Adiado no service worker'), 'adiado entregue pelo app');
+    await page.evaluate(async () => { const st = await import('./js/store.js'); const kv = await st.db.get('kv', 'avisos'); kv.prefs = window.__prefs; await st.db.put('kv', kv); });
+  });
+  await step('Blindagem: se uma tela falhar, aparece "Tentar de novo" e o erro vai para o Diagnóstico', async () => {
+    await page.evaluate(() => { const orig = Element.prototype.querySelector; window.__qs = orig; Element.prototype.querySelector = function (sel) { if (sel === '#er-go') throw new Error('falha de teste na tela'); return orig.call(this, sel); }; });
+    const e0 = errors.length;
+    await nav('errors'); await wait(300);
+    assert(await page.locator('.view-fail').isVisible(), 'a tela com problema devia mostrar o aviso');
+    // "Tentar de novo" enquanto o problema continua: segue mostrando o aviso, sem travar
+    await page.evaluate(() => document.querySelector('#vf-retry')?.click()); await wait(300);
+    assert(await page.locator('.view-fail').count() === 1, 'o aviso devia continuar enquanto a tela falha');
+    await page.evaluate(() => { Element.prototype.querySelector = window.__qs; });
+    await page.evaluate(() => document.querySelector('#vf-retry')?.click()); await wait(300); // (a tela pode já ter se recuperado sozinha)
+    assert(await page.locator('.view-fail').count() === 0 && await page.locator('#er-go').count() === 1, '"Tentar de novo" devia abrir a tela normalmente');
+    errors.splice(e0); // (erro provocado de propósito)
+    await page.goto(base + '?v=data'); await wait(1500);
+    assert(/falha de teste na tela/.test(await page.textContent('.diag')), 'o diagnóstico mostra o problema');
+    await page.click('#dg-copy'); await toastHas('Relatório copiado');
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    assert(/Caderno de Estudos/.test(clip) && /falha de teste na tela/.test(clip) && /\[errors\]/.test(clip), 'relatório copiado');
+    await page.click('#dg-clear'); await wait(300);
+    assert(/Nenhum problema registrado/.test(await page.textContent('.diag')), 'limpar o registro');
+  });
+  await step('Tablet: com a caneta escrevendo, a palma da mão não move a folha nem risca', async () => {
+    await nav('all'); await page.click('.card[data-id] >> nth=0'); await wait(800);
+    await page.click('[data-tool=pen]');
+    const res = await page.evaluate(async () => {
+      const ed = await import('./js/editor.js'), st = await import('./js/store.js');
+      st.settings.penSeen = true; st.settings.fingerDraw = false;
+      const stage = document.getElementById('stage'), r = stage.getBoundingClientRect();
+      const ev = (type, id, kind, x, y) => stage.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: kind, clientX: r.x + x, clientY: r.y + y, bubbles: true, isPrimary: true, pressure: 0.5, button: 0, buttons: type === 'pointerup' ? 0 : 1 }));
+      const n0 = ed.getEditorContext().content.pages[ed.getEditorContext().pageIndex].strokes.length;
+      const v0 = ed.getEditorContext().view;
+      ev('pointerdown', 1, 'pen', 300, 300);
+      ev('pointerdown', 2, 'touch', 500, 500); ev('pointermove', 2, 'touch', 560, 600); // palma apoiada
+      for (let i = 1; i <= 10; i++) ev('pointermove', 1, 'pen', 300 + i * 10, 300 + i * 3);
+      ev('pointerup', 1, 'pen', 400, 330); ev('pointerup', 2, 'touch', 560, 600);
+      await new Promise(x => setTimeout(x, 50));
+      const v1 = ed.getEditorContext().view;
+      const n1 = ed.getEditorContext().content.pages[ed.getEditorContext().pageIndex].strokes.length;
+      // logo depois de levantar a caneta, a palma ainda é ignorada
+      ev('pointerdown', 3, 'touch', 500, 500); ev('pointermove', 3, 'touch', 500, 650); ev('pointerup', 3, 'touch', 500, 650);
+      const v2 = ed.getEditorContext().view;
+      // um tempo depois, o dedo volta a mover a folha
+      await new Promise(x => setTimeout(x, 800));
+      ev('pointerdown', 4, 'touch', 500, 500); ev('pointermove', 4, 'touch', 500, 600); ev('pointermove', 4, 'touch', 500, 650); ev('pointerup', 4, 'touch', 500, 650);
+      const v3 = ed.getEditorContext().view;
+      // o Android perdeu o "levantar" da caneta: depois de 3 s sem movimento, o dedo volta a funcionar
+      ev('pointerdown', 5, 'pen', 300, 400); await new Promise(x => setTimeout(x, 3100));
+      ev('pointerdown', 6, 'touch', 500, 500); ev('pointermove', 6, 'touch', 500, 560); ev('pointermove', 6, 'touch', 500, 600); ev('pointerup', 6, 'touch', 500, 600);
+      const v4 = ed.getEditorContext().view;
+      ev('pointerup', 5, 'pen', 300, 400);
+      return { strokes: n1 - n0, moved1: v1.oy !== v0.oy || v1.ox !== v0.ox, moved2: v2.oy !== v1.oy, moved3: v3.oy !== v2.oy, moved4: v4.oy !== v3.oy };
+    });
+    assert(res.strokes === 1 && !res.moved1 && !res.moved2, 'a palma interferiu na escrita: ' + JSON.stringify(res));
+    assert(res.moved3 && res.moved4, 'depois da caneta, o dedo devia voltar a mover a folha: ' + JSON.stringify(res));
+    await page.click('#ed-back'); await wait(900);
   });
 
   // ================= SALVAMENTO =================

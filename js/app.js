@@ -16,6 +16,9 @@ import { initQuick, reloadQuick, QUICK_VIEWS, renderQuick, newQuick, quickToday,
 import { initTutor, reloadTutor, TUTOR_VIEWS, renderTutor, leaveTutor } from './tutor.js';
 import { initRecorder, reloadRecorder, toggleRecording, openRecordings, startRecording, recCounts, isRecording, recordingInfo, hasRecording, playAt } from './recorder.js';
 import { initSuggest, suggestToday } from './suggest.js';
+import { initQuickAdd, quickBarHTML, bindQuickBar, parse as parseQuickText } from './quickadd.js';
+import { describeQuick } from './quickparse.js';
+import { initSwipe } from './swipe.js';
 import * as EVM from './events.js';
 import { initFormulas, FORMULA_VIEWS, renderFormulas } from './formulas.js';
 import { initNotify, NOTIFY_VIEWS, renderAvisos } from './notify.js';
@@ -130,14 +133,14 @@ async function init() {
   const api = {
     db, uid, state, loadContent, openNote, taskDialog, toggleTask, folderName, folderColor, folderOptions, saveFlashcards,
     newNote: () => newNoteDialog(),
-    addTask,
+    addTask, swipeDone, postponeTask,
     goTo: v => { if (editorIsOpen()) history.back(); setView(v); },
     // só redesenha depois que todos os módulos terminaram de carregar
     onChange: light => { if (!appReady || editorIsOpen()) return; light ? renderSidebar() : render(); },
     views: () => HUB_VIEWS,
     importPdf: () => pickImport('library'),
     settings: settingsDialog,
-    extraToday: todayCards, todayTop: suggestToday, levelBadge, examsOn, createNote, createNoteFromText,
+    extraToday: todayCards, todayTop: suggestToday, quickBar: { html: quickBarHTML, bind: bindQuickBar }, levelBadge, examsOn, createNote, createNoteFromText,
     addQuick: (text, extra) => addQuick(text, extra),
     writeToNote,
     noteForClass,
@@ -169,6 +172,8 @@ async function init() {
     afterTour: () => { if (!aiReadyAny()) toast('Dica: ligue a IA em Ajustes → Inteligência artificial', 4000); },
   };
   initNav(api);
+  initQuickAdd(api);
+  initSwipe(api);
   initSidebar();
   await initHub(api);
   await initPerf(api);
@@ -311,19 +316,38 @@ function bindLibrary() {
   $('search').oninput = e => { state.search = e.target.value.trim().toLowerCase(); renderMain(); };
   $('sort').value = settings.sort;
   $('sort').onchange = e => { settings.sort = e.target.value; saveSettings(); renderMain(); };
+  // o campo entende "amanhã", "sexta", "dia 10", "!" e o nome da matéria (o que for escolhido nos campos vale mais)
+  const taskGuess = () => {
+    const raw = $('task-title').value.trim();
+    if (!raw) return null;
+    const q = parseQuickText(raw);
+    return { q, title: q.title || raw, due: $('task-due').value || q.date, prio: $('task-prio').dataset.touched ? +$('task-prio').value : (q.prio || +$('task-prio').value), folderId: $('task-folder').value || q.folderId };
+  };
+  const taskHint = () => {
+    const g = taskGuess(), el = $('task-hint');
+    if (!el) return;
+    const parts = g ? describeQuick({ ...g.q, date: $('task-due').value ? '' : g.q.date, folderId: $('task-folder').value ? '' : g.q.folderId, prio: $('task-prio').dataset.touched ? 0 : g.q.prio }, { folderName }) : [];
+    el.hidden = !parts.length;
+    el.innerHTML = parts.length ? `${ic('magic')}<span>Entendi: <b>${esc(parts.join(' · '))}</b></span>` : '';
+  };
+  $('task-title').addEventListener('input', taskHint);
+  $('task-prio').addEventListener('change', () => { $('task-prio').dataset.touched = '1'; taskHint(); });
+  $('task-due').addEventListener('change', taskHint);
+  $('task-folder').addEventListener('change', taskHint);
   $('task-form').onsubmit = async e => {
     e.preventDefault();
-    const title = $('task-title').value.trim();
-    if (!title) return;
+    const g = taskGuess();
+    if (!g) return;
     const t = {
-      id: uid(), title, done: false, due: $('task-due').value, prio: +$('task-prio').value,
-      folderId: $('task-folder').value, noteId: '', notes: '', createdAt: Date.now(),
+      id: uid(), title: g.title, done: false, due: g.due || '', prio: g.prio || 2,
+      folderId: g.folderId || '', noteId: '', notes: '', createdAt: Date.now(),
     };
     await db.put('tasks', t);
     state.tasks.push(t);
-    $('task-title').value = ''; $('task-due').value = '';
+    $('task-title').value = ''; $('task-due').value = ''; delete $('task-prio').dataset.touched; $('task-prio').value = '2';
+    taskHint();
     render();
-    toast('Tarefa adicionada');
+    toast(`Tarefa adicionada${t.due ? ` — ${fmtDue(t.due)}` : ''}`);
   };
   $('task-filter').onclick = e => {
     const b = e.target.closest('[data-f]'); if (!b) return;
@@ -1034,6 +1058,23 @@ async function toggleTask(id) {
   } else if (x.done) toast('Tarefa concluída ✓');
   if (x.done) { document.dispatchEvent(new CustomEvent('caderno-tarefa-feita', { detail: { title: x.title } })); try { navigator.vibrate && navigator.vibrate(15); } catch { /* */ } }
   if (!editorIsOpen()) render();
+}
+
+// Gestos na tarefa: → conclui (com "Desfazer"), ← adia para amanhã
+async function swipeDone(id) {
+  const x = state.tasks.find(t => t.id === id);
+  if (!x || x.done) return;
+  await toggleTask(id);
+  if (!x.repeat) toast('Tarefa concluída ✓', 5000, { label: 'Desfazer', run: async () => { if (x.done) await toggleTask(id); toast('Tarefa reaberta'); } });
+}
+async function postponeTask(id) {
+  const x = state.tasks.find(t => t.id === id);
+  if (!x || x.done) return;
+  const old = x.due || '', t = dayStr();
+  x.due = old && old > t ? addDays(old, 1) : addDays(t, 1);
+  await db.put('tasks', x);
+  if (!editorIsOpen()) render();
+  toast(`Adiada para ${fmtDue(x.due).toLowerCase()} ⏭️`, 5000, { label: 'Desfazer', run: async () => { x.due = old; await db.put('tasks', x); if (!editorIsOpen()) render(); toast('Prazo de volta'); } });
 }
 
 async function taskDialog(t) {

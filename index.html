@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Caderno de Estudos</title>
   <meta name="description" content="Caderno digital para estudos com caneta, lápis, correção de escrita e de contas, pastas, tarefas e compartilhamento.">
   <meta name="theme-color" content="#1f6feb">
@@ -62,6 +62,7 @@
           <select id="task-folder" class="select" aria-label="Pasta"></select>
           <button class="btn primary" type="submit">Adicionar</button>
         </form>
+        <div id="task-hint" class="task-hint" hidden></div>
         <div class="task-filters">
           <div class="seg" id="task-mode">
             <button data-m="list" class="active">Lista</button>

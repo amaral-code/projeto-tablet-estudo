@@ -2261,7 +2261,7 @@ function watch(p) {
       const v3 = ed.getEditorContext().view;
       // o Android perdeu o "levantar" da caneta: depois de 3 s sem movimento, o dedo volta a funcionar
       ev('pointerdown', 5, 'pen', 300, 400); await new Promise(x => setTimeout(x, 3100));
-      ev('pointerdown', 6, 'touch', 500, 500); ev('pointermove', 6, 'touch', 500, 560); ev('pointermove', 6, 'touch', 500, 600); ev('pointerup', 6, 'touch', 500, 600);
+      ev('pointerdown', 6, 'touch', 500, 600); ev('pointermove', 6, 'touch', 500, 520); ev('pointermove', 6, 'touch', 500, 450); ev('pointerup', 6, 'touch', 500, 450); // (para cima: para baixo a folha já está no limite)
       const v4 = ed.getEditorContext().view;
       ev('pointerup', 5, 'pen', 300, 400);
       return { strokes: n1 - n0, moved1: v1.oy !== v0.oy || v1.ox !== v0.ox, moved2: v2.oy !== v1.oy, moved3: v3.oy !== v2.oy, moved4: v4.oy !== v3.oy };
@@ -2269,6 +2269,137 @@ function watch(p) {
     assert(res.strokes === 1 && !res.moved1 && !res.moved2, 'a palma interferiu na escrita: ' + JSON.stringify(res));
     assert(res.moved3 && res.moved4, 'depois da caneta, o dedo devia voltar a mover a folha: ' + JSON.stringify(res));
     await page.click('#ed-back'); await wait(900);
+  });
+
+  // ================= MAIS PRÁTICO E DESIGN NO TABLET =================
+  console.log('Mais prático e design no tablet');
+  await step('Adição rápida (texto): entende tarefa, evento, dia, hora, matéria e prioridade', async () => {
+    const { parseQuick } = await import(require('url').pathToFileURL(path.join(ROOT, 'js/quickparse.js')).href);
+    const folders = [{ id: 'm', name: 'Matemática' }, { id: 'f', name: 'Física' }, { id: 'h', name: 'História' }, { id: 'ef', name: 'Educação Física' }];
+    const now = new Date(2026, 10, 21, 10, 0); // sábado
+    const q = t => parseQuick(t, { folders, now });
+    const cases = [
+      ['prova de física sexta 8h', { kind: 'event', evKind: 'prova', date: '2026-11-27', time: '08:00', folderId: 'f', title: 'Prova de física' }],
+      ['lista de mat amanhã !', { kind: 'task', date: '2026-11-22', prio: 3, folderId: 'm', title: 'Lista de mat' }],
+      ['entregar resumo dia 10', { kind: 'task', date: '2026-12-10', title: 'Entregar resumo' }],
+      ['dentista 15/12 às 14h30', { kind: 'event', evKind: 'consulta', date: '2026-12-15', time: '14:30', title: 'Dentista' }],
+      ['estudar 2h de física hoje', { kind: 'task', date: '2026-11-21', time: '', title: 'Estudar 2h de física' }],
+      ['fazer as 3 listas de matemática amanhã', { kind: 'task', time: '', folderId: 'm', title: 'Fazer as 3 listas de matemática' }],
+      ['aula de educação física terça 3 da tarde', { kind: 'event', evKind: 'aula', date: '2026-11-24', time: '15:00', folderId: 'ef' }],
+      ['revisar dia 31', { date: '2026-12-31' }],
+      ['trabalho de história 10/01', { kind: 'event', evKind: 'trabalho', date: '2027-01-10', folderId: 'h' }],
+      ['comprar caderno', { kind: 'task', date: '', time: '', prio: 0, title: 'Comprar caderno' }],
+      ['ler capítulo 4 urgente', { prio: 3, title: 'Ler capítulo 4' }],
+    ];
+    for (const [t, exp] of cases) {
+      const r = q(t);
+      for (const [k, v] of Object.entries(exp)) assert(r[k] === v, `"${t}": ${k} = ${JSON.stringify(r[k])} (esperado ${JSON.stringify(v)})`);
+    }
+  });
+  await step('Adição rápida no Hoje: mostra o que entendeu, salva evento e tarefa, troca o tipo e tem "Desfazer"', async () => {
+    await nav('today');
+    const nextFri = await page.evaluate(() => { const d = new Date(); let k = (5 - d.getDay() + 7) % 7 || 7; d.setDate(d.getDate() + k); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    await page.fill('.qa-today .qa-in', 'prova de geografia sexta 8h');
+    const prev = await page.textContent('.qa-today .qa-prev');
+    assert(/Prova/.test(prev) && /08:00/.test(prev) && /Prova de geografia/.test(prev), 'prévia: ' + prev);
+    await page.press('.qa-today .qa-in', 'Enter'); await wait(500);
+    await toastHas('Evento salvo');
+    let evs = await idb('events');
+    const ev = evs.find(e => e.title === 'Prova de geografia');
+    assert(ev && ev.date === nextFri && ev.time === '08:00' && ev.kind === 'prova', 'evento: ' + JSON.stringify(ev));
+    assert(await page.inputValue('.qa-today .qa-in') === '', 'o campo devia limpar depois de salvar');
+    await page.click('#toast .toast-btn'); await wait(400);
+    assert(!(await idb('events')).some(e => e.title === 'Prova de geografia'), '"Desfazer" devia apagar o evento');
+    // tarefa com prioridade
+    await page.fill('.qa-today .qa-in', 'lista de revisão de óptica amanhã !'); await page.click('.qa-today .qa-go'); await wait(500);
+    const tm = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    let t = (await idb('tasks')).find(x => x.title === 'Lista de revisão de óptica');
+    assert(t && t.due === tm && t.prio === 3, 'tarefa: ' + JSON.stringify(t));
+    // trocar evento → tarefa
+    await page.fill('.qa-today .qa-in', 'reunião do grêmio sexta 15h');
+    assert(/Aula\/Reunião/.test(await page.textContent('.qa-today .qa-kind')), 'devia entender como evento');
+    await page.click('.qa-today .qa-kind'); await wait(100);
+    assert(/Tarefa/.test(await page.textContent('.qa-today .qa-kind')), 'devia trocar para tarefa');
+    await page.press('.qa-today .qa-in', 'Enter'); await wait(500);
+    t = (await idb('tasks')).find(x => x.title === 'Reunião do grêmio');
+    assert(t && t.due === nextFri && !(await idb('events')).some(e => e.title === 'Reunião do grêmio'), 'tipo trocado: ' + JSON.stringify(t));
+    // o que está sendo digitado sobrevive se a tela se redesenhar
+    await page.fill('.qa-today .qa-in', 'texto pela metade');
+    await nav('tasks'); await nav('today');
+    assert(await page.inputValue('.qa-today .qa-in') === 'texto pela metade', 'o rascunho da adição rápida sumiu');
+    // evento sem dia: abre a janela do evento já preenchida
+    await page.fill('.qa-today .qa-in', 'prova de química'); await page.press('.qa-today .qa-in', 'Enter'); await wait(500);
+    assert(await page.inputValue('#ev-title') === 'Prova de química' && await page.locator('#ev-kind .chip.on[data-k=prova]').count() === 1, 'a janela do evento devia vir preenchida');
+    await page.click('.modal-actions .btn:has-text("Cancelar")'); await wait(400);
+    await page.evaluate(() => document.querySelectorAll('.modal-back').forEach(m => m._close && m._close())); await wait(300);
+    await page.fill('.qa-today .qa-in', ''); await wait(100);
+  });
+  await step('Botão +: adição rápida no topo (sem abrir o teclado sozinho) e salvar fecha a janela', async () => {
+    await page.click('#fab'); await wait(400);
+    assert(await page.locator('.modal .qa-sheet .qa-in').count() === 1, 'a adição rápida devia estar no +');
+    assert(!(await page.evaluate(() => document.activeElement?.classList.contains('qa-in'))), 'o campo não pode abrir o teclado sozinho');
+    await page.fill('.modal .qa-sheet .qa-in', 'ler capítulo 5 de biologia daqui a 3 dias'); await page.press('.modal .qa-sheet .qa-in', 'Enter'); await wait(600);
+    assert(await page.locator('.modal-back').count() === 0, 'a janela devia fechar depois de salvar');
+    const d3 = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 3); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    const t = (await idb('tasks')).find(x => x.title === 'Ler capítulo 5 de biologia');
+    assert(t && t.due === d3, 'tarefa do +: ' + JSON.stringify(t));
+  });
+  await step('Tarefas: o campo entende "amanhã" e "urgente" (e o que for escolhido nos campos vale mais)', async () => {
+    await nav('tasks');
+    await page.evaluate(() => { localStorage.setItem('caderno-modo-tarefas', 'list'); document.querySelector('#task-mode [data-m=list]')?.click(); });
+    await page.fill('#task-title', 'resumo de história amanhã urgente'); await wait(150);
+    const hint = await page.textContent('#task-hint');
+    assert(/amanhã/.test(hint) && /prioridade alta/.test(hint), 'dica: ' + hint);
+    await page.press('#task-title', 'Enter'); await wait(500);
+    const tm = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    let t = (await idb('tasks')).find(x => x.title === 'Resumo de história');
+    assert(t && t.due === tm && t.prio === 3, 'tarefa do formulário: ' + JSON.stringify(t));
+    assert(await page.isHidden('#task-hint'), 'a dica devia sumir depois de salvar');
+    await page.fill('#task-due', '2027-03-15'); await page.fill('#task-title', 'mapa de geografia amanhã'); await page.press('#task-title', 'Enter'); await wait(500);
+    t = (await idb('tasks')).find(x => x.title === 'Mapa de geografia');
+    assert(t && t.due === '2027-03-15', 'a data escolhida no campo devia valer: ' + JSON.stringify(t));
+  });
+  await step('Arrastar a tarefa com o dedo: → conclui, ← adia para amanhã, com "Desfazer"; rolar não faz nada', async () => {
+    for (const n of ['Tarefa para arrastar', 'Tarefa para adiar']) { await page.fill('#task-title', n); await page.press('#task-title', 'Enter'); await wait(300); }
+    const swipe = (title, dx, dy = 0) => page.evaluate(({ title, dx, dy }) => {
+      const row = [...document.querySelectorAll('#task-list > .task')].find(r => r.textContent.includes(title));
+      const el = row.querySelector('.task-title'), rc = el.getBoundingClientRect(), x = rc.x + 40, y = rc.y + rc.height / 2;
+      const fire = (t, cx, cy) => el.dispatchEvent(new PointerEvent(t, { pointerId: 21, pointerType: 'touch', isPrimary: true, clientX: cx, clientY: cy, bubbles: true }));
+      fire('pointerdown', x, y); for (let i = 1; i <= 10; i++) fire('pointermove', x + dx * i / 10, y + dy * i / 10); fire('pointerup', x + dx, y + dy);
+    }, { title, dx, dy });
+    const task = async n => (await idb('tasks')).find(x => x.title === n);
+    // rolar para baixo e arrastar pouco não fazem nada
+    await swipe('Tarefa para arrastar', 0, 120); await swipe('Tarefa para arrastar', 40, 0); await wait(500);
+    assert(!(await task('Tarefa para arrastar')).done, 'rolar ou arrastar pouco não pode concluir');
+    await swipe('Tarefa para arrastar', 260); await wait(600);
+    assert((await task('Tarefa para arrastar')).done, '→ devia concluir');
+    await toastHas('Tarefa concluída');
+    await page.click('#toast .toast-btn'); await wait(400);
+    assert(!(await task('Tarefa para arrastar')).done, '"Desfazer" devia reabrir');
+    await swipe('Tarefa para adiar', -260); await wait(600);
+    const tm = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+    assert((await task('Tarefa para adiar')).due === tm, '← devia adiar para amanhã');
+    await toastHas('Adiada para amanhã');
+    await page.click('#toast .toast-btn'); await wait(400);
+    assert((await task('Tarefa para adiar')).due === '', '"Desfazer" devia voltar o prazo');
+    assert(await page.locator('.modal-back').count() === 0, 'arrastar não pode abrir a tarefa');
+    assert(await page.locator('.task.sw-on').count() === 0, 'nenhuma tarefa pode ficar presa no meio do arrasto');
+  });
+  await step('Layout no tablet: listas do Foco dentro do painel, horário em pé sem cortar dias, cartões sem sobrar sozinhos', async () => {
+    await nav('focus');
+    const vaza = await page.evaluate(() => [...document.querySelectorAll('#view-hub .subj-row')].filter(r => { const p = r.closest('.panel').getBoundingClientRect(), b = r.getBoundingClientRect(); return b.right > p.right + 1; }).length);
+    assert(vaza === 0, `${vaza} linha(s) do Foco por matéria saindo do painel`);
+    const cols = await page.evaluate(() => {
+      const mk = (cls, n) => { const d = document.createElement('div'); d.className = cls; d.style.width = '970px'; for (let i = 0; i < n; i++) d.appendChild(document.createElement('div')); document.getElementById('view-hub').appendChild(d); const c = getComputedStyle(d).gridTemplateColumns.split(' ').length; d.remove(); return c; };
+      return { sg4: mk('sg-grid', 4), sg3: mk('sg-grid', 3), kpi6: mk('kpis', 6) };
+    });
+    assert(cols.sg4 === 2 && cols.sg3 === 3 && cols.kpi6 === 3, 'colunas: ' + JSON.stringify(cols));
+    await page.setViewportSize({ width: 800, height: 1280 });
+    await page.goto(base + '?v=schedule'); await wait(1200);
+    const sch = await page.evaluate(() => { const g = document.querySelector('.week-grid'); return g ? g.scrollWidth - g.clientWidth : -1; });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    assert(sch >= 0 && sch <= 1, 'o horário em pé não devia precisar rolar de lado: ' + sch);
+    await page.goto(base); await wait(1200);
   });
 
   // ================= SALVAMENTO =================

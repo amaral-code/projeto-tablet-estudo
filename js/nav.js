@@ -47,8 +47,8 @@ export const sectionOf = kind => (ALL_ITEMS.find(i => i.k === kind) || {}).secti
 
 // Dica curta de cada tela (aparece no topo até tocar em "Entendi")
 const TIPS = {
-  today: 'Este é o seu resumo do dia. Toque em ⭐ numa tarefa para colocá-la nas 3 prioridades de hoje.',
-  tasks: 'Troque entre Lista, Quadro e Matriz no topo. Toque numa tarefa para editar, criar subtarefas ou repetir.',
+  today: 'Escreva no campo ✨ do seu jeito (“prova de física sexta 8h”) e o app entende o dia, a hora e a matéria. Arraste uma tarefa → para concluir ou ← para adiar. ⭐ marca as 3 prioridades do dia.',
+  tasks: 'Arraste uma tarefa com o dedo: → conclui, ← adia para amanhã. Ao digitar, “amanhã”, “sexta”, “dia 10”, “!” e o nome da matéria já preenchem os campos. Toque na tarefa para editar.',
   calendar: 'Toque num dia e em “Evento neste dia” para salvar provas, entregas e aniversários. O app avisa 1 dia antes. O 🗑 apaga.',
   schedule: 'Toque no + de um dia para cadastrar a aula. Na hora da aula, use “Anotar nesta aula”.',
   tools: 'Tabela periódica: toque num elemento. Gráfico: escreva a função (ex.: x^2 - 4). Tradutor: cole o texto.',
@@ -204,7 +204,7 @@ export function quickAdd() {
     ['search', 'search', 'Buscar', 'Achar qualquer coisa'],
   ];
   const ctx = A.contextNew && A.contextNew(); // ação principal da tela atual
-  const body = h(`<div>${ctx ? `<button class="quick-ctx" data-ctx="1"><span class="map-ic">${ic('plus')}</span><span><b>${esc(ctx.label)}</b><small>Nesta tela: ${esc(ctx.where)}</small></span></button>` : ''}
+  const body = h(`<div>${A.quickBar ? A.quickBar.html('qa-sheet') : ''}${ctx ? `<button class="quick-ctx" data-ctx="1"><span class="map-ic">${ic('plus')}</span><span><b>${esc(ctx.label)}</b><small>Nesta tela: ${esc(ctx.where)}</small></span></button>` : ''}
     <div class="quick-grid">${acts.map(([k, i, l, d]) => `<button class="quick" data-q="${k}"><span class="map-ic">${ic(i)}</span><b>${l}</b><small>${d}</small></button>`).join('')}</div></div>`);
   let closeFn;
   body.onclick = e => {
@@ -214,16 +214,18 @@ export function quickAdd() {
     closeFn && closeFn();
     A.quick(b.dataset.q);
   };
+  if (A.quickBar) A.quickBar.bind(body, { onDone: () => closeFn && closeFn() });
   modal({ title: 'Criar', body, wide: true, sheet: true, actions: [{ label: 'Fechar', value: null }], onOpen: (_el, c) => { closeFn = c; } });
 }
 
 // Dica do topo da tela
+const TIPS_V = { today: 2, tasks: 2 };
 export function addTip(el, kind) {
   const tip = TIPS[kind];
-  if (!tip || seenTips()[kind]) return;
+  if (!tip || (seenTips()[kind] || 0) >= (TIPS_V[kind] || 1)) return; // dica nova de uma tela aparece de novo
   const t = h(`<div class="view-tip">${ic('magic')}<span class="grow">${esc(tip)}</span><button class="chip small" type="button">Entendi</button></div>`);
   t.querySelector('button').onclick = () => {
-    const s = seenTips(); s[kind] = 1;
+    const s = seenTips(); s[kind] = TIPS_V[kind] || 1;
     try { localStorage.setItem(TIPS_KEY, JSON.stringify(s)); } catch { /* */ }
     t.remove();
   };

@@ -1238,12 +1238,12 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 #qz-mode { margin-bottom: 8px; }
 /* ===== Desempenho por matéria ===== */
 .subj-table { display: grid; gap: 2px; overflow-x: auto; }
-.subj-row { display: grid; grid-template-columns: minmax(130px, 1.6fr) repeat(5, minmax(72px, 1fr)) minmax(110px, 1.2fr); gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; min-width: 640px; }
-.subj-row.head { font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; }
-.subj-row:not(.head) { background: var(--panel-2); }
-.subj-row.bad { box-shadow: inset 4px 0 0 #dc2626; }
-.subj-row.mid { box-shadow: inset 4px 0 0 #f59e0b; }
-.subj-row.good { box-shadow: inset 4px 0 0 #16a34a; }
+.subj-table .subj-row { display: grid; grid-template-columns: minmax(130px, 1.6fr) repeat(5, minmax(72px, 1fr)) minmax(110px, 1.2fr); gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; min-width: 640px; }
+.subj-table .subj-row.head { font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; }
+.subj-table .subj-row:not(.head) { background: var(--panel-2); }
+.subj-table .subj-row.bad { box-shadow: inset 4px 0 0 #dc2626; }
+.subj-table .subj-row.mid { box-shadow: inset 4px 0 0 #f59e0b; }
+.subj-table .subj-row.good { box-shadow: inset 4px 0 0 #16a34a; }
 .subj-name { display: flex; align-items: center; gap: 8px; font-weight: 700; }
 .good-t { color: #15803d; } .mid-t { color: #b45309; } .bad-t { color: #dc2626; }
 .subj-panel { margin-top: 12px; }
@@ -1392,3 +1392,50 @@ button { -webkit-user-select: none; user-select: none; touch-action: manipulatio
 .task .tag.link { padding: 10px 6px; margin: -10px -6px; }
 label.check { min-height: 40px; }
 .av-quiet { display: block; font-size: 12px; color: #b45309; margin-top: 2px; }
+
+/* ===== Adição rápida (Hoje, botão + e Tarefas) ===== */
+.qa-bar { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 8px 8px 8px 14px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.04); transition: border-color .15s, box-shadow .15s; }
+.qa-bar:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.qa-row { display: flex; align-items: center; gap: 10px; }
+.qa-ic { color: #7c3aed; display: flex; flex: none; }
+.qa-ic .ic { width: 22px; height: 22px; }
+.qa-in { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; font-size: 16px; color: var(--text); padding: 10px 0; outline: none; }
+.qa-in::placeholder { color: var(--muted); }
+.qa-go { flex: none; }
+.qa-prev { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.qa-bar.has .qa-prev { padding: 8px 2px 2px; margin-top: 6px; border-top: 1px dashed var(--line); }
+.qa-kind { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 0 12px; min-height: 36px; font: inherit; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.qa-kind.event { background: #fff4e5; border-color: #f5c27a; color: #8a4b00; }
+.qa-kind.task { background: #e8f7ee; border-color: #9fd8b4; color: #146b39; }
+.qa-swap { opacity: .6; font-weight: 400; }
+.qa-title { font-size: 14px; margin-right: 2px; }
+.qa-part { font-size: 13px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 3px 10px; font-weight: 600; }
+.qa-part.warn { background: #fff4e5; color: #8a4b00; }
+.qa-sheet { margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .qa-kind.event, :root:not([data-theme="light"]) .qa-part.warn { background: #3a2b10; border-color: #7a5a1c; color: #ffd48a; } :root:not([data-theme="light"]) .qa-kind.task { background: #12301f; border-color: #2f6b47; color: #9be2b6; } }
+:root[data-theme="dark"] .qa-kind.event, :root[data-theme="dark"] .qa-part.warn { background: #3a2b10; border-color: #7a5a1c; color: #ffd48a; }
+:root[data-theme="dark"] .qa-kind.task { background: #12301f; border-color: #2f6b47; color: #9be2b6; }
+@media (max-width: 560px) { .qa-go span { display: none; } .qa-go { padding: 0 12px; } }
+.task-hint { display: flex; align-items: center; gap: 8px; margin: -6px 0 12px; padding: 6px 12px; font-size: 13px; color: var(--muted); }
+.task-hint .ic { width: 16px; height: 16px; color: #7c3aed; }
+.task-hint b { color: var(--text); }
+
+/* ===== Layout no tamanho do tablet (sem cartão sobrando sozinho numa linha) ===== */
+.sg-grid { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+.sg-grid:has(> :nth-child(4):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.kpis:has(> :nth-child(6):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) {
+  .week-grid { grid-template-columns: repeat(var(--cols), minmax(92px, 1fr)); gap: 6px; }
+  .day-col { padding: 6px; }
+}
+@media (max-width: 640px) { .sg-grid:has(> :nth-child(4):last-child) { grid-template-columns: 1fr; } }
+
+/* ===== Arrastar a tarefa: → conclui, ← adia ===== */
+#task-list > .task, .mini-task { touch-action: pan-y; position: relative; }
+.task.sw-on, .mini-task.sw-on { z-index: 2; box-shadow: 0 6px 18px rgba(0,0,0,.12); background: var(--panel); }
+.task.sw-on::after, .mini-task.sw-on::after { position: absolute; top: 50%; transform: translate(var(--swx, 0), -50%); font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; white-space: nowrap; pointer-events: none; opacity: .55; transition: opacity .12s; }
+.task.sw-right::after, .mini-task.sw-right::after { content: '✓ Concluir'; right: calc(100% + 10px); left: auto; background: #dcfce7; color: #166534; transform: translate(0, -50%); }
+.task.sw-left::after, .mini-task.sw-left::after { content: '⏭️ Amanhã'; left: calc(100% + 10px); right: auto; background: #dbeafe; color: #1e40af; transform: translate(0, -50%); }
+.task.sw-ready::after, .mini-task.sw-ready::after { opacity: 1; }
+.task.sw-right.sw-ready, .mini-task.sw-right.sw-ready { box-shadow: inset 4px 0 0 #16a34a, 0 6px 18px rgba(0,0,0,.12); }
+.task.sw-left.sw-ready, .mini-task.sw-left.sw-ready { box-shadow: inset -4px 0 0 #2563eb, 0 6px 18px rgba(0,0,0,.12); }

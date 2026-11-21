@@ -204,7 +204,7 @@ export function modal({ title, body = '', actions = [{ label: 'OK', value: true,
       back.addEventListener('input', keep);
       back.addEventListener('change', keep);
     }
-    const first = back.querySelector('input:not([type=checkbox]):not([type=color]),textarea');
+    const first = back.querySelector('input:not([type=checkbox]):not([type=color]):not([data-nofocus]),textarea:not([data-nofocus])');
     if (first) setTimeout(() => { first.focus(); first.select?.(); }, 60);
   });
 }

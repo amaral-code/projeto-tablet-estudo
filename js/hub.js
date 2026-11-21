@@ -752,6 +752,7 @@ function renderToday(el) {
       ${A.levelBadge ? A.levelBadge() : ''}
       <div class="streak ${streak ? 'on' : ''}">🔥 <b>${streak}</b> <span>${streak === 1 ? 'dia seguido' : 'dias seguidos'} estudando</span></div>
     </div>
+    ${A.quickBar ? A.quickBar.html('qa-today') : ''}
     ${A.todayTop ? A.todayTop.html() : ''}
     <div class="today-grid">
       <div class="panel t-tasks"><div class="p-head"><h3>${ic('tasks')}Tarefas de hoje</h3><button class="icon-btn small" id="td-add" aria-label="Nova tarefa">${ic('plus')}</button></div>
@@ -783,6 +784,7 @@ function renderToday(el) {
   bindMiniTasks(el);
   if (A.extraToday) A.extraToday.bind(el);
   if (A.todayTop) A.todayTop.bind(el);
+  if (A.quickBar) A.quickBar.bind(el);
 }
 
 // ======================= roteamento =======================

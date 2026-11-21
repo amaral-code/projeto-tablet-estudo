@@ -32,9 +32,9 @@ async function save(ev) {
 }
 
 // Criar ou editar um evento
-export async function eventDialog(ev, { date } = {}) {
+export async function eventDialog(ev, pre = {}) {
   const isNew = !ev;
-  ev = ev ? { ...ev } : { id: A.uid(), title: '', date: date || dayStr(), time: '', prio: 2, kind: 'outro', notes: '', remind: true, createdAt: Date.now() };
+  ev = ev ? { ...ev } : { id: A.uid(), title: pre.title || '', date: pre.date || dayStr(), time: pre.time || '', prio: [1, 2, 3].includes(+pre.prio) ? +pre.prio : 2, kind: pre.kind || 'outro', notes: '', remind: true, createdAt: Date.now(), ...(pre.folderId ? { folderId: pre.folderId } : {}) };
   const body = h(`<div class="ev-form">
     <label class="lbl">O que é</label>
     <input class="input" id="ev-title" value="${esc(ev.title)}" placeholder="Ex.: Prova de Matemática, Entrega do trabalho, Aniversário da mãe">
@@ -71,6 +71,16 @@ export async function eventDialog(ev, { date } = {}) {
   await skipPastFor(ev.id).catch(() => {});
   toast(isNew ? `Evento salvo 📅 ${ev.remind ? '— aviso na véspera e no dia' : ''}` : 'Evento salvo');
   if (ev.remind) askPermission();
+  A.onChange();
+  return ev;
+}
+
+// Criar um evento direto (adição rápida, Archie): já com aviso na véspera e no dia
+export async function addEvent({ title, date, time = '', kind = 'outro', prio = 2, notes = '', folderId = '' }) {
+  const ev = { id: A.uid(), title: String(title || 'Evento'), date, time, kind, prio: [1, 2, 3].includes(+prio) ? +prio : 2, notes, remind: true, createdAt: Date.now(), ...(folderId ? { folderId } : {}) };
+  await save(ev);
+  await skipPastFor(ev.id).catch(() => {});
+  askPermission();
   A.onChange();
   return ev;
 }

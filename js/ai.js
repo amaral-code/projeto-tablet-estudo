@@ -11,6 +11,9 @@ import { CHAVE_GEMINI } from './chave.js';
 //  - o nome "-latest" sempre aponta para o Flash-Lite mais novo, então não fica desatualizado.
 export const GEMINI_MODEL = 'gemini-flash-lite-latest';
 export const GEMINI_FALLBACK = 'gemini-3.1-flash-lite';
+// último recurso: o Flash (um pouco mais lento, mas com cota própria no plano gratuito); entra só se os dois de cima falharem
+export const GEMINI_LAST = 'gemini-3.5-flash';
+export const GEMINI_CHAIN = [GEMINI_MODEL, GEMINI_FALLBACK, GEMINI_LAST];
 export const MAX_PAGES = 20;
 export const maxPages = () => MAX_PAGES;
 const GEMINI_URL = m => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:streamGenerateContent?alt=sse`;
@@ -142,8 +145,9 @@ export function geminiBody(messages, model = GEMINI_MODEL, opts = {}) {
         : { inline_data: { mime_type: b.source.media_type, data: b.source.data } })),
   })).filter(c => c.parts.length);
   const generationConfig = { maxOutputTokens: opts.maxTokens || 8192, temperature: 0.4 };
-  // versão rápida: raciocínio baixo no modelo principal (no reserva, o padrão já é rápido)
+  // versão rápida: raciocínio baixo no modelo principal e mínimo no último recurso (no reserva, o padrão já é rápido)
   if (model === GEMINI_MODEL) generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+  if (model === GEMINI_LAST) generationConfig.thinkingConfig = { thinkingLevel: 'minimal' };
   if (opts.json) generationConfig.responseMimeType = 'application/json';
   return { systemInstruction: { parts: [{ text: opts.system || SYSTEM }] }, contents, generationConfig };
 }
@@ -164,9 +168,16 @@ const sleepAbort = (ms, signal) => new Promise((res, rej) => {
   signal.addEventListener('abort', () => { clearTimeout(t); const e = new Error('abort'); e.name = 'AbortError'; rej(e); }, { once: true });
 });
 // faz o pedido tentando de novo quando o serviço está sobrecarregado (500/502/503/504)
+// ou quando a internet do tablet piscou (falha de rede no meio do caminho)
 async function fetchRetry(url, opts, signal, tries = 3) {
   for (let a = 0; ; a++) {
-    const res = await fetch(url, opts);
+    let res;
+    try { res = await fetch(url, opts); }
+    catch (e) {
+      if (e.name === 'AbortError' || signal.aborted || a >= tries - 1) throw e;
+      await sleepAbort(1200 * (a + 1), signal);
+      continue;
+    }
     if (![500, 502, 503, 504].includes(res.status) || a >= tries - 1) return res;
     await sleepAbort(1000 * (a + 1), signal);
   }
@@ -260,11 +271,12 @@ export function streamChat(messages, onText, opts = {}) {
 
   const done = new Promise((resolve, reject) => {
     const runs = new Map(); // modelo -> AbortController da tentativa
-    const errs = {};
+    const errs = {}, tried = new Set();
     let winner = null, settled = false, hedge = null;
     const end = (fn, v) => { if (settled) return; settled = true; clearTimeout(hedge); fn(v); };
     const start = model => {
-      if (runs.has(model) || settled || ctrl.signal.aborted) return;
+      if (tried.has(model) || settled || ctrl.signal.aborted) return;
+      tried.add(model);
       const ac = new AbortController();
       runs.set(model, ac);
       attempt(model, ac, t => {
@@ -279,11 +291,14 @@ export function streamChat(messages, onText, opts = {}) {
         if (winner === model) { end(reject, e); return; }
         if (winner || settled) return; // perdeu a corrida: já foi cancelado
         errs[model] = e;
-        if (model === GEMINI_MODEL && e.retryable && !ctrl.signal.aborted) start(GEMINI_FALLBACK);
+        // falhou por sobrecarga, cota ou modelo indisponível: passa para o próximo modelo da fila
+        const next = GEMINI_CHAIN.find(m => !tried.has(m));
+        if (e.retryable && next && !ctrl.signal.aborted) start(next);
         if (!runs.size) {
-          // os dois falharam: mostra o erro que explica melhor (o do principal, se não era caso de reserva)
-          const p = errs[GEMINI_MODEL], f = errs[GEMINI_FALLBACK];
-          end(reject, p && (!p.retryable || !f || f.name === 'AbortError') ? p : (f || p));
+          // todos falharam: mostra o erro que explica melhor (o do principal, se não era caso de reserva)
+          const p = errs[GEMINI_MODEL];
+          const others = GEMINI_CHAIN.slice(1).map(m => errs[m]).filter(x => x && x.name !== 'AbortError');
+          end(reject, p && (!p.retryable || !others.length) ? p : others[others.length - 1]);
         }
       });
     };

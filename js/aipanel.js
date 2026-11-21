@@ -2,7 +2,7 @@
 import { ACTIONS, aiConfigured, buildContent, streamChat, cleanText, extractTasks, parseFlashcards, maxPages } from './ai.js';
 import { getEditorContext, insertText } from './editor.js';
 import { shareText } from './export.js';
-import { ic, esc, h, toast, modal } from './ui.js';
+import { ic, esc, h, toast, modal, keepDraft } from './ui.js';
 import { speak, stopSpeak } from './voice.js';
 
 let cb = {};
@@ -44,12 +44,14 @@ export function initAIPanel(callbacks) {
   const q = panel.querySelector('#ai-q');
   q.addEventListener('input', () => { q.style.height = 'auto'; q.style.height = Math.min(140, q.scrollHeight) + 'px'; });
   q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); panel.querySelector('#ai-ask').requestSubmit(); } });
+  const clearDraft = keepDraft(q, 'pergunta-ia');
   panel.querySelector('#ai-ask').onsubmit = e => {
     e.preventDefault();
     if (busy) { stop(); return; }
     const text = q.value.trim();
     if (!text) return;
     q.value = ''; q.style.height = 'auto';
+    clearDraft();
     ask(text);
   };
   panel.addEventListener('pointerdown', e => e.stopPropagation());

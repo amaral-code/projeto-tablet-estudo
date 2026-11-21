@@ -134,6 +134,7 @@ async function geminiMock(c) {
     if (gemMode === '503primary' && primary) return err(503, 'UNAVAILABLE', 'This model is currently experiencing high demand.');
     if (gemMode === '404primary' && primary) return err(404, 'NOT_FOUND', 'This model is no longer available to new users.');
     if (gemMode === '429') return err(429, 'RESOURCE_EXHAUSTED', 'You exceeded your current quota');
+    if (gemMode === '429two' && !url.includes('/models/gemini-3.5-flash:')) return err(429, 'RESOURCE_EXHAUSTED', 'You exceeded your current quota');
     if (gemMode === 'slowprimary' && primary) await new Promise(res => setTimeout(res, 8000));
     const reply = geminiReply(body);
     let sse = `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'pensando…', thought: true }] } }] })}\r\n\r\n`;
@@ -991,11 +992,16 @@ function watch(p) {
     r = await run('404primary', 'summary');
     assert(r.map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite', '404: ' + r.map(modelOf));
   });
-  await step('Gemini: cota esgotada nos dois modelos mostra aviso claro', async () => {
-    gemMode = '429'; const n0 = gemReqs.length;
+  await step('Gemini: cota esgotada em dois modelos → o terceiro responde; nos três → aviso claro', async () => {
+    gemMode = '429two'; let n0 = gemReqs.length;
+    await page.click('.ai-act[data-a=summary]'); await wait(300);
+    await page.waitForFunction(() => document.querySelectorAll('.ai-turn.assistant:not(.streaming) .ai-result').length >= 1 && !document.querySelector('.ai-turn.streaming'), null, { timeout: 15000 });
+    assert(!(await page.locator('.ai-turn.error').count()), 'mostrou erro com o terceiro modelo livre');
+    assert(gemReqs.slice(n0).map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite,gemini-3.5-flash', 'fila de modelos: ' + gemReqs.slice(n0).map(modelOf));
+    gemMode = '429'; n0 = gemReqs.length;
     await page.click('.ai-act[data-a=quiz]'); await page.waitForSelector('.ai-turn.error', { timeout: 8000 });
     assert((await page.textContent('.ai-turn.error')).includes('Limite do Gemini'), 'mensagem do 429');
-    assert(gemReqs.slice(n0).map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite', 'a cota é por modelo: devia tentar o reserva');
+    assert(gemReqs.slice(n0).map(modelOf).join(',') === 'gemini-flash-lite-latest,gemini-3.1-flash-lite,gemini-3.5-flash', 'a cota é por modelo: devia tentar os reservas');
     gemMode = 'ok';
     await page.click('#ai-close'); await page.click('#ed-back'); await wait(900);
   });
@@ -1594,6 +1600,82 @@ function watch(p) {
     await page.keyboard.press('Control+k'); await page.fill('.pal-in input', 'lei de ohm'); await wait(200);
     await page.click('.pal-item:has-text("Fórmula") >> nth=0'); await wait(400);
     assert(await page.textContent('#view-title') === 'Fórmulas' && await page.locator('.fm-card.open[data-fid="ohm"]').count() === 1, 'não abriu a lei de Ohm');
+  });
+
+  // ================= SALVAMENTO =================
+  console.log('Salvamento: nada se perde');
+  await step('Caderno: botão Salvar, título salva enquanto digita e salva mesmo escrevendo sem parar', async () => {
+    await nav('all');
+    await page.click('.card[data-id] >> nth=0'); await wait(800);
+    assert(/Salvo/.test(await page.textContent('#ed-save')), 'botão mostra "Salvo"');
+    await page.click('#ed-title'); await page.keyboard.press('Control+a'); await page.keyboard.type('Título sem sair do campo');
+    await wait(1400);
+    assert(await noteByTitle('Título sem sair do campo'), 'o título não salvou enquanto digitava');
+    await page.click('[data-tool=pen]'); await page.selectOption('#ed-auto', 'off'); await wait(200);
+    // escrevendo sem parar por 6 s: precisa salvar no meio, não só no fim
+    const b = await stageBox(); const n0 = (await contentOf('Título sem sair do campo')).pages[0].strokes.length;
+    const t0 = Date.now(); let k = 0;
+    while (Date.now() - t0 < 6000) { await draw([[120 + (k % 10) * 30, 500], [140 + (k % 10) * 30, 540]]); await wait(250); k++; }
+    const mid = (await contentOf('Título sem sair do campo')).pages[0].strokes.length;
+    assert(mid > n0 + 3, `escrevendo sem parar não salvou no meio (${n0} → ${mid}, ${k} traços)`);
+    await page.click('#ed-save'); await toastHas('Salvo ✓');
+    const end = (await contentOf('Título sem sair do campo')).pages[0].strokes.length;
+    assert(end === n0 + k, `traços salvos ${end - n0} de ${k}`);
+  });
+  await step('Caderno: se o Android fechar o app antes de gravar, a cópia de emergência volta ao abrir', async () => {
+    const n = await noteByTitle('Título sem sair do campo');
+    const c = await contentOf('Título sem sair do campo');
+    await page.click('#ed-back'); await wait(900);
+    // simula: a cópia de emergência ficou mais nova que o banco (o app foi fechado no meio da gravação)
+    await page.evaluate(([meta, content]) => {
+      content.pages[0].texts.push({ id: 'resgate', x: 120, y: 700, text: 'Escrito antes de fechar', size: 28, color: '#000' });
+      localStorage.setItem('caderno-resgate', JSON.stringify({ meta: { ...meta, title: 'Anotação recuperada', updatedAt: meta.updatedAt + 5000 }, content }));
+    }, [n, c]);
+    await page.goto(base); await toastHas('Recuperei', 8000);
+    const back = await contentOf('Anotação recuperada');
+    assert(back && back.pages[0].texts.some(t => t.text === 'Escrito antes de fechar'), 'não recuperou a anotação');
+    assert(!(await page.evaluate(() => localStorage.getItem('caderno-resgate'))), 'a cópia de emergência não foi apagada');
+    // uma cópia mais velha que o banco é ignorada
+    await page.evaluate(([meta, content]) => localStorage.setItem('caderno-resgate', JSON.stringify({ meta: { ...meta, title: 'Velha', updatedAt: 1 }, content })), [n, c]);
+    await page.goto(base); await wait(1500);
+    assert(!(await noteByTitle('Velha')) && await noteByTitle('Anotação recuperada'), 'uma cópia velha sobrescreveu a anotação');
+  });
+  await step('Janelas: tocar fora não apaga o que foi escrito; o rascunho volta depois', async () => {
+    await nav('tasks');
+    await page.click('#btn-new'); await page.fill('#t-title', 'Tarefa quase perdida');
+    await page.mouse.click(5, 5); await wait(300);
+    assert(await page.locator('#t-title').count() === 1, 'a janela fechou e apagou o texto');
+    assert(await page.locator('.modal-keep').count() === 1, 'não perguntou se quer guardar');
+    await page.click('.modal-keep [data-k=save]'); await wait(500);
+    assert((await idb('tasks')).some(t => t.title === 'Tarefa quase perdida'), 'o "Salvar" da pergunta não salvou');
+    // app fechado com a janela aberta: o rascunho volta
+    await page.click('#btn-new'); await page.fill('#t-title', 'Rascunho de tarefa'); await page.fill('#t-notes', 'detalhes importantes'); await wait(500);
+    await page.goto(base); await wait(1300); await nav('tasks');
+    await page.click('#btn-new'); await wait(300);
+    assert(await page.inputValue('#t-title') === 'Rascunho de tarefa' && await page.inputValue('#t-notes') === 'detalhes importantes', 'o rascunho não voltou');
+    assert(await page.locator('.modal-draft').count() === 1, 'não avisou que recuperou');
+    await page.click('.modal .btn.primary'); await wait(500);
+    await page.click('#btn-new'); await wait(300);
+    assert(await page.inputValue('#t-title') === '', 'depois de salvar, o rascunho devia sumir');
+    // sem nada escrito, tocar fora fecha normalmente
+    await page.mouse.click(5, 5); await wait(400);
+    assert(await page.locator('#t-title').count() === 0, 'janela vazia não fechou ao tocar fora');
+  });
+  await step('Diário salva sozinho enquanto escreve; nota rápida e pergunta ao tutor guardam rascunho', async () => {
+    await nav('journal');
+    await page.fill('#jr-tomorrow', 'Revisar geometria amanhã'); await wait(1300);
+    assert(/Salvo automaticamente/.test(await page.textContent('#jr-auto')), 'não mostrou "Salvo automaticamente"');
+    await nav('quick');
+    await page.fill('#qn-new', 'Ideia que não posso perder'); await wait(500);
+    await page.goto(base); await wait(1300);
+    const today = (await idb('journal')).find(j => j.tomorrow === 'Revisar geometria amanhã');
+    assert(today, 'o diário não salvou sozinho');
+    await nav('quick');
+    assert(await page.inputValue('#qn-new') === 'Ideia que não posso perder', 'a nota rápida não guardou o rascunho');
+    await page.press('#qn-new', 'Enter'); await wait(500);
+    assert(await page.inputValue('#qn-new') === '', 'depois de salvar a nota o campo devia ficar vazio');
+    await nav('today'); await nav('quick');
+    assert(await page.inputValue('#qn-new') === '', 'o rascunho voltou depois de salvar');
   });
 
   // ================= CONFIABILIDADE =================

@@ -18,6 +18,9 @@ const P = {
   folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  cloudok: '<path d="m17 15-5.5 5.5L9 18"/><path d="M5 17.743A7 7 0 1 1 15.71 10h1.79a4.5 4.5 0 0 1 1.5 8.742"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  cloudoff: '<path d="m2 2 20 20"/><path d="M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193"/><path d="M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07"/>',
   more: '<circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/>',
   magic: '<path d="m21.6 2.4-1-1a1.2 1.2 0 0 0-1.7 0L2.4 18.1a1.2 1.2 0 0 0 0 1.7l1 1a1.2 1.2 0 0 0 1.7 0L21.6 4.1a1.2 1.2 0 0 0 0-1.7Z"/><path d="m14 7 3 3"/><path d="M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/>',
   calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M16 14v4M16 10h.01M12 10h.01M8 10h.01M12 14h.01M8 14h.01M12 18h.01M8 18h.01"/>',
@@ -113,6 +116,17 @@ export function toast(msg, ms = 2600, action) {
 
 // ---------- Modal ----------
 // modal({title, body: string|Element, actions:[{label, value, primary, danger}], onOpen(el)})
+// Rascunhos: o que você digita numa janela fica guardado até salvar. Se o app fechar ou a janela sumir,
+// ao abrir a mesma janela de novo o texto volta.
+const DRAFT = 'caderno-rascunho:';
+const hashStr = t => { let x = 0; for (let i = 0; i < t.length; i++) x = (x * 31 + t.charCodeAt(i)) | 0; return (x >>> 0).toString(36); };
+const draftFields = root => [...root.querySelectorAll('.modal-body input, .modal-body textarea, .modal-body select')]
+  .filter(f => !['file', 'button', 'submit', 'hidden', 'password', 'range', 'color', 'search'].includes(f.type) && !f.closest('[data-nodraft]'));
+const fieldVal = f => (f.type === 'checkbox' || f.type === 'radio' ? f.checked : f.value);
+const setVal = (f, v) => { if (f.type === 'checkbox' || f.type === 'radio') f.checked = !!v; else f.value = v; f.dispatchEvent(new Event('input', { bubbles: true })); };
+const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* */ } };
+
 export function modal({ title, body = '', actions = [{ label: 'OK', value: true, primary: true }], onOpen, wide, sheet }) {
   return new Promise(resolve => {
     const back = h(`<div class="modal-back ${sheet ? 'sheet-back' : ''}"><div class="modal ${wide ? 'wide' : ''} ${sheet ? 'sheet' : ''}" role="dialog" aria-modal="true">
@@ -120,24 +134,40 @@ export function modal({ title, body = '', actions = [{ label: 'OK', value: true,
     const bodyEl = back.querySelector('.modal-body');
     if (typeof body === 'string') bodyEl.innerHTML = body; else bodyEl.appendChild(body);
     const acts = back.querySelector('.modal-actions');
-    let done = false;
+    // janela de "preencher e salvar" (tem um botão principal que não é só "Fechar")
+    const saveIdx = actions.findIndex(a => a.primary && a.label !== 'Fechar');
+    let done = false, initial = null, draftKey = null, draftT = 0;
+    const current = () => draftFields(back).map(fieldVal);
+    const isDirty = () => initial && JSON.stringify(current()) !== JSON.stringify(initial);
     const close = v => {
       if (done) return; done = true;
+      clearTimeout(draftT);
       back.classList.remove('show');
       setTimeout(() => back.remove(), 180);
       resolve(v);
     };
-    for (const a of actions) {
+    actions.forEach((a, i) => {
       const b = h(`<button class="btn ${a.primary ? 'primary' : ''} ${a.danger ? 'danger' : ''}">${esc(a.label)}</button>`);
       b.onclick = () => {
         if (a.validate && !a.validate(back)) return;
+        if (draftKey) lsSet(draftKey, null); // salvou ou escolheu cancelar: o rascunho não é mais preciso
         close(typeof a.value === 'function' ? a.value(back) : a.value);
       };
       acts.appendChild(b);
-    }
-    back.addEventListener('pointerdown', e => { if (e.target === back) close(undefined); });
+    });
+    // tocar fora (ou Esc) com algo escrito não apaga: pergunta se quer salvar
+    const softClose = () => {
+      if (saveIdx < 0 || !isDirty()) { if (draftKey) lsSet(draftKey, null); close(undefined); return; }
+      if (back.querySelector('.modal-keep')) { back.querySelector('.modal').classList.remove('shake'); void back.offsetWidth; back.querySelector('.modal').classList.add('shake'); return; }
+      const bar = h(`<div class="modal-keep" role="alert"><span class="grow">✏️ Você escreveu algo aqui. Quer guardar?</span>
+        <button class="btn small-btn" data-k="discard">Descartar</button><button class="btn primary small-btn" data-k="save">Salvar</button></div>`);
+      bar.querySelector('[data-k=discard]').onclick = () => { if (draftKey) lsSet(draftKey, null); close(undefined); };
+      bar.querySelector('[data-k=save]').onclick = () => { bar.remove(); acts.children[saveIdx].click(); };
+      acts.before(bar);
+    };
+    back.addEventListener('pointerdown', e => { if (e.target === back) softClose(); });
     back.addEventListener('keydown', e => {
-      if (e.key === 'Escape') close(undefined);
+      if (e.key === 'Escape') softClose();
       if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
         const p = actions.findIndex(a => a.primary);
         if (p >= 0) acts.children[p].click();
@@ -147,9 +177,34 @@ export function modal({ title, body = '', actions = [{ label: 'OK', value: true,
     back._close = close;
     requestAnimationFrame(() => back.classList.add('show'));
     onOpen && onOpen(back, close);
+    if (saveIdx >= 0 && draftFields(back).length) {
+      initial = current();
+      draftKey = DRAFT + hashStr((title || '') + '|' + JSON.stringify(initial));
+      let saved = null;
+      try { saved = JSON.parse(lsGet(draftKey) || 'null'); } catch { /* */ }
+      const fs = draftFields(back);
+      if (Array.isArray(saved) && saved.length === fs.length && JSON.stringify(saved) !== JSON.stringify(initial)) {
+        fs.forEach((f, i) => setVal(f, saved[i]));
+        const note = h(`<div class="modal-draft">✏️ Recuperei o que você estava escrevendo. <button class="link" type="button">Descartar</button></div>`);
+        note.querySelector('button').onclick = () => { draftFields(back).forEach((f, i) => setVal(f, initial[i])); lsSet(draftKey, null); note.remove(); };
+        bodyEl.prepend(note);
+      }
+      const keep = () => { clearTimeout(draftT); draftT = setTimeout(() => { if (!done) lsSet(draftKey, isDirty() ? JSON.stringify(current()) : null); }, 250); };
+      back.addEventListener('input', keep);
+      back.addEventListener('change', keep);
+    }
     const first = back.querySelector('input:not([type=checkbox]):not([type=color]),textarea');
     if (first) setTimeout(() => { first.focus(); first.select?.(); }, 60);
   });
+}
+
+// Rascunho de um campo fora de janela (nota rápida, pergunta ao tutor…). Devolve a função que apaga o rascunho.
+export function keepDraft(el, name) {
+  const k = DRAFT + name;
+  if (!el.value) { const v = lsGet(k); if (v) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); } }
+  let t = 0;
+  el.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => lsSet(k, el.value.trim() ? el.value : null), 250); });
+  return () => { clearTimeout(t); lsSet(k, null); };
 }
 
 export async function promptText(title, value = '', placeholder = '') {

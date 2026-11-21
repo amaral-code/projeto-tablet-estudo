@@ -18,7 +18,17 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/ja
 const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
 
 // pedido direto (curl): a chave vai pela entrada padrão, nunca em arquivo nem na lista de processos
+// pedido direto (como o app faz): tenta de novo quando o Google responde "sobrecarregado" (5xx), igual ao app
 function gemini(model, body) {
+  let r;
+  for (let a = 0; a < 3; a++) {
+    r = geminiOnce(model, body);
+    if (!(r.err && r.err.code >= 500)) break;
+    execFileSync('sleep', [String(a + 1)]);
+  }
+  return r;
+}
+function geminiOnce(model, body) {
   const f = path.join(TMP, 'body.json');
   fs.writeFileSync(f, JSON.stringify(body));
   const t0 = Date.now();
@@ -82,14 +92,14 @@ function lessonAudio() {
     const content = await ai.buildContent({ pages: [pg], bg: { type: 'lines', color: 'white' }, title: 'Frações', folder: 'Matemática', prompt: ai.ACTIONS.explain.prompt });
     const ping = [{ role: 'user', content: 'Responda apenas: Tudo certo!' }];
     return {
-      model: ai.GEMINI_MODEL, fallback: ai.GEMINI_FALLBACK,
+      model: ai.GEMINI_MODEL, fallback: ai.GEMINI_FALLBACK, last: ai.GEMINI_LAST, lastBody: ai.geminiBody(ping, ai.GEMINI_LAST),
       body: ai.geminiBody([{ role: 'user', content }]),
       textBody: ai.geminiBody(ping), fallbackBody: ai.geminiBody(ping, ai.GEMINI_FALLBACK),
       chatBody: ai.geminiBody([{ role: 'user', content: 'Meu nome é Ana. Responda só: ok' }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'Qual é o meu nome? Responda só o nome.' }]),
     };
   });
   await browser.close();
-  console.log(`\nTeste real do Gemini rapidão — principal: ${built.model} · reserva: ${built.fallback}\n`);
+  console.log(`\nTeste real do Gemini rapidão — principal: ${built.model} · reservas: ${built.fallback}, ${built.last}\n`);
 
   // 2) direto na API
   const t1 = gemini(built.model, built.textBody);
@@ -97,6 +107,8 @@ function lessonAudio() {
   if (t1.err) return finish(results);
   const tf = gemini(built.fallback, built.fallbackBody);
   ok('modelo reserva também responde', !tf.err && /tudo certo/i.test(tf.text), tf.err ? `${tf.err.code} ${tf.err.message}` : `${tf.secs.toFixed(1)}s (${tf.version})`);
+  const tl = gemini(built.last, built.lastBody);
+  ok('terceiro modelo (último recurso) também responde', !tl.err && /tudo certo/i.test(tl.text), tl.err ? `${tl.err.code} ${tl.err.message}` : `${tl.secs.toFixed(1)}s (${tl.version})`);
   const t3 = gemini(built.model, built.chatBody);
   ok('conversa com histórico (lembra o nome)', !t3.err && /ana/i.test(t3.text), t3.err ? t3.err.message : JSON.stringify(t3.text.trim()));
   const t2 = gemini(built.model, built.body);
@@ -132,6 +144,17 @@ function lessonAudio() {
     }));
   }
   ok('rapidão no app: 3 respostas, cada uma em menos de 8 s', pings.every(p => p.ok && p.secs < 8), pings.map(p => p.ok ? `${p.secs.toFixed(1)}s (${p.model === built.model ? 'principal' : 'reserva'})` : p.err).join(' · '));
+
+  // os dois primeiros modelos "sem cota" (429 simulado): o app tem que cair no terceiro de verdade
+  await page.route(u => /models\/(gemini-flash-lite-latest|gemini-3\.1-flash-lite):/.test(u.href), r => r.fulfill({ status: 429, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota' } }) }));
+  const last = await page.evaluate(async () => {
+    const ai = await import('./js/ai.js');
+    const t0 = performance.now(); let txt = '';
+    try { const res = await ai.streamChat([{ role: 'user', content: 'Responda apenas: Tudo certo!' }], t => { txt += t; }).done; return { ok: /tudo certo/i.test(txt), model: res.model, secs: (performance.now() - t0) / 1000 }; }
+    catch (e) { return { ok: false, err: e.message }; }
+  });
+  await page.unroute(u => /models\/(gemini-flash-lite-latest|gemini-3\.1-flash-lite):/.test(u.href));
+  ok('sem cota nos dois primeiros: o app responde pelo terceiro modelo', last.ok && last.model === built.last, last.ok ? `${last.secs.toFixed(1)}s (${last.model})` : last.err);
 
   const r = await page.evaluate(async () => {
     const ai = await import('./js/ai.js');

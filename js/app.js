@@ -1,7 +1,7 @@
 // App principal: biblioteca (pastas e anotações), tarefas, ajustes, compartilhamento e backup.
 import { db, settings, saveSettings } from './store.js';
 import { uid, PAPER_COLORS, PAPER_TYPES, PAGE_W, PAGE_H, layoutText } from './ink.js';
-import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages, insertText, getEditorContext } from './editor.js';
+import { initEditor, openEditor, closeEditor, editorIsOpen, syncToggles, insertImagePages, insertText, getEditorContext, RESCUE_KEY } from './editor.js';
 import { initAIPanel, toggleAIPanel, resetAIPanel, openAIDialog } from './aipanel.js';
 import { streamChat, aiConfigured, usingBuiltinKey, hasBuiltinKey } from './ai.js';
 import { initData, DATA_VIEWS, renderData, importBackupFile } from './data.js';
@@ -99,6 +99,7 @@ async function init() {
     }),
   });
   bindLibrary();
+  const rescued = await rescueNote();
   await loadAll();
   if (!localStorage.getItem('caderno-seeded') && !state.notes.length && !state.folders.length) await seed();
   const api = {
@@ -154,6 +155,7 @@ async function init() {
   routeFromURL();
   render();
   hideBoot();
+  if (rescued) toast(`Recuperei o que você escreveu em “${rescued}” ✓`, 6000);
   setTimeout(() => tour(false), 600);
   $('btn-palette').onclick = openPalette;
   document.addEventListener('keydown', e => {
@@ -1164,6 +1166,24 @@ function reportError(err) {
 window.addEventListener('error', e => reportError(e.error || e.message));
 window.addEventListener('unhandledrejection', e => reportError(e.reason));
 document.addEventListener('caderno-db-blocked', () => toast('Feche as outras abas do Caderno para concluir a atualização.', 6000));
+
+// Se o Android fechou o app antes de o banco terminar de gravar, a cópia de emergência do editor volta para o banco
+async function rescueNote() {
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem(RESCUE_KEY) || 'null'); } catch { /* */ }
+  if (!r || !r.meta || !r.meta.id || !r.content) return null;
+  try {
+    const cur = await db.get('notes', r.meta.id);
+    let back = null;
+    if (!cur || (cur.updatedAt || 0) < (r.meta.updatedAt || 0)) {
+      await db.put('pages', r.content);
+      await db.put('notes', r.meta);
+      back = r.meta.title || 'Sem título';
+    }
+    localStorage.removeItem(RESCUE_KEY);
+    return back;
+  } catch { return null; }
+}
 
 function hideBoot() { const b = document.getElementById('boot'); if (!b) return; b.classList.add('gone'); setTimeout(() => b.remove(), 400); }
 

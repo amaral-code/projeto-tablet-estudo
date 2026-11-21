@@ -244,7 +244,12 @@ details summary { cursor: pointer; padding: 8px 0; }
 }
 .ed-title { border: 0; background: transparent; font-weight: 700; font-size: 18px; min-width: 80px; width: 30vw; max-width: 380px; padding: 8px; border-radius: 10px; outline: none; }
 .ed-title:focus { background: var(--panel-2); }
-.save-state { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.save-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border-radius: 18px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; flex: none; }
+.save-btn .ic { width: 18px; height: 18px; }
+.save-btn[data-st=ok] { color: #15803d; border-color: rgba(21, 128, 61, .35); background: rgba(21, 128, 61, .07); }
+.save-btn[data-st=busy] { color: var(--accent); }
+.save-btn[data-st=busy] .ic { animation: pulse 1s infinite; }
+.save-btn[data-st=err] { color: #fff; background: #dc2626; border-color: #dc2626; }
 .spacer { flex: 1; }
 #ed-share { margin-left: 6px; }
 .ed-tools {
@@ -688,7 +693,8 @@ body.zen #zen-exit { display: flex; position: fixed; top: 16px; right: 16px; z-i
 @media (max-width: 560px) {
   .search { display: none; }
   #sort { display: none; }
-  .save-state { display: none; }
+  .save-btn span { display: none; }
+  .save-btn { padding: 0 8px; }
   .selbar button span { display: none; }
 }
 
@@ -1184,3 +1190,11 @@ body.in-tutor #focus-pill { top: max(10px, env(safe-area-inset-top)); bottom: au
 .flow-opts[hidden], #ed-para-box[hidden] { display: none; }
 @media (max-width: 900px) { .ed-tools .vsep { display: none; } }
 .tour-logo { width: 76px; height: 76px; border-radius: 20px; box-shadow: 0 8px 24px rgba(31, 75, 200, .25); display: block; margin: 0 auto 4px; }
+
+/* Rascunhos das janelas */
+.modal-keep { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #fff7e6; border: 1px solid #f5c26b; color: #7a4b00; font-weight: 600; font-size: 14px; }
+.modal-draft { margin-bottom: 10px; padding: 8px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; }
+.modal.shake { animation: shake .35s; }
+@keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .modal-keep { background: #3a2b10; color: #ffd48a; border-color: #7a5a1c; } }
+:root[data-theme=dark] .modal-keep { background: #3a2b10; color: #ffd48a; border-color: #7a5a1c; }

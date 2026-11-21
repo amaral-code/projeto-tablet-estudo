@@ -66,6 +66,8 @@ export function initEditor(callbacks) {
   $('ed-task').onclick = () => cb.onAddTask(E.meta);
   $('ed-paper').onclick = paperDialog;
   $('ed-settings').onclick = () => cb.onSettings();
+  $('ed-title').addEventListener('input', e => { if (!E) return; E.meta.title = e.target.value.trim() || 'Sem título'; markDirty(); });
+  $('ed-save').onclick = () => saveNow();
   $('ed-title').addEventListener('change', e => {
     E.meta.title = e.target.value.trim() || 'Sem título';
     e.target.value = E.meta.title;
@@ -93,8 +95,12 @@ export function initEditor(callbacks) {
   stage.addEventListener('contextmenu', e => e.preventDefault());
   new ResizeObserver(() => { if (E) resize(); }).observe(stage);
   document.addEventListener('keydown', onKey);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
-  window.addEventListener('pagehide', () => flushSave());
+  // o Android pode fechar o app a qualquer momento quando ele sai da tela: salva tudo na hora
+  const onHide = () => { if (!E) return; commitTextEdit(); rescueSnapshot(); flushSave(); };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); });
+  window.addEventListener('pagehide', onHide);
+  window.addEventListener('blur', () => { if (E && E.dirty) flushSave(); });
+  document.addEventListener('caderno-salvar-ja', () => { if (E) { commitTextEdit(); rescueSnapshot(); } });
 }
 
 export function editorIsOpen() { return !!E; }
@@ -1283,18 +1289,50 @@ function updateUndoBtns() {
   $('ed-undo').disabled = !E.undo.length;
   $('ed-redo').disabled = !E.redo.length;
 }
-function setSaveState(t) { $('ed-save').textContent = t; }
+const SAVE_LOOK = { 'Salvo': ['ok', 'cloudok'], 'Salvando…': ['busy', 'cloud'] };
+function setSaveState(t) {
+  const [st, icon] = SAVE_LOOK[t] || ['err', 'cloudoff'];
+  const b = $('ed-save');
+  b.dataset.st = st;
+  b.innerHTML = `${ic(icon)}<span>${t}</span>`;
+}
 function markDirty() {
   E.dirty = true;
+  if (!E.dirtySince) E.dirtySince = Date.now();
   setSaveState('Salvando…');
   clearTimeout(E.saveTimer);
-  E.saveTimer = setTimeout(() => flushSave(), 900);
+  // salva quando você para de escrever; escrevendo sem parar, salva pelo menos a cada 4 segundos
+  E.saveTimer = setTimeout(() => flushSave(), Date.now() - E.dirtySince > 4000 ? 0 : 900);
+}
+// Botão "Salvar": grava agora e confirma (o caderno também salva sozinho)
+async function saveNow() {
+  if (!E) return;
+  commitTextEdit();
+  E.dirty = true;
+  await flushSave();
+  if (E && !E.dirty && !E.saveError) toast('Salvo ✓  (o caderno também salva sozinho a cada traço)', 2500);
+}
+// Cópia de emergência (síncrona) para o caso de o Android fechar o app antes de o banco terminar de gravar.
+// Ao abrir o app de novo, se o banco ficou com uma versão mais velha, a cópia é recuperada.
+export const RESCUE_KEY = 'caderno-resgate';
+function rescueSnapshot() {
+  if (!E || (!E.dirty && !E.saving)) return;
+  try {
+    E.meta.updatedAt = Date.now();
+    const s = JSON.stringify({ meta: E.meta, content: E.content });
+    if (s.length < 4500000) localStorage.setItem(RESCUE_KEY, s);
+  } catch { /* sem espaço no localStorage: o banco ainda está gravando */ }
+}
+function clearRescue(id) {
+  try { const r = localStorage.getItem(RESCUE_KEY); if (r && r.includes(`"id":"${id}"`)) localStorage.removeItem(RESCUE_KEY); } catch { /* */ }
 }
 export async function flushSave() {
   if (!E || !E.dirty) return;
   const st = E;
   clearTimeout(st.saveTimer);
   st.dirty = false;
+  st.dirtySince = 0;
+  st.saving = true;
   st.meta.updatedAt = Date.now();
   st.meta.pageCount = st.content.pages.length;
   // texto digitado das páginas (inclusive o escrito pela IA) para a busca encontrar pelo conteúdo
@@ -1304,10 +1342,16 @@ export async function flushSave() {
   } catch { /* imagem ainda carregando */ }
   try {
     await cb.onSave(st.meta, st.content);
-    if (E === st && !st.dirty) setSaveState('Salvo');
+    st.saving = false; st.saveError = false;
+    if (!st.dirty) { clearRescue(st.meta.id); if (E === st) setSaveState('Salvo'); }
   } catch (e) {
+    st.saving = false; st.saveError = true;
     st.dirty = true;
-    toast('Erro ao salvar: ' + (e && e.message ? e.message : 'armazenamento cheio?'), 4000);
+    rescueSnapshot();
+    if (E === st) setSaveState('Não salvou');
+    toast('Não consegui salvar agora: ' + (e && e.message ? e.message : 'armazenamento cheio?') + '. Vou tentar de novo.', 5000);
+    clearTimeout(st.retryTimer);
+    st.retryTimer = setTimeout(() => { if (E === st && st.dirty) flushSave(); }, 4000);
   }
 }
 

@@ -25,7 +25,7 @@ function open() {
       r.onsuccess = () => {
         const d = r.result;
         // outra aba com versão nova: fecha esta conexão para não travar
-        d.onversionchange = () => { d.close(); location.reload(); };
+        d.onversionchange = () => { document.dispatchEvent(new Event('caderno-salvar-ja')); d.close(); location.reload(); };
         res(d);
       };
       r.onblocked = () => {

@@ -1,5 +1,5 @@
 // Tutor IA: conversa com o Gemini, com foto do exercício (câmera) e voz. As conversas ficam salvas.
-import { ic, esc, h, toast, confirmBox } from './ui.js';
+import { ic, esc, h, toast, confirmBox, keepDraft } from './ui.js';
 import { aiConfigured, streamChat, cleanText } from './ai.js';
 import { speak, attachDictation, stopSpeak } from './voice.js';
 
@@ -98,6 +98,7 @@ export function renderTutor(el) {
   msgs.scrollTop = msgs.scrollHeight;
   const q = el.querySelector('#tt-q');
   q.addEventListener('input', () => { q.style.height = 'auto'; q.style.height = Math.min(160, q.scrollHeight) + 'px'; });
+  const clearDraft = keepDraft(q, 'tutor');
   q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); el.querySelector('#tt-form').requestSubmit(); } });
   attachDictation(el.querySelector('#tt-mic'), q);
   el.querySelector('#tt-new').onclick = () => { stopSpeak(); cur = null; pending = null; renderTutor(el); el.querySelector('#tt-q').focus(); };
@@ -135,6 +136,7 @@ export function renderTutor(el) {
   el.querySelector('#tt-form').onsubmit = e => {
     e.preventDefault();
     if (busy) { busy.abort(); return; }
+    if (q.value.trim() || pending) clearDraft();
     send(el, q.value.trim());
   };
 }

@@ -81,7 +81,8 @@ export async function noteForClass(c) {
 }
 
 function renderSchedule(el) {
-  const showWeekend = X.classes.some(c => c.day === 0 || c.day === 6);
+  // fim de semana aparece se houver aula nele ou se hoje for sábado/domingo (para cadastrar aula de sábado)
+  const showWeekend = X.classes.some(c => c.day === 0 || c.day === 6) || [0, 6].includes(new Date().getDay());
   const days = showWeekend ? [1, 2, 3, 4, 5, 6, 0] : [1, 2, 3, 4, 5];
   const wd = new Date().getDay(), m = nowMin();
   const { now, next } = classNow();
@@ -145,7 +146,7 @@ function renderJournal(el) {
       <label class="lbl">O que eu aprendi hoje</label><textarea class="input" id="jr-learned" rows="3" placeholder="Ex.: aprendi a somar frações com denominadores diferentes…">${esc(e.learned)}</textarea>
       <label class="lbl">O que foi difícil (para revisar)</label><textarea class="input" id="jr-hard" rows="2">${esc(e.hard)}</textarea>
       <label class="lbl">Meu plano para amanhã</label><textarea class="input" id="jr-tomorrow" rows="2">${esc(e.tomorrow)}</textarea>
-      <div class="row wrap"><button class="btn primary" type="submit">${ic('check')}<span>Salvar</span></button>
+      <div class="row wrap"><button class="btn primary" type="submit">${ic('check')}<span>Salvar</span></button><span class="muted small jr-auto" id="jr-auto">${e.updatedAt ? '✓ Salva sozinho enquanto você escreve' : 'Salva sozinho enquanto você escreve'}</span>
         ${e.hard ? `<button class="btn" type="button" id="jr-task">${ic('tasks')}<span>Virar tarefa de revisão</span></button>` : ''}</div>
     </form>
     <div class="panel"><div class="row"><h3 class="grow">Últimos dias</h3><button class="btn ai-btn" id="jr-ai">${ic('magic')}<span>Resumo do mês com IA</span></button></div>
@@ -154,17 +155,40 @@ function renderJournal(el) {
         ${j.learned ? `<p>📚 ${esc(j.learned)}</p>` : ''}${j.hard ? `<p>⚠️ ${esc(j.hard)}</p>` : ''}${j.tomorrow ? `<p>➡️ ${esc(j.tomorrow)}</p>` : ''}</div>`).join('') || '<p class="muted small">Seus registros aparecem aqui.</p>'}</div>
     </div></div>`;
   let mood = e.mood;
-  el.querySelector('#jr-moods').onclick = ev => {
-    const b = ev.target.closest('[data-m]'); if (!b) return;
-    mood = +b.dataset.m; el.querySelectorAll('.mood').forEach(x => x.classList.toggle('on', x === b));
-  };
-  el.querySelector('#jr-form').onsubmit = async ev => {
-    ev.preventDefault();
-    const item = { id: today, mood, learned: el.querySelector('#jr-learned').value.trim(), hard: el.querySelector('#jr-hard').value.trim(), tomorrow: el.querySelector('#jr-tomorrow').value.trim(), updatedAt: Date.now() };
-    if (!item.mood && !item.learned && !item.hard && !item.tomorrow) { toast('Escreva algo ou escolha como foi seu dia'); return; }
+  // guarda os campos agora: se você trocar de tela antes do salvamento automático, ele ainda lê o que foi escrito
+  const fLearned = el.querySelector('#jr-learned'), fHard = el.querySelector('#jr-hard'), fTomorrow = el.querySelector('#jr-tomorrow'), stEl = el.querySelector('#jr-auto');
+  const collect = () => ({ id: today, mood, learned: fLearned.value.trim(), hard: fHard.value.trim(), tomorrow: fTomorrow.value.trim(), updatedAt: Date.now() });
+  const persist = async item => {
     await A.db.put('journal', item);
     const i = X.journal.findIndex(j => j.id === today);
     if (i >= 0) X.journal[i] = item; else X.journal.push(item);
+  };
+  // salva sozinho enquanto você escreve (sem redesenhar a tela, para não atrapalhar a digitação)
+  let autoT = 0;
+  const autoSave = () => {
+    const st = stEl; if (st) st.textContent = 'Salvando…';
+    clearTimeout(autoT);
+    autoT = setTimeout(async () => {
+      const item = collect();
+      if (!item.mood && !item.learned && !item.hard && !item.tomorrow) { if (st) st.textContent = 'Salva sozinho enquanto você escreve'; return; }
+      try { await persist(item); if (st && st.isConnected) st.textContent = '✓ Salvo automaticamente'; }
+      catch { if (st && st.isConnected) st.textContent = '⚠️ Não salvou — toque em Salvar'; }
+    }, 700);
+  };
+  el.querySelector('#jr-form').addEventListener('input', autoSave);
+  const flushJournal = () => { if (autoT && fLearned.isConnected) { clearTimeout(autoT); const item = collect(); if (item.mood || item.learned || item.hard || item.tomorrow) persist(item); } };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushJournal(); }, { once: true });
+  el.querySelector('#jr-moods').onclick = ev => {
+    const b = ev.target.closest('[data-m]'); if (!b) return;
+    mood = +b.dataset.m; el.querySelectorAll('.mood').forEach(x => x.classList.toggle('on', x === b));
+    autoSave();
+  };
+  el.querySelector('#jr-form').onsubmit = async ev => {
+    ev.preventDefault();
+    clearTimeout(autoT);
+    const item = collect();
+    if (!item.mood && !item.learned && !item.hard && !item.tomorrow) { toast('Escreva algo ou escolha como foi seu dia'); return; }
+    await persist(item);
     toast('Diário salvo ✓');
     A.onChange();
   };

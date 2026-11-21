@@ -185,6 +185,6 @@ export async function openImageSearch({ onPick, query = '' } = {}) {
     }
   };
   draw();
-  await modal({ title: '🖼️ Imagem', body, wide: true, actions: [{ label: 'Fechar', value: null }], onOpen: (_el, c) => { closeFn = c; if ($('#is-q').value) setTimeout(run, 50); } });
+  await modal({ title: '🖼️ Imagem', body, wide: true, actions: [{ label: 'Fechar', value: null }], onOpen: (_el, c) => { closeFn = c; if ($('#is-q').value) setTimeout(() => { if (tab === 'web' && !results.length) run(); }, 50); } });
   if (busy) busy.abort();
 }

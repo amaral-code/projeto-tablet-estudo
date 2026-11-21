@@ -1,5 +1,5 @@
 // Notas rápidas: ideias, lembretes e listas de marcar (estilo post-it), com voz e "virar tarefa".
-import { ic, esc, h, toast, modal, menu } from './ui.js';
+import { ic, esc, h, toast, modal, menu, keepDraft } from './ui.js';
 import { speak, attachDictation } from './voice.js';
 import { shareText } from './export.js';
 
@@ -127,6 +127,7 @@ export function renderQuick(el) {
     ${others.length ? `${pinned.length ? '<h3 class="sec">Outras</h3>' : ''}<div class="qn-grid">${others.map(card).join('')}</div>` : ''}
     ${list.length ? '' : `<div class="empty">${ic('sticky')}<p>${q ? 'Nada encontrado.' : 'Nenhuma nota rápida ainda.'}</p><p class="muted">${q ? '' : 'Escreva acima: ideias, lembretes, listas de material…'}</p></div>`}`;
   const ta = el.querySelector('#qn-new');
+  const clearDraft = keepDraft(ta, 'nota-rapida');
   attachDictation(el.querySelector('#qn-newmic'), ta);
   el.querySelector('#qn-newlist').onclick = () => { ta.value += (ta.value && !ta.value.endsWith('\n') ? '\n' : '') + '[ ] '; ta.focus(); };
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); el.querySelector('#qn-form').requestSubmit(); } });
@@ -134,6 +135,7 @@ export function renderQuick(el) {
     e.preventDefault();
     if (!ta.value.trim()) { ta.focus(); return; }
     await addQuick(ta.value);
+    clearDraft();
     A.onChange();
     setTimeout(() => document.getElementById('qn-new')?.focus(), 50);
   };

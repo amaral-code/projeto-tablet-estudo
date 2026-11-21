@@ -40,6 +40,7 @@ No fim do menu ficam **Tudo e ajuda**, **Dados e backup** e **Ajustes e IA**.
 
 | Recurso | O que faz |
 |---|---|
+| 💾 **Nada se perde** | O caderno **salva sozinho** a cada traço (escrevendo sem parar, salva pelo menos a cada 4 segundos) e o botão **Salvo ✓** no topo salva na hora quando você quiser. O título salva enquanto você digita. Se o Android fechar o app no meio da gravação, uma **cópia de emergência** volta ao abrir o app. Nas janelas (tarefa, evento, meta, flashcard…), **tocar fora não apaga** o que você escreveu: o app pergunta se quer salvar, e se o app fechar, o **rascunho volta** quando você abrir a mesma janela. O **Diário** salva sozinho enquanto você escreve, e a nota rápida e as perguntas ao tutor guardam rascunho |
 | 🔔 **Avisos e lembretes** | No menu **Planejar → Avisos**: escolha o que avisar e a que horas — **eventos** (na véspera e no dia; com hora, X min antes), **tarefas** do dia, **provas** (3 dias antes e na véspera), **aulas** (minutos antes), **flashcards** vencidos, **hábitos** que faltam e **hora de estudar** (dias e horário). A lista **Próximos avisos** mostra tudo o que vai tocar. Os avisos chegam na hora com o app aberto ou em segundo plano; com o app fechado, o Android acorda o app de tempos em tempos (pode atrasar). Para não perder um evento importante, cada evento tem o botão **Google Agenda** (o alarme do celular toca mesmo com o app fechado), e dá para baixar todos os eventos num arquivo **.ics** |
 | 🖼️ **Imagem (busca na internet)** | No editor, toque em **Imagem**, escreva o que quer (“Bhaskara”, “Pedro Álvares Cabral”, “célula animal”, “fórmula de Bhaskara”…) ou fale no 🎙️. Aparecem várias imagens da **Wikipédia** e do **Wikimedia Commons** (livres para estudar); toque na que quiser e ela vai para a folha com o **nome em cima** e o **crédito embaixo** (dá para desligar), já selecionada para mover ou aumentar. A imagem fica salva em **Minhas imagens** e funciona até sem internet |
 | ∑ **Fórmulas** | Em **Estudar → Fórmulas**: 68 fórmulas de matemática (áreas, perímetros, volumes, Pitágoras, Bhaskara, PA/PG, porcentagem, juros, média…) e física (velocidade, MUV, Torricelli, força, peso, energia, pressão, calor, ondas, Ohm…). Busque pelo nome ou por uma pergunta (“qual a fórmula da força?”, “área da circunferência”), inclusive falando no 🎙️. Preencha os números e deixe em branco o que quer descobrir: o app **calcula na hora** (descobre qualquer letra da fórmula, não só a da esquerda) |
@@ -96,6 +97,8 @@ O app abre na tela **Hoje** e junta, num só lugar, os recursos mais úteis dos 
 | 📲 **Atalhos no ícone** | Segure o ícone do app na tela inicial para abrir direto em Hoje, Começar foco, Nova anotação ou Leitura |
 
 ## ✦ Assistente de IA (Gemini rapidão)
+
+A IA usa uma fila de 3 modelos rápidos do Gemini: o **principal** (Flash-Lite mais novo); se ele demorar mais de 6 s ou estiver sobrecarregado, o **reserva** (Flash-Lite 3.1) entra junto e vale o que responder primeiro; se os dois estiverem sem cota ou fora do ar, o **último recurso** (Flash) responde. A cota grátis é separada por modelo, então o limite diário fica bem maior. Se a internet do tablet piscar, o pedido tenta de novo sozinho.
 
 Toque no botão roxo **IA** dentro de uma anotação. A IA **lê a sua letra direto da folha**, sem precisar converter antes. Escolha **Seleção**, **Esta página** ou **Todas** e peça:
 
@@ -166,7 +169,7 @@ Medido de verdade em 20/11/2026: texto em **0,8 s**, página do caderno lida em 
 
 ## 🧪 Testes
 
-`tests/teste-completo.cjs` abre o app num navegador de verdade e passa por **96 cenários**: editor e ferramentas, correção, IA (Gemini simulado, com sobrecarga, modelo reserva e limite), PDF, tarefas, foco, flashcards, hábitos, leitura, notas, relatório e mapa do ano, busca por dentro do texto, menu retrátil (inclusive arrastar da borda), notas rápidas, tutor com foto, gravador com microfone simulado, "O que fazer agora", banco de dados (contagens, cópias, voltar no tempo, verificar e reparar, backup com áudio sem a chave, restaurar em outro tablet, tudo continua depois de reabrir), modo offline, tema escuro e o layout com o tablet em pé e deitado.
+`tests/teste-completo.cjs` abre o app num navegador de verdade e passa por **125 cenários**: salvamento (botão Salvar, salvar escrevendo sem parar, cópia de emergência, rascunhos das janelas, Diário automático), editor e ferramentas, correção, IA (Gemini simulado, com sobrecarga, modelo reserva e limite), PDF, tarefas, foco, flashcards, hábitos, leitura, notas, relatório e mapa do ano, busca por dentro do texto, menu retrátil (inclusive arrastar da borda), notas rápidas, tutor com foto, gravador com microfone simulado, "O que fazer agora", banco de dados (contagens, cópias, voltar no tempo, verificar e reparar, backup com áudio sem a chave, restaurar em outro tablet, tudo continua depois de reabrir), modo offline, tema escuro e o layout com o tablet em pé e deitado.
 
 ```
 npm install
@@ -174,7 +177,7 @@ npx playwright install chromium
 npm test
 ```
 
-Teste **real** com o Gemini (22 verificações: velocidade, modelo reserva, leitura da página, simulado em JSON, tutor com foto e, se o `espeak-ng` estiver instalado, uma aula falada gravada pelo microfone simulado e resumida, transcrita e transformada em tarefas). A chave vai só pela variável de ambiente e não fica salva em arquivo nenhum:
+Teste **real** com o Gemini (24 verificações: velocidade, os 3 modelos da fila, o app caindo no terceiro quando os dois primeiros estão sem cota, leitura da página, simulado em JSON, tutor com foto e, se o `espeak-ng` estiver instalado, uma aula falada gravada pelo microfone simulado e resumida, transcrita e transformada em tarefas). A chave vai só pela variável de ambiente e não fica salva em arquivo nenhum:
 
 ```
 GEMINI_API_KEY=sua_chave node tests/teste-gemini-real.cjs

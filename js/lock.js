@@ -29,7 +29,7 @@ export async function requireUnlock(what = 'isto') {
     <p class="late small" id="lk-err" hidden>Senha errada. Tente de novo.</p>
     <button type="button" class="link small" id="lk-forgot">Esqueci a senha</button></div>`);
   let ok = false;
-  await modal({
+  const r = await modal({
     title: '🔒 Trancado', body,
     actions: [{ label: 'Cancelar', value: null }, {
       label: 'Abrir', primary: true,
@@ -44,15 +44,16 @@ export async function requireUnlock(what = 'isto') {
       },
       value: true,
     }],
-    onOpen: el => {
-      el.querySelector('#lk-forgot').onclick = async () => {
-        el._close && el._close(null);
-        const r = await modal({ title: 'Esqueci a senha', body: `<p>Para tirar o cadeado, digite <b>APAGAR SENHA</b>. Seu diário e suas anotações continuam salvos; só a senha é removida.</p><input class="input" id="lk-conf" autocomplete="off">`,
-          actions: [{ label: 'Cancelar', value: null }, { label: 'Tirar o cadeado', danger: true, value: e2 => e2.querySelector('#lk-conf').value.trim().toUpperCase() }] });
-        if (r === 'APAGAR SENHA') { set(null); unlocked = true; ok = true; toast('Cadeado removido. Crie uma senha nova em Ajustes → Cadeado.', 4500); }
-      };
-    },
+    onOpen: el => { el.querySelector('#lk-forgot').onclick = () => el._close && el._close('forgot'); },
   });
+  // esqueceu a senha: tira o cadeado (os dados continuam) e já abre o que a pessoa queria
+  if (r === 'forgot') {
+    const c = await modal({ title: 'Esqueci a senha', body: `<p>Para tirar o cadeado, digite <b>APAGAR SENHA</b>. Seu diário e suas anotações continuam salvos; só a senha é removida.</p><input class="input" id="lk-conf" autocomplete="off">`,
+      actions: [{ label: 'Cancelar', value: null }, { label: 'Tirar o cadeado', danger: true, value: e2 => e2.querySelector('#lk-conf').value.trim().toUpperCase() }] });
+    if (c === 'APAGAR SENHA') { set(null); unlocked = true; toast('Cadeado removido. Crie uma senha nova em Ajustes → Cadeado.', 4500); return true; }
+    if (c) toast('Texto diferente de APAGAR SENHA: o cadeado continua', 3500);
+    return false;
+  }
   return ok || isUnlocked();
 }
 

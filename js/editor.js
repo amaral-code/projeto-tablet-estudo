@@ -1379,8 +1379,10 @@ let convBar = null;
 function hideConvBar() { if (convBar) { convBar.remove(); convBar = null; } }
 function showConvBar(pg, pieces) {
   hideConvBar();
-  const undoLen = E.undo.length;
-  const still = () => E && page() === pg && E.undo.length === undoLen;
+  // nada mudou desde a conversão = o último passo do desfazer ainda é o dela
+  // (comparar o tamanho da pilha falha quando ela chega ao limite de 100 passos)
+  const mark = E.undo[E.undo.length - 1];
+  const still = () => E && E.undo[E.undo.length - 1] === mark;
   const bar = h(`<div class="conv-bar" role="status"><span class="conv-t">✓ <b>${esc(pieces.map(p => p.text).join(' '))}</b></span>
     <button class="chip small" data-c="fix">${ic('edit')}<span>Corrigir</span></button><button class="chip small" data-c="ink">${ic('undo')}<span>Voltar à mão</span></button>
     <button class="icon-btn small" data-c="x" aria-label="Fechar">${ic('close')}</button></div>`);
@@ -1393,7 +1395,7 @@ function showConvBar(pg, pieces) {
     if (c === 'ink') { hideConvBar(); undo(); toast('Voltou a ser letra à mão ✓'); return; }
     hideConvBar();
     const fixed = await fixDialog(pieces);
-    if (!fixed || !E || page() !== pg) return;
+    if (!fixed || !E || !still()) return;
     // troca o texto: volta ao estado de antes da conversão e organiza de novo com o texto corrigido
     undo();
     pushUndo();

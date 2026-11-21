@@ -136,8 +136,11 @@ function renderPractice(el) {
   el.querySelector('#er-quit').onclick = () => { practice = null; A.onChange(true); renderErrors(el); };
   el.querySelector('#er-show')?.addEventListener('click', () => { P.shown = true; renderPractice(el); });
   const answer = async (ok, picked) => {
+    if (P.picked != null || P.busy) return; // toque duplo: conta uma vez só
+    P.busy = true;
     P.ok = ok; P.picked = picked;
-    if (ok) { P.right++; P.solvedNow = await markRight(e); if (P.solvedNow) P.solved++; } else { P.solvedNow = false; await markWrong(e); }
+    try { if (ok) { P.right++; P.solvedNow = await markRight(e); if (P.solvedNow) P.solved++; } else { P.solvedNow = false; await markWrong(e); } }
+    finally { P.busy = false; }
     renderPractice(el);
   };
   el.querySelectorAll('[data-o]').forEach(b => b.onclick = () => { const k = +b.dataset.o; answer(k === e.c, k); });

@@ -31,7 +31,8 @@ export function compile(src) {
       if (w === 'x') return x => x;
       if (w === 'pi') return () => Math.PI;
       if (w === 'e') return () => Math.E;
-      if (FUNCS[w]) { const arg = power(); const f = FUNCS[w]; return x => f(arg(x)); }
+      // o argumento é só o que vem logo depois (ex.: sen(x)); o ^ vale para o resultado: sen(x)^2 = (sen x)²
+      if (FUNCS[w]) { const arg = primary(); const f = FUNCS[w]; return x => f(arg(x)); }
       // "2x" já é tratado; "xx" ou palavras desconhecidas: erro claro
       throw new Error(`não conheço “${w}”`);
     }
@@ -210,18 +211,26 @@ function renderTranslator(body) {
 }
 export async function translateInto(text, from, out, btn) {
   if (!aiConfigured()) { toast('Ligue a IA em Ajustes → Inteligência artificial'); return; }
+  // só vale a tradução mais nova: a anterior é cancelada e o que ainda chegar dela é ignorado
+  if (out._busy) { try { out._busy.abort(); } catch { /* */ } }
+  const my = (out._req = (out._req || 0) + 1);
   out.hidden = false; out.innerHTML = '<div class="ai-typing"><i></i><i></i><i></i></div>';
   if (btn) btn.disabled = true;
   let txt = '';
-  try { await streamChat([{ role: 'user', content: translatePrompt(text, from) }], t => { txt += t; out.innerHTML = richText(cleanText(txt)); }).done; out.dataset.raw = txt; }
-  catch (e) { out.innerHTML = `<span class="late">${esc(e.message)}</span>`; }
-  finally { if (btn) btn.disabled = false; }
+  try {
+    out._busy = streamChat([{ role: 'user', content: translatePrompt(text, from) }], t => { if (out._req !== my) return; txt += t; out.innerHTML = richText(cleanText(txt)); });
+    await out._busy.done;
+    if (out._req === my) out.dataset.raw = txt;
+  } catch (e) { if (out._req === my && !e.aborted) out.innerHTML = `<span class="late">${esc(e.message)}</span>`; }
+  finally { if (out._req === my) { out._busy = null; if (btn) btn.disabled = false; } }
 }
 // janela de tradução (usada pelo "Traduzir" da seleção no caderno)
 export function translateDialog(text) {
   const from = /[ãõçáéíóúâêô]/i.test(text) && !/\b(the|and|is|are|you)\b/i.test(text) ? 'pt' : 'en';
   const body = h(`<div><p class="tr-src">${esc(text)}</p><div class="seg" id="trd-dir">${Object.entries(LANGS).map(([k, v]) => `<button data-d="${k}" class="${from === k ? 'active' : ''}">${v}</button>`).join('')}</div><div class="ai-out" id="trd-out"></div></div>`);
   import('./ui.js').then(({ modal }) => modal({ title: '🌎 Tradução', body, wide: true, actions: [{ label: 'Fechar', value: null }], onOpen: el => {
+    // fechou a janela: para a tradução que ainda estiver chegando
+    new MutationObserver((_, ob) => { if (!el.isConnected) { const o = body.querySelector('#trd-out'); if (o && o._busy) { try { o._busy.abort(); } catch { /* */ } } ob.disconnect(); } }).observe(document.body, { childList: true });
     const out = el.querySelector('#trd-out');
     translateInto(text, from, out);
     el.querySelector('#trd-dir').onclick = e => { const b = e.target.closest('[data-d]'); if (!b) return; el.querySelectorAll('#trd-dir button').forEach(x => x.classList.toggle('active', x === b)); translateInto(text, b.dataset.d, out); };

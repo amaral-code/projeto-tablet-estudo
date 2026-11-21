@@ -172,7 +172,9 @@ export async function runAction(x) {
     return { ok: `Tarefa criada: ${task.title}${task.due ? ` (${task.due.split('-').reverse().slice(0, 2).join('/')})` : ''}`, go: () => A.go('tasks') };
   }
   if (t === 'concluir_tarefa') {
-    const q = norm(x.titulo), task = A.state.tasks.find(k => !k.done && norm(k.title).includes(q));
+    const q = norm(x.titulo);
+    if (!q) return { err: 'Qual tarefa? Diga o nome dela' };
+    const task = A.state.tasks.find(k => !k.done && norm(k.title) === q) || A.state.tasks.find(k => !k.done && norm(k.title).includes(q));
     if (!task) return { err: `Não achei a tarefa “${x.titulo}”` };
     await A.toggleTask(task.id);
     return { ok: `Concluída: ${task.title}` };
@@ -216,7 +218,9 @@ export async function runAction(x) {
     return found.length ? { ok: `Achei ${found.length} anotação(ões) com “${x.termo}”`, notes: found } : { err: `Nenhuma anotação com “${x.termo}”` };
   }
   if (t === 'abrir_anotacao') {
-    const q = norm(x.titulo), n = A.state.notes.find(k => norm(k.title).includes(q));
+    const q = norm(x.titulo);
+    if (!q) return { err: 'Qual anotação? Diga o nome dela' };
+    const n = A.state.notes.find(k => norm(k.title) === q) || A.state.notes.find(k => norm(k.title).includes(q));
     if (!n) return { err: `Não achei a anotação “${x.titulo}”` };
     return { ok: `Abrindo “${n.title}”`, go: () => A.openNote(n.id), auto: true };
   }

@@ -23,28 +23,44 @@ const sigOf = pg => { const s = inkOf(pg); return `${s.length}:${s.length ? s[s.
 // (os testes automáticos desligam a leitura em segundo plano com esta chave, para não misturar com outros testes)
 const off = () => { try { return localStorage.getItem('caderno-indice-off') === '1'; } catch { return false; } };
 export async function indexContent(meta, content) {
-  if (!navigator.onLine || off()) return false;
-  let changed = false;
+  if (!navigator.onLine || off()) return null;
+  let pagesChanged = false;
   for (const pg of content.pages) {
     const sig = sigOf(pg);
     if (pg.inkSig === sig) continue;
     const parts = [];
     for (const l of groupLines(inkOf(pg)).slice(0, MAX_LINES)) {
       let c;
-      try { c = await recognizeStrokes(l.strokes, settings.lang); } catch { return changed; } // sem internet no meio: continua depois
+      try { c = await recognizeStrokes(l.strokes, settings.lang); } catch { return pagesChanged ? { pagesChanged } : null; } // sem internet no meio: continua depois
       if (c && c[0]) parts.push(c[0]);
     }
     pg.inkText = parts.join(' ');
     pg.inkSig = sig;
-    changed = true;
+    pagesChanged = true;
   }
-  if (changed || !meta.inkIndexedAt) {
-    meta.inkText = content.pages.map(p => p.inkText || '').join(' ').replace(/\s+/g, ' ').trim().slice(0, 8000);
-    meta.inkIndexedAt = Date.now();
-    inkById.set(meta.id, meta.inkText);
-    changed = true;
+  meta.inkText = content.pages.map(p => p.inkText || '').join(' ').replace(/\s+/g, ' ').trim().slice(0, 8000);
+  // marca que leu, mesmo sem mudança (senão a anotação volta para a fila toda vez)
+  meta.inkIndexedAt = Date.now();
+  inkById.set(meta.id, meta.inkText);
+  return { pagesChanged };
+}
+
+// Grava só o resultado da leitura, por cima do que está no banco AGORA (nunca a cópia antiga das páginas:
+// se você escreveu nesse meio-tempo, nada se perde)
+export async function saveIndex(meta, content, res) {
+  if (res.pagesChanged) {
+    const fresh = await A.db.get('pages', meta.id);
+    if (fresh) {
+      const byId = new Map(content.pages.map(p => [p.id, p]));
+      let any = false;
+      for (const p of fresh.pages) { const ix = byId.get(p.id); if (ix && ix.inkSig === sigOf(p)) { p.inkText = ix.inkText; p.inkSig = ix.inkSig; any = true; } }
+      if (any) await A.db.put('pages', fresh);
+    }
   }
-  return changed;
+  const curMeta = (await A.db.get('notes', meta.id)) || meta;
+  curMeta.inkText = meta.inkText; curMeta.inkIndexedAt = meta.inkIndexedAt;
+  await A.db.put('notes', curMeta);
+  syncState(meta);
 }
 
 // Depois de salvar uma anotação, lê a letra dela alguns segundos depois (quando você para de escrever)
@@ -52,10 +68,10 @@ export function scheduleIndex(meta, content) {
   clearTimeout(timers.get(meta.id));
   timers.set(meta.id, setTimeout(async () => {
     timers.delete(meta.id);
-    try { if (await indexContent(meta, content)) { await A.db.put('pages', content); await A.db.put('notes', meta); syncState(meta); } } catch { /* tenta de novo na próxima vez */ }
+    try { const r = await indexContent(meta, content); if (r) await saveIndex(meta, content, r); } catch { /* tenta de novo na próxima vez */ }
   }, 5000));
 }
-function syncState(meta) { const n = A.state.notes.find(x => x.id === meta.id); if (n && n !== meta) { n.inkText = meta.inkText; n.inkIndexedAt = meta.inkIndexedAt; } }
+function syncState(meta) { const n = A.state.notes.find(x => x.id === meta.id); if (n && n !== meta) { n.inkText = meta.inkText; n.inkIndexedAt = meta.inkIndexedAt; } inkById.set(meta.id, meta.inkText || ''); }
 
 // Anotações antigas (ou escritas sem internet) são lidas aos poucos em segundo plano
 export async function backfill(limit = 6) {
@@ -68,7 +84,10 @@ export async function backfill(limit = 6) {
     for (const m of todo) {
       const content = await A.loadContent(m.id);
       if (!content) continue;
-      if (await indexContent(m, content)) { await A.db.put('pages', content); await A.db.put('notes', m); n++; }
+      const r = await indexContent(m, content);
+      // abriram a anotação enquanto lia: deixa para depois (o editor é quem manda nela agora)
+      if (!r || (A.openNoteId && A.openNoteId() === m.id)) continue;
+      await saveIndex(m, content, r); n++;
       await new Promise(r => setTimeout(r, 300));
     }
   } finally { busy = false; }

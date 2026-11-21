@@ -136,7 +136,7 @@ async function start(el, src, n, level) {
   } else {
     const f = src.slice(2);
     folderId = f; title = A.folderName(f) || 'Pasta';
-    for (const note of A.state.notes.filter(x => x.folderId === f).sort((a, b) => b.updatedAt - a.updatedAt)) {
+    for (const note of A.state.notes.filter(x => x.folderId === f && (!x.locked || isUnlocked())).sort((a, b) => b.updatedAt - a.updatedAt)) {
       const c = await A.loadContent(note.id);
       pages.push(...c.pages.map(p => ({ ...p, _bg: c.bg, _title: note.title })));
       if (pages.length >= maxPages()) break;
@@ -163,7 +163,7 @@ async function start(el, src, n, level) {
 
 function renderSetup(el) {
   const notes = [...A.state.notes].filter(n => !n.locked || isUnlocked()).sort((a, b) => b.updatedAt - a.updatedAt);
-  const folders = A.state.folders.filter(f => A.state.notes.some(n => n.folderId === f.id));
+  const folders = A.state.folders.filter(f => A.state.notes.some(n => n.folderId === f.id && (!n.locked || isUnlocked())));
   el.innerHTML = `<div class="quiz-wrap"><div class="panel quiz-setup">
       <h3>${ic('quiz')}Novo simulado</h3>
       <div class="seg full-seg" id="qz-mode"><button type="button" data-m="notes" class="${mode === 'notes' ? 'active' : ''}">📒 Das minhas anotações</button><button type="button" data-m="enem" class="${mode === 'enem' ? 'active' : ''}">🎯 Estilo ENEM</button></div>

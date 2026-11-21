@@ -67,9 +67,40 @@ function friendly(err) {
   return err;
 }
 
+// Registros incompletos (de backup antigo, de versão antiga ou estragados) ganham valores seguros ao serem lidos,
+// para nenhuma tela travar por causa de um campo que falta. Nada é apagado.
+const str = v => (typeof v === 'string' ? v : v == null ? '' : String(v));
+const num = (v, d) => (Number.isFinite(+v) && v !== '' && v != null ? +v : d);
+const arr = v => (Array.isArray(v) ? v : []);
+const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+const FIX = {
+  folders: x => { x.name = str(x.name) || 'Pasta'; },
+  notes: x => { x.title = str(x.title) || 'Sem título'; x.folderId = str(x.folderId); x.createdAt = num(x.createdAt, 0); x.updatedAt = num(x.updatedAt, x.createdAt); x.pageCount = num(x.pageCount, 1); },
+  pages: x => { x.pages = arr(x.pages).filter(Boolean); if (!x.pages.length) x.pages = [{ id: 'p' + str(x.id), strokes: [], texts: [], images: [] }]; for (const p of x.pages) { p.strokes = arr(p.strokes); p.texts = arr(p.texts); p.images = arr(p.images); } x.bg = obj(x.bg); },
+  tasks: x => { x.title = str(x.title) || 'Tarefa sem nome'; x.done = !!x.done; x.due = str(x.due); x.prio = [1, 2, 3].includes(+x.prio) ? +x.prio : 2; x.folderId = str(x.folderId); x.createdAt = num(x.createdAt, 0); if (x.subtasks && !Array.isArray(x.subtasks)) x.subtasks = []; },
+  sessions: x => { x.minutes = num(x.minutes, 0); x.date = str(x.date); },
+  habits: x => { x.name = str(x.name) || 'Hábito'; x.days = obj(x.days); x.color = str(x.color) || '#2563eb'; },
+  decks: x => { x.name = str(x.name) || 'Baralho'; },
+  cards: x => { x.front = str(x.front); x.back = str(x.back); x.due = str(x.due); x.interval = num(x.interval, 0); x.ease = num(x.ease, 2.5); x.reps = num(x.reps, 0); x.lapses = num(x.lapses, 0); },
+  books: x => { x.title = str(x.title) || 'Livro'; x.total = num(x.total, 0); x.currentPage = num(x.currentPage, 0); },
+  reads: x => { x.pages = num(x.pages, 0); x.date = str(x.date); },
+  grades: x => { x.title = str(x.title) || 'Avaliação'; x.max = num(x.max, 10) || 10; x.weight = num(x.weight, 1); x.date = str(x.date); },
+  classes: x => { x.day = num(x.day, 1); x.start = str(x.start); x.end = str(x.end); },
+  journal: x => { x.mood = num(x.mood, 0); x.learned = str(x.learned); x.hard = str(x.hard); x.tomorrow = str(x.tomorrow); },
+  goals: x => { x.title = str(x.title) || 'Meta'; },
+  quizzes: x => { x.title = str(x.title) || 'Simulado'; x.right = num(x.right, 0); x.total = num(x.total, 0); x.qs = arr(x.qs); x.answers = arr(x.answers); x.date = str(x.date); },
+  quicknotes: x => { x.text = str(x.text); },
+  chats: x => { x.title = str(x.title) || 'Conversa'; x.messages = arr(x.messages); },
+  recordings: x => { x.title = str(x.title) || 'Gravação'; x.duration = num(x.duration, 0); x.size = num(x.size, 0); },
+  events: x => { x.title = str(x.title) || 'Evento'; x.date = str(x.date); x.time = str(x.time); x.prio = [1, 2, 3].includes(+x.prio) ? +x.prio : 2; },
+  images: x => { x.title = str(x.title); },
+  errors: x => { x.q = str(x.q); x.answer = str(x.answer); x.mine = str(x.mine); x.ex = str(x.ex); x.times = num(x.times, 1); x.streak = num(x.streak, 0); x.updatedAt = num(x.updatedAt, 0); x.createdAt = num(x.createdAt, 0); if (x.opts && !Array.isArray(x.opts)) x.opts = null; },
+  plans: x => { x.name = str(x.name) || 'Plano'; x.exam = str(x.exam); x.perDay = num(x.perDay, 2) || 2; x.weekdays = arr(x.weekdays); x.subjects = arr(x.subjects).map(m => ({ ...obj(m), name: str(obj(m).name), topics: arr(obj(m).topics) })); },
+};
+export const fixRecord = (s, x) => { if (x && typeof x === 'object' && FIX[s]) { try { FIX[s](x); } catch { /* */ } } return x; };
 export const db = {
-  all: s => run(s, 'readonly', st => st.getAll()),
-  get: (s, id) => run(s, 'readonly', st => st.get(id)),
+  all: async s => { const list = await run(s, 'readonly', st => st.getAll()); return FIX[s] ? list.filter(Boolean).map(x => fixRecord(s, x)) : list; },
+  get: async (s, id) => fixRecord(s, await run(s, 'readonly', st => st.get(id))),
   put: (s, v) => run(s, 'readwrite', st => st.put(v)),
   del: (s, id) => run(s, 'readwrite', st => st.delete(id)),
   clear: s => run(s, 'readwrite', st => st.clear()),

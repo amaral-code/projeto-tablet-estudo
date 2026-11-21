@@ -2081,6 +2081,67 @@ function watch(p) {
     await page.click('#ed-back'); await wait(900);
   });
 
+  // ================= CORREÇÕES DA REVISÃO DE CÓDIGO =================
+  console.log('Correções da revisão de código');
+  await step('Revisão: gráfico de sen(x)^2, Archie não conclui tarefa sem nome, toque duplo no caderno de erros', async () => {
+    const g = await page.evaluate(async () => { const t = await import('./js/tools.js'); const f = t.compile('sen(x)^2'), r = t.compile('raiz(x)^2'), c = t.compile('2cos(0)^3'); return { a: f(Math.PI / 2), b: f(Math.PI / 4), r: r(4), c: c(0) }; });
+    assert(Math.abs(g.a - 1) < 1e-9 && Math.abs(g.b - 0.5) < 1e-9 && Math.abs(g.r - 4) < 1e-9 && Math.abs(g.c - 2) < 1e-9, 'sen(x)^2 devia ser (sen x)²: ' + JSON.stringify(g));
+    const pend0 = (await idb('tasks')).filter(t => !t.done).length;
+    const r = await page.evaluate(async () => { const a = await import('./js/archie.js'); return [await a.runAction({ tipo: 'concluir_tarefa', titulo: '' }), await a.runAction({ tipo: 'concluir_tarefa' }), await a.runAction({ tipo: 'abrir_anotacao', titulo: '  ' })]; });
+    assert(r.every(x => x && x.err) && (await idb('tasks')).filter(t => !t.done).length === pend0, 'sem nome, o Archie não pode concluir nem abrir nada: ' + JSON.stringify(r));
+    // toque duplo na alternativa certa conta um acerto só
+    await page.evaluate(async () => { const st = await import('./js/store.js'); await st.db.put('errors', { id: 'dup-tap', key: 'quiz:toque duplo', src: 'quiz', folderId: '', q: 'Quanto é 2 + 2? (toque duplo)', opts: ['4', '5'], c: 0, answer: '4', mine: '5', ex: '', times: 9, streak: 0, resolvedAt: null, createdAt: 1, updatedAt: 1 }); });
+    await page.reload(); await wait(1300); await nav('errors');
+    await page.click('#er-go'); await wait(200);
+    assert((await page.textContent('.qz-q h2')).includes('toque duplo'), 'a questão do teste devia vir primeiro');
+    await page.dblclick('.qz-opt[data-o="0"]'); await wait(400);
+    const e = (await idb('errors')).find(x => x.id === 'dup-tap');
+    assert(e.streak === 1 && !e.resolvedAt, `toque duplo resolveu com um acerto só (streak ${e.streak})`);
+    await page.click('#er-quit');
+  });
+  await step('Revisão: a leitura da letra em segundo plano não apaga o que você escreveu nesse meio-tempo', async () => {
+    const ok = await page.evaluate(async () => {
+      const st = await import('./js/store.js'), ix = await import('./js/inkindex.js');
+      const id = 'corrida-1';
+      const S = (sid, y) => ({ id: sid, tool: 'pen', color: '#000', size: 3, points: [[100, y, 0.5], [200, y, 0.5]], bbox: { x: 98, y: y - 2, w: 104, h: 4 } });
+      await st.db.put('notes', { id, title: 'Corrida', folderId: '', createdAt: 1, updatedAt: Date.now(), pageCount: 1, thumb: '' });
+      await st.db.put('pages', { id, bg: { type: 'lines', color: 'white' }, pages: [{ id: 'pg1', strokes: [S('s1', 200)], texts: [], images: [] }] });
+      // a leitura começou com a cópia antiga...
+      const old = await st.db.get('pages', id), meta = await st.db.get('notes', id);
+      old.pages[0].inkText = 'casa'; old.pages[0].inkSig = '1:s1'; meta.inkText = 'casa'; meta.inkIndexedAt = Date.now();
+      // ...e enquanto isso você escreveu mais uma linha (o editor salvou)
+      const now = await st.db.get('pages', id); now.pages[0].strokes.push(S('s2', 300)); await st.db.put('pages', now);
+      await ix.saveIndex(meta, old, { pagesChanged: true });
+      const after = await st.db.get('pages', id), n = await st.db.get('notes', id);
+      await st.db.del('pages', id); await st.db.del('notes', id);
+      return { strokes: after.pages[0].strokes.length, ink: n.inkText };
+    });
+    assert(ok.strokes === 2 && ok.ink === 'casa', 'a linha nova sumiu: ' + JSON.stringify(ok));
+  });
+  await step('Revisão: "Esqueci a senha" tira o cadeado e já abre o Diário', async () => {
+    await page.click('#btn-settings'); await page.click('#s-lock');
+    await page.fill('#ls-a', '4321'); await page.fill('#ls-b', '4321'); await page.click('.modal-back >> nth=-1 >> .modal-actions .btn.primary'); await wait(400);
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; });
+    await nav('journal'); await page.click('#lk-open'); await page.click('#lk-forgot'); await wait(300);
+    await page.fill('#lk-conf', 'apagar senha'); await page.click('.modal-back >> nth=-1 >> .modal-actions .btn.danger'); await wait(600);
+    assert(await page.locator('#jr-learned').count() === 1, 'depois de tirar o cadeado o Diário devia abrir na hora');
+    assert(!(await page.evaluate(() => localStorage.getItem('caderno-cadeado'))), 'a senha devia ter sido removida');
+  });
+
+  await step('Revisão: dados incompletos (backup antigo ou estragado) não travam nenhuma tela', async () => {
+    const W = { tasks: [{ id: 'w1' }, { id: 'w2', title: 'Sem data', prio: 9 }], notes: [{ id: 'w3' }], events: [{ id: 'w4', title: 'Sem data' }, { id: 'w5', date: '2026-12-01' }],
+      errors: [{ id: 'w6' }], plans: [{ id: 'w7', name: 'Velho' }], grades: [{ id: 'w8' }], habits: [{ id: 'w9', name: 'Sem dias' }], cards: [{ id: 'w10' }], quicknotes: [{ id: 'w11' }],
+      quizzes: [{ id: 'w12' }], classes: [{ id: 'w13', day: 2 }], goals: [{ id: 'w14' }], books: [{ id: 'w15' }], journal: [{ id: '2020-01-01' }] };
+    await page.evaluate(async W => { const st = await import('./js/store.js'); for (const [k, list] of Object.entries(W)) for (const x of list) await st.db.put(k, x); }, W);
+    const e0 = errors.length;
+    await page.reload(); await wait(1500);
+    for (const v of ['today', 'tasks', 'calendar', 'avisos', 'plans', 'errors', 'quiz', 'cards', 'habits', 'grades', 'goals', 'reading', 'report', 'journal']) await nav(v === 'report' || v === 'journal' || v === 'grades' || v === 'habits' ? v : v);
+    await page.evaluate(async () => { const a = await import('./js/archie.js'); a.snapshot(); });
+    assert(errors.length === e0, 'erros com dados incompletos: ' + errors.slice(e0).join(' | '));
+    await page.evaluate(async W => { const st = await import('./js/store.js'); for (const [k, list] of Object.entries(W)) for (const x of list) await st.db.del(k, x.id); }, W);
+    await page.reload(); await wait(1300);
+  });
+
   // ================= SALVAMENTO =================
   console.log('Salvamento: nada se perde');
   await step('Caderno: botão Salvar, título salva enquanto digita e salva mesmo escrevendo sem parar', async () => {

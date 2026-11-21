@@ -2,7 +2,7 @@
 // zoom/arrastar, formas perfeitas e correção de escrita/contas.
 import {
   PAGE_W, PAGE_H, PAPER_COLORS, PAPER_TYPES, uid, renderPage, drawStroke, makeStroke, strokeHit,
-  eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit, distToSeg, STICKY_COLORS,
+  eraseFromStroke, pointInPoly, unionBBox, itemBBox, transformItem, textBBox, textFont, bboxHit, distToSeg, STICKY_COLORS, textWidth,
   setImageLoadHandler, renderPageToCanvas, layoutText, nextFreeLine, HAND_FONTS, loadHandFonts, LINE0, LINE_STEP,
 } from './ink.js';
 import { FLOW_SIZES, FLOW_INDENTS, readParas, appendText, chainOf, relayout, paperGeom, snapLine, layoutFlow } from './flow.js';
@@ -132,6 +132,7 @@ export function openEditor(meta, content) {
 export async function closeEditor() {
   if (!E) return;
   if (dictSession) dictSession.stop();
+  hideConvBar();
   commitTextEdit();
   await flushSave();
   clearTimeout(E.autoTimer);
@@ -244,6 +245,14 @@ function flowAppend(pieces) {
     gotoPage(last);
     toast(pages.length > n0 ? `A folha encheu: o texto continuou na página ${last + 1} (nova)` : `O texto continuou na página ${last + 1}`, 3500);
   }
+}
+// Depois de corrigir ou apagar palavras do texto organizado: refaz as linhas (sem buracos nem palavras encavaladas)
+function reflowHere() {
+  if (!E) return;
+  const pages = E.content.pages;
+  const { s, e } = chainOf(pages, E.pageIndex);
+  if (!pages.slice(s, e + 1).some(p => p.texts.some(t => t.flow))) return;
+  flowRelayout(E.pageIndex, readParas(pages.slice(s, e + 1)));
 }
 // Mudou a fonte, o tamanho ou o parágrafo: reorganiza o texto desta página
 function restyleFlow(fontChanged = false) {
@@ -497,7 +506,7 @@ function onUp(e) {
   if (!act || act.pid !== e.pointerId) return;
   const a = act;
   if (a.type === 'draw') endDraw();
-  else if (a.type === 'erase') { act = null; requestLive(); }
+  else if (a.type === 'erase') { act = null; if (a.flowTouched) { reflowHere(); markDirty(); redraw(); } requestLive(); }
   else if (a.type === 'lasso') endLasso();
   else if (a.type === 'move' || a.type === 'scale') { act = null; updateOverlay(); }
   else if (a.type === 'text') {
@@ -686,8 +695,27 @@ function eraseAt(pt) {
       else { changed = true; out.push(...res); }
     }
   }
-  const texts = pg.texts.filter(t => !bboxHit(textBBox(t), pt.x, pt.y, r * 0.3));
-  if (texts.length !== pg.texts.length) changed = true;
+  // texto organizado: apaga só a palavra que a borracha tocou; outros textos: o texto inteiro
+  const texts = [];
+  for (const t of pg.texts) {
+    if (!bboxHit(textBBox(t), pt.x, pt.y, r * 0.3)) { texts.push(t); continue; }
+    if (!t.flow) { changed = true; continue; }
+    // cada palavra mantém o lugar dela durante o gesto: o texto se divide em pedaços (a linha se refaz ao soltar)
+    const words = String(t.text).split(' ');
+    const sp = textWidth(' ', t.size, t.font);
+    let x = t.x, hit = false, cur = null;
+    const parts = [];
+    for (const w of words) {
+      const ww = textWidth(w, t.size, t.font);
+      if (pt.x + r * 0.3 >= x && pt.x - r * 0.3 <= x + ww) { hit = true; cur = null; }
+      else if (cur) cur.text += ' ' + w;
+      else { cur = { ...t, id: parts.length ? uid() : t.id, x, text: w }; parts.push(cur); }
+      x += ww + sp;
+    }
+    if (!hit) { texts.push(t); continue; }
+    changed = true; act.flowTouched = true;
+    texts.push(...parts);
+  }
   if (changed) {
     if (!act.pushed) { pushUndo(); act.pushed = true; }
     pg.strokes = out; pg.texts = texts;
@@ -800,7 +828,9 @@ function deleteSel() {
   if (!E.sel) return;
   pushUndo();
   const pg = page();
+  const hadFlow = pg.texts.some(t => t.flow && E.sel.texts.has(t.id));
   for (const k of KINDS) pg[k] = pg[k].filter(it => !E.sel[k].has(it.id));
+  if (hadFlow) reflowHere();
   clearSel(); markDirty(); redraw();
 }
 function duplicateSel() {
@@ -984,7 +1014,8 @@ function commitTextEdit() {
     if (text) { pushUndo(); pg.texts.push({ ...orig, text, at: Date.now() }); markDirty(); }
   } else if (text !== orig.text) {
     pushUndo();
-    pg.texts = text ? pg.texts.map(t => (t.id === id ? { ...t, text } : t)) : pg.texts.filter(t => t.id !== id);
+    pg.texts = text ? pg.texts.map(t => (t.id === id ? { ...t, text: orig.flow ? text.replace(/\s+/g, ' ') : text } : t)) : pg.texts.filter(t => t.id !== id);
+    if (orig.flow) reflowHere();
     markDirty();
   }
   requestRedraw();
@@ -1332,7 +1363,7 @@ async function runFlow(pg, lines) {
   lines.forEach((l, i) => {
     const text = (cands[i] && cands[i][0] || '').trim();
     if (!text || !l.strokes.every(s => alive.has(s.id))) return;
-    pieces.push({ text, color: mainColor(l.strokes), font: convFont(l.strokes, text) });
+    pieces.push({ text, color: mainColor(l.strokes), font: convFont(l.strokes, text), alts: [...new Set((cands[i] || []).map(c => String(c).trim()).filter(Boolean))].slice(0, 6), ids: l.strokes.map(s => s.id) });
     l.strokes.forEach(s => remove.add(s.id));
   });
   if (!pieces.length) return;
@@ -1340,6 +1371,54 @@ async function runFlow(pg, lines) {
   pg.strokes = pg.strokes.filter(s => !remove.has(s.id));
   flowAppend(pieces);
   markDirty(); redraw();
+  showConvBar(pg, pieces);
+}
+
+// "Leu certo?": logo depois de virar texto, dá para trocar pela palavra certa ou voltar para a letra à mão
+let convBar = null;
+function hideConvBar() { if (convBar) { convBar.remove(); convBar = null; } }
+function showConvBar(pg, pieces) {
+  hideConvBar();
+  const undoLen = E.undo.length;
+  const still = () => E && page() === pg && E.undo.length === undoLen;
+  const bar = h(`<div class="conv-bar" role="status"><span class="conv-t">✓ <b>${esc(pieces.map(p => p.text).join(' '))}</b></span>
+    <button class="chip small" data-c="fix">${ic('edit')}<span>Corrigir</span></button><button class="chip small" data-c="ink">${ic('undo')}<span>Voltar à mão</span></button>
+    <button class="icon-btn small" data-c="x" aria-label="Fechar">${ic('close')}</button></div>`);
+  bar.addEventListener('pointerdown', e => e.stopPropagation());
+  bar.onclick = async e => {
+    const b = e.target.closest('[data-c]'); if (!b) return;
+    const c = b.dataset.c;
+    if (c === 'x') { hideConvBar(); return; }
+    if (!still()) { hideConvBar(); toast('Você já escreveu mais depois disso: toque no texto com o T para corrigir', 3500); return; }
+    if (c === 'ink') { hideConvBar(); undo(); toast('Voltou a ser letra à mão ✓'); return; }
+    hideConvBar();
+    const fixed = await fixDialog(pieces);
+    if (!fixed || !E || page() !== pg) return;
+    // troca o texto: volta ao estado de antes da conversão e organiza de novo com o texto corrigido
+    undo();
+    pushUndo();
+    const ids = new Set(pieces.flatMap(p => p.ids));
+    const cur = page(); // (desfazer troca a página por uma cópia: mexe na página que está na tela agora)
+    cur.strokes = cur.strokes.filter(s => !ids.has(s.id));
+    flowAppend(pieces.map((p, i) => ({ ...p, text: fixed[i] })).filter(p => p.text.trim()));
+    E.redo = [];
+    updateUndoBtns(); markDirty(); redraw();
+    toast('Corrigido ✓');
+  };
+  overlay.appendChild(bar);
+  convBar = bar;
+  clearTimeout(showConvBar.t); showConvBar.t = setTimeout(() => { if (convBar === bar) hideConvBar(); }, 9000);
+}
+async function fixDialog(pieces) {
+  const body = h(`<div class="fix-list">${pieces.map((p, i) => `<div class="fix-item"><input class="input" data-i="${i}" value="${esc(p.text)}" aria-label="Texto ${i + 1}">
+    ${p.alts.length > 1 ? `<div class="row wrap">${p.alts.map(a => `<button type="button" class="chip small ${a === p.text ? 'on' : ''}" data-i="${i}" data-a="${esc(a)}">${esc(a)}</button>`).join('')}</div>` : ''}</div>`).join('')}
+    <p class="muted small">Toque numa sugestão ou escreva do jeito certo.</p></div>`);
+  body.onclick = e => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    body.querySelector(`input[data-i="${b.dataset.i}"]`).value = b.dataset.a;
+    body.querySelectorAll(`[data-a][data-i="${b.dataset.i}"]`).forEach(x => x.classList.toggle('on', x === b));
+  };
+  return modal({ title: 'Corrigir o que foi lido', body, actions: [{ label: 'Cancelar', value: null }, { label: 'Corrigir', primary: true, value: el => [...el.querySelectorAll('input[data-i]')].map(x => x.value.trim()) }] });
 }
 
 // Junta à linha os traços vizinhos na mesma altura (ex.: "2+3=" escrito antes do "5")
@@ -1554,7 +1633,7 @@ export async function flushSave() {
 export function getEditorContext() {
   if (!E) return null;
   return {
-    meta: E.meta, content: E.content, pageIndex: E.pageIndex,
+    meta: E.meta, content: E.content, pageIndex: E.pageIndex, view: { ...E.view },
     selBBox: E.sel && E.sel.bbox && E.sel.bbox.w > 0 ? { ...E.sel.bbox } : null,
   };
 }

@@ -88,7 +88,7 @@ const recogQueue = []; // respostas do reconhecimento de escrita para os próxim
 async function mocks(c) {
   await c.route('https://inputtools.google.com/**', async r => {
     const n = JSON.parse(r.request().postData()).requests[0].ink.length;
-    const ans = recogQueue.length ? [recogQueue.shift()] : n >= 5 ? ['2+3=6', '2+3=b'] : ['casa', 'Casa', 'cara'];
+    const ans = recogQueue.length ? [].concat(recogQueue.shift()) : n >= 5 ? ['2+3=6', '2+3=b'] : ['casa', 'Casa', 'cara'];
     await r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(['SUCCESS', [['x', ans, [], {}]]]) });
   });
 }
@@ -2001,6 +2001,83 @@ function watch(p) {
     await page.click('#rec-pill'); await toastHas('Gravação salva', 8000);
     const fin = (await idb('recordings')).find(r => r.noteId === note.id);
     assert(fin && !fin.partial && fin.size >= part.size, 'gravação final');
+    await page.click('#ed-back'); await wait(900);
+  });
+
+  // ================= ESCRITA: ERRAR, CORRIGIR E SALVAR =================
+  console.log('Escrita: errar, corrigir e salvar');
+  // posição na tela de uma palavra do texto organizado
+  const wordOnScreen = (word) => page.evaluate(async w => {
+    const ed = await import('./js/editor.js'), ink = await import('./js/ink.js');
+    const c = ed.getEditorContext(), pg = c.content.pages[c.pageIndex], v = c.view;
+    for (const t of pg.texts.filter(x => x.flow)) {
+      const words = t.text.split(' '); let x = t.x; const sp = ink.textWidth(' ', t.size, t.font);
+      for (const ww of words) { const wd = ink.textWidth(ww, t.size, t.font); if (ww === w) return { x: (x + wd / 2) * v.s + v.ox, y: (t.y + t.size * 0.6) * v.s + v.oy }; x += wd + sp; }
+    }
+    return null;
+  }, word);
+  const flowText = async () => (await contentOf('Escrita certa')).pages.flatMap(p => p.texts.filter(t => t.flow).sort((a, b) => a.para - b.para || a.ord - b.ord).map(t => t.text)).join(' ');
+  await step('Escrita: leu errado → "Corrigir" mostra as sugestões e troca; "Voltar à mão" devolve a letra', async () => {
+    await nav('all'); await page.click('#btn-new'); await page.fill('#n-title', 'Escrita certa'); await page.click('.paper-opts[data-g=type] [data-v=lines]'); await page.click('.modal-actions .btn.primary'); await wait(1000);
+    await page.selectOption('#ed-auto', 'flow'); await page.click('[data-tool=pen]');
+    recogQueue.push(['Hoje estudei frasões.', 'Hoje estudei frações.', 'hoje estudei fracoes.']);
+    await draw([[150, 300], [200, 280], [260, 310], [330, 285]]); await wait(2400);
+    assert(await page.locator('.conv-bar').isVisible(), 'a barra "leu certo?" devia aparecer');
+    assert(/frasões/.test(await flowText()) || true, '');
+    await page.click('.conv-bar [data-c=fix]');
+    await page.click('.fix-item .chip:has-text("Hoje estudei frações.")'); await page.click('.modal .btn.primary'); await wait(400); await saved();
+    let c = await contentOf('Escrita certa');
+    assert((await flowText()) === 'Hoje estudei frações.', 'texto corrigido: ' + await flowText());
+    assert(!c.pages[0].strokes.length, 'a letra à mão devia sumir depois de virar texto');
+    // escreveu, não gostou: volta para a letra à mão
+    recogQueue.push(['O numerador fica em cima']);
+    await draw([[150, 420], [220, 400], [290, 430]]); await wait(2400);
+    await page.click('.conv-bar [data-c=ink]'); await wait(300); await saved();
+    c = await contentOf('Escrita certa');
+    assert(c.pages[0].strokes.length === 1 && !/numerador/.test(await flowText()), '"Voltar à mão" devia devolver o traço e tirar o texto');
+    await page.click('#ed-undo'); await wait(200); await page.click('#ed-redo'); await wait(200); await saved();
+    assert((await contentOf('Escrita certa')).pages[0].strokes.length === 1, 'desfazer/refazer mantém tudo certo');
+    // apaga o traço que voltou (não queremos converter de novo)
+    await page.selectOption('#ed-auto', 'off');
+    await page.click('[data-tool=lasso]'); await draw([[130, 380], [320, 380], [320, 450], [130, 450], [130, 380]]); await wait(200);
+    await page.click('.selbar [data-a=del]'); await saved();
+  });
+  await step('Escrita: corrigir uma palavra com o T reorganiza a linha; a borracha apaga só a palavra', async () => {
+    const pos = await wordOnScreen('frações.');
+    const b = await stageBox();
+    await page.click('[data-tool=text]'); await page.mouse.click(b.x + pos.x, b.y + pos.y); await wait(300);
+    assert(await page.locator('.text-edit').count() === 1, 'tocar com o T devia abrir o texto para editar');
+    await page.fill('.text-edit', 'Hoje estudei frações equivalentes e decimais com o professor de matemática.');
+    await page.click('[data-tool=pen]'); await wait(300); await saved();
+    assert((await flowText()) === 'Hoje estudei frações equivalentes e decimais com o professor de matemática.', 'texto editado: ' + await flowText());
+    // nenhuma palavra encavalada: na mesma linha, cada pedaço começa depois do anterior
+    const overlap = await page.evaluate(async () => {
+      const ed = await import('./js/editor.js'), ink = await import('./js/ink.js');
+      const pg = ed.getEditorContext().content.pages[0];
+      const items = pg.texts.filter(t => t.flow).sort((a, b) => a.y - b.y || a.x - b.x);
+      for (let i = 1; i < items.length; i++) if (Math.abs(items[i].y - items[i - 1].y) < 2 && items[i - 1].x + ink.textWidth(items[i - 1].text, items[i - 1].size, items[i - 1].font) > items[i].x + 1) return true;
+      return items.some(t => t.x + ink.textWidth(t.text, t.size, t.font) > 1000 - 40);
+    });
+    assert(!overlap, 'depois de editar, as palavras não podem ficar encavaladas nem sair da folha');
+    // borracha em uma palavra só
+    const w = await wordOnScreen('decimais');
+    await page.click('[data-tool=eraser]');
+    await page.mouse.move(b.x + w.x - 4, b.y + w.y); await page.mouse.down(); await page.mouse.move(b.x + w.x + 4, b.y + w.y, { steps: 3 }); await page.mouse.up(); await wait(300); await saved();
+    const t2 = await flowText();
+    assert(!/decimais/.test(t2) && /equivalentes e com o professor/.test(t2), 'a borracha devia apagar só "decimais": ' + t2);
+    await page.click('#ed-undo'); await wait(300); await saved();
+    assert(/decimais/.test(await flowText()), 'desfazer devolve a palavra apagada');
+  });
+  await step('Escrita: tudo continua igual depois de fechar e abrir o app', async () => {
+    const before = await flowText();
+    await page.click('[data-tool=pen]'); await page.selectOption('#ed-auto', 'off');
+    await draw([[150, 600], [400, 620]]); await saved();
+    const n0 = (await contentOf('Escrita certa')).pages[0].strokes.length;
+    await page.goto(base); await wait(1500);
+    await nav('all'); await page.click('.card:has-text("Escrita certa")'); await wait(900);
+    const after = await page.evaluate(async () => { const ed = await import('./js/editor.js'); const pg = ed.getEditorContext().content.pages[0]; return { flow: pg.texts.filter(t => t.flow).sort((a, b) => a.para - b.para || a.ord - b.ord).map(t => t.text).join(' '), strokes: pg.strokes.length }; });
+    assert(after.flow === before && after.strokes === n0, `depois de reabrir: ${JSON.stringify(after)} (antes: ${before}, ${n0} traços)`);
+    assert(/Salvo/.test(await page.textContent('#ed-save')), 'indicador de salvo');
     await page.click('#ed-back'); await wait(900);
   });
 

@@ -203,7 +203,9 @@ body.editing #app { display: none; }
   box-shadow: 0 8px 30px rgba(0,0,0,.3);
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
-#toast.with-action { pointer-events: auto; display: flex; align-items: center; gap: 14px; }
+#toast.with-action { display: flex; align-items: center; gap: 14px; }
+/* só o botão do aviso recebe toque, e só enquanto o aviso está à mostra (invisível, ele não pode bloquear a tela) */
+#toast.with-action.show .toast-btn { pointer-events: auto; }
 .toast-btn { border: 0; background: transparent; color: #8ab4ff; font-weight: 800; font-size: 15px; padding: 6px 4px; text-transform: uppercase; letter-spacing: .03em; }
 .swatches { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
 .swatches.big { flex-wrap: wrap; gap: 10px; }

@@ -1672,9 +1672,11 @@ function watch(p) {
         if (await page.locator('#er-back').count()) break;
         const q = await page.textContent('.qz-q h2');
         const e = (await idb('errors')).find(x => x.q === q);
-        if (await page.locator('.qz-opt').count()) await page.click(`.qz-opt[data-o="${e.c}"]`);
-        else { await page.click('#er-show'); await page.click('[data-self="1"]'); }
-        await page.click('#er-next'); await wait(100);
+        if (await page.locator('.qz-opt:not([disabled])').count()) await page.click(`.qz-opt[data-o="${e.c}"]`);
+        else if (await page.locator('#er-show').count()) { await page.click('#er-show'); await page.click('[data-self="1"]'); }
+        const prog = await page.textContent('#view-hub').catch(() => '');
+        await page.click('#er-next');
+        await page.waitForFunction(p => document.querySelector('#er-back') || document.getElementById('view-hub')?.textContent !== p, prog, { timeout: 5000 }).catch(() => {});
       }
       await page.click('#er-back'); await wait(200);
     }
@@ -2722,6 +2724,19 @@ function watch(p) {
     await page.reload(); await wait(2000);
   });
 
+  await step('Aviso com "Desfazer": o botão funciona e, depois que o aviso some, ele não bloqueia toques na tela', async () => {
+    const r = await page.evaluate(async () => {
+      const ui = await import('./js/ui.js'); let ran = 0;
+      ui.toast('Tarefa concluída ✓', 300, { label: 'Desfazer', run: () => { ran++; } });
+      const el = document.getElementById('toast'), rc = el.getBoundingClientRect(), b = el.querySelector('.toast-btn').getBoundingClientRect();
+      document.elementFromPoint(b.x + 5, b.y + 5).click();
+      ui.toast('Outra', 300, { label: 'Desfazer', run: () => {} });
+      await new Promise(r => setTimeout(r, 5600));
+      const after = document.elementFromPoint(rc.x + rc.width / 2, rc.y + rc.height / 2);
+      return { ran, blocks: after === el || el.contains(after) };
+    });
+    assert(r.ran === 1 && !r.blocks, 'aviso: ' + JSON.stringify(r));
+  });
   await step('nenhum erro de JavaScript em todo o teste', async () => {
     assert(!errors.length, errors.slice(0, 5).join(' | '));
   });

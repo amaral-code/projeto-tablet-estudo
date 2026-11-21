@@ -145,9 +145,9 @@ function renderJournal(el) {
       <div class="row"><h3 class="grow">${ic('journal')}Hoje, ${fmtDate(today)}</h3><span class="muted small">🔥 ${journalStreak()} dia(s) seguidos</span></div>
       <label class="lbl">Como foi seu dia de estudos?</label>
       <div class="moods" id="jr-moods">${MOODS.map((m, i) => `<button type="button" class="mood ${e.mood === i + 1 ? 'on' : ''}" data-m="${i + 1}" aria-label="Humor ${i + 1}">${m}</button>`).join('')}</div>
-      <label class="lbl">O que eu aprendi hoje</label><textarea class="input" id="jr-learned" rows="3" placeholder="Ex.: aprendi a somar frações com denominadores diferentes…">${esc(e.learned)}</textarea>
-      <label class="lbl">O que foi difícil (para revisar)</label><textarea class="input" id="jr-hard" rows="2">${esc(e.hard)}</textarea>
-      <label class="lbl">Meu plano para amanhã</label><textarea class="input" id="jr-tomorrow" rows="2">${esc(e.tomorrow)}</textarea>
+      <label class="lbl" for="jr-learned">O que eu aprendi hoje</label><textarea class="input" id="jr-learned" rows="3" placeholder="Ex.: aprendi a somar frações com denominadores diferentes…">${esc(e.learned)}</textarea>
+      <label class="lbl" for="jr-hard">O que foi difícil (para revisar)</label><textarea class="input" id="jr-hard" rows="2">${esc(e.hard)}</textarea>
+      <label class="lbl" for="jr-tomorrow">Meu plano para amanhã</label><textarea class="input" id="jr-tomorrow" rows="2">${esc(e.tomorrow)}</textarea>
       <div class="row wrap"><button class="btn primary" type="submit">${ic('check')}<span>Salvar</span></button><span class="muted small jr-auto" id="jr-auto">${e.updatedAt ? '✓ Salva sozinho enquanto você escreve' : 'Salva sozinho enquanto você escreve'}</span>
         ${e.hard ? `<button class="btn" type="button" id="jr-task">${ic('tasks')}<span>Virar tarefa de revisão</span></button>` : ''}</div>
     </form>

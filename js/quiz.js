@@ -4,6 +4,7 @@ import { dayStr } from './hub.js';
 import { aiConfigured, buildContent, streamChat, maxPages } from './ai.js';
 import { saveGrade } from './perf.js';
 import { addErrors } from './errors.js';
+import { isUnlocked } from './lock.js';
 
 let A;
 let history = [];
@@ -161,7 +162,7 @@ async function start(el, src, n, level) {
 }
 
 function renderSetup(el) {
-  const notes = [...A.state.notes].sort((a, b) => b.updatedAt - a.updatedAt);
+  const notes = [...A.state.notes].filter(n => !n.locked || isUnlocked()).sort((a, b) => b.updatedAt - a.updatedAt);
   const folders = A.state.folders.filter(f => A.state.notes.some(n => n.folderId === f.id));
   el.innerHTML = `<div class="quiz-wrap"><div class="panel quiz-setup">
       <h3>${ic('quiz')}Novo simulado</h3>

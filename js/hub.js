@@ -687,7 +687,7 @@ function renderCalendar(el) {
       ${dayHabits.length ? `<h4>Hábitos feitos</h4><p>${dayHabits.map(hb => `<span class="tag"><span class="dot" style="background:${hb.color}"></span>${esc(hb.name)}</span>`).join(' ')}</p>` : ''}
     </div>
     ${A.ev ? `<div class="panel cal-next"><h3>${ic('calendar')}Próximos eventos</h3>${A.ev.notifHTML()}
-      <div class="ev-list">${A.ev.upcoming(60).map(e => A.ev.eventRow(e, { showDate: true })).join('') || '<p class="muted small">Nenhum evento nos próximos 60 dias. Toque em <b>Novo evento</b> para salvar provas, trabalhos, aniversários…</p>'}</div></div>` : ''}
+      <div class="ev-list">${(up => up.slice(0, 25).map(e => A.ev.eventRow(e, { showDate: true })).join('') + (up.length > 25 ? `<p class="muted small">E mais ${up.length - 25} evento(s) nos próximos 60 dias: toque nos dias do calendário para ver.</p>` : ''))(A.ev.upcoming(60)) || '<p class="muted small">Nenhum evento nos próximos 60 dias. Toque em <b>Novo evento</b> para salvar provas, trabalhos, aniversários…</p>'}</div></div>` : ''}
     </div></div>`;
   const go = dm => { cal.m += dm; if (cal.m < 0) { cal.m = 11; cal.y--; } if (cal.m > 11) { cal.m = 0; cal.y++; } renderCalendar(el); };
   el.querySelector('#cal-prev').onclick = () => go(-1);

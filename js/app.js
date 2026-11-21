@@ -191,7 +191,15 @@ async function init() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
   });
   window.addEventListener('popstate', () => { if (editorIsOpen()) closeNote(); });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    const hadSW = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+    // saiu uma versão nova do app enquanto ele estava aberto: avisa (sem recarregar sozinho, para não atrapalhar)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadSW) return;
+      toast('✨ Saiu uma versão nova do Caderno', 15000, { label: 'Atualizar', run: async () => { try { await closeEditor(); } catch { /* */ } location.reload(); } });
+    });
+  }
   document.addEventListener('pointerdown', () => navigator.storage?.persist?.().catch(() => {}), { once: true });
 }
 
@@ -796,6 +804,9 @@ async function noteMenu(id) {
     { label: 'Duplicar', icon: 'copy', value: 'dup' },
     { label: 'Excluir', icon: 'trash', value: 'del', danger: true },
   ]);
+  if (!a) return;
+  // anotação trancada: o que mostra ou copia o conteúdo pede a senha antes
+  if (n.locked && hasPin() && ['share', 'ai', 'dup', 'recs', 'task', 'review'].includes(a) && !(await requireUnlock('esta anotação'))) return;
   if (a === 'open') openNote(id);
   else if (a === 'share') shareNoteDialog(n, null, 0);
   else if (a === 'ai') aiForNote(n);

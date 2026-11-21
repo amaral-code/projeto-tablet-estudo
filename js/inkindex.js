@@ -8,7 +8,7 @@ let busy = false;
 // texto lido da letra de cada anotação (também em memória, para a busca achar mesmo antes de recarregar)
 const inkById = new Map();
 const timers = new Map();
-const MAX_LINES = 40; // por página, para não demorar demais
+const MAX_LINES = 30; // por página, para não demorar demais
 
 export function initInkIndex(api) {
   A = api;
@@ -58,7 +58,7 @@ export function scheduleIndex(meta, content) {
 function syncState(meta) { const n = A.state.notes.find(x => x.id === meta.id); if (n && n !== meta) { n.inkText = meta.inkText; n.inkIndexedAt = meta.inkIndexedAt; } }
 
 // Anotações antigas (ou escritas sem internet) são lidas aos poucos em segundo plano
-export async function backfill(limit = 15) {
+export async function backfill(limit = 6) {
   if (busy || !navigator.onLine || !A) return 0;
   busy = true;
   let n = 0;

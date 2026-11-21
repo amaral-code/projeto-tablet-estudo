@@ -1797,6 +1797,10 @@ function watch(p) {
     assert(await page.locator('.card:has-text("Só à mão") .thumb-lock').count() === 1, 'a anotação trancada não mostra a miniatura');
     // saiu do app: tranca de novo
     await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; });
+    // compartilhar (que mostra o conteúdo) também pede a senha
+    await page.click('.card:has-text("Só à mão") .more'); await page.click('.menu-item:has-text("Compartilhar")'); await page.waitForSelector('#lk-pin');
+    await page.click('.modal-back >> nth=-1 >> .modal-actions .btn:has-text("Cancelar")'); await wait(300);
+    assert(await page.locator('.share-opts, .modal h2:has-text("Compartilhar")').count() === 0, 'sem a senha não pode compartilhar');
     await page.click('.card:has-text("Só à mão")'); await page.waitForSelector('#lk-pin');
     await page.fill('#lk-pin', '9999'); await page.click('.modal-back >> nth=-1 >> .modal-actions .btn.primary'); await wait(300);
     assert(await page.locator('#lk-err:not([hidden])').count() === 1 && await page.locator('#editor:not([hidden])').count() === 0, 'senha errada não pode abrir');

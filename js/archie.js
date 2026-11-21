@@ -28,7 +28,8 @@ let flash = null; // expressão passageira { k, until }
 let btn, bubble, panel = null, busy = null;
 
 const loadChat = () => { try { chat = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]'); } catch { chat = []; } };
-const saveChat = () => { try { localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-40))); } catch { /* */ } };
+// (as ações já feitas ficam só como registro: o botão de "ir" só vale na conversa atual)
+const saveChat = () => { try { localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-40).map(m => ({ ...m, done: (m.done || []).map(d => ({ ok: d.ok, err: d.err })), sugs: undefined, sugRuns: undefined, pending: false })))); } catch { /* */ } };
 
 // ---------- humor (expressão) conforme o momento ----------
 export function moodNow(now = new Date()) {
@@ -287,7 +288,7 @@ function drawLog() {
   log.innerHTML = chat.map((m, i) => m.role === 'user'
     ? `<div class="ar-msg me">${esc(m.text)}</div>`
     : `<div class="ar-msg bot" data-i="${i}"><img src="${IMG(m.mood || 'neutro')}" alt=""><div class="grow"><div class="ar-text">${m.pending ? '<div class="ai-typing"><i></i><i></i><i></i></div>' : richText(m.text)}</div>
-      ${(m.done || []).map((d, k) => `<button class="ar-done ${d.err ? 'err' : ''}" data-d="${i}:${k}">${d.err ? '⚠️ ' + esc(d.err) : '✓ ' + esc(d.ok)}${d.go ? ` ${ic('right')}` : ''}</button>`).join('')}
+      ${(m.done || []).map((d, k) => `<button class="ar-done ${d.err ? 'err' : ''}" data-d="${i}:${k}">${d.err ? '⚠️ ' + esc(d.err) : '✓ ' + esc(d.ok)}${d.goFn ? ` ${ic('right')}` : ''}</button>`).join('')}
       ${(m.notes || []).map(n => `<button class="ar-done" data-n="${n.id}">${ic('page')} ${esc(n.title)}</button>`).join('')}
       ${(m.sugs || []).map((s, k) => `<button class="ar-done sug" data-s="${i}:${k}">${ic('right')} ${esc(s)}</button>`).join('')}</div></div>`).join('');
   log.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { const [i, k] = b.dataset.d.split(':').map(Number); const d = (chat[i].done || [])[k]; if (d && d.goFn) { closeArchie(); d.goFn(); } });
